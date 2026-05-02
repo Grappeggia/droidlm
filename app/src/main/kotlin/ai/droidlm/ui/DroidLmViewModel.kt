@@ -27,6 +27,8 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val pendingConfirmation = app.executor.pendingConfirmation
     val listeningState = WakeWordForegroundService.isRunningState
     val speechRecognitionState = app.speechRecognitionController.state
+    val pendingPlan = app.executor.pendingPlan
+    val plannerKeySetupRequest = app.executor.plannerKeySetupRequest
     val overlayState = FloatingControlOverlayService.isRunningState
 
     private val _relayStatus = MutableStateFlow("Unknown")
@@ -65,6 +67,33 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         app.startService(FloatingControlOverlayService.intent(app, FloatingControlOverlayService.ACTION_STOP))
     }
 
+    fun acceptPendingPlan(alwaysAcceptSafePlans: Boolean) {
+        viewModelScope.launch { app.executor.acceptPendingPlan(alwaysAcceptSafePlans) }
+    }
+
+    fun rejectPendingPlan() {
+        app.executor.rejectPendingPlan()
+    }
+
+    fun dismissPlannerKeySetup() {
+        app.executor.clearPlannerKeySetupRequest()
+    }
+
+    fun saveOpenAiKeyToRelay(setupToken: String, apiKey: String) {
+        viewModelScope.launch {
+            val relayUrl = settings.first().relayBaseUrl
+            when (val result = app.relayClient.saveOpenAiKey(relayUrl, setupToken, apiKey)) {
+                is RelayCallResult.Success -> {
+                    app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI key saved on relay")
+                    app.executor.retryPlannerKeySetupRequest()
+                }
+                is RelayCallResult.Failure -> {
+                    app.actionLogRepository.log(ActionLogType.ERROR, "Could not save OpenAI key on relay: ${result.message}", result.errorCode)
+                }
+            }
+        }
+    }
+
     fun cancelCurrentTask() {
         app.executor.cancelActive()
         app.startService(WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_CANCEL))
@@ -100,6 +129,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
+    fun updateAutoAcceptSafePlans(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateAutoAcceptSafePlans(value) }
 
     fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
     fun updateExecutionMode(mode: ExecutionMode) = viewModelScope.launch { app.settingsRepository.updateExecutionMode(mode) }

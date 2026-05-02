@@ -63,6 +63,8 @@ Push-to-talk is always available, even when Porcupine wake-word setup is incompl
 
 - `DroidLM open my Drive app` launches `com.google.android.apps.docs`.
 - `droid lm launch gmail` launches Gmail.
+- `open google docs` launches Google Docs.
+- `launch sheets` launches Google Sheets.
 - `hey Droid L M go home` triggers global home.
 - `DroidLM put the cursor after budget and type comma revised` inserts text in an accessible editable field.
 - `DroidLM replace draft with final` replaces visible editable text.
@@ -73,14 +75,29 @@ Push-to-talk is always available, even when Porcupine wake-word setup is incompl
 The repository includes an emulator E2E suite for the command `DroidLM open the Google Drive App`.
 It installs a test-only Drive-compatible target app with package `com.google.android.apps.docs`, uses the packaged spoken WAV sample at `app/src/androidTest/assets/droidlm_open_google_drive.wav`, posts that audio to a mock `/transcribe` relay, and verifies DroidLM launches the Drive package.
 
-Run it with a booted emulator:
+Run the voice E2E test with a booted emulator:
 
 ```bash
 adb devices
 ./gradlew connectedVoiceE2e
 ```
 
-If the emulator already has real Google Drive installed, skip the stub install and run:
+Prepare and verify the real Google Workspace emulator environment separately:
+
+```bash
+DROIDLM_DOCS_APK=/tmp/google-docs.apk \
+DROIDLM_SHEETS_APK=/tmp/google-sheets.apk \
+DROIDLM_TEST_GOOGLE_EMAIL=e2e@example.test \
+DROIDLM_TEST_GOOGLE_PASSWORD='<test-account-password>' \
+./gradlew prepareWorkspaceEmulator
+./gradlew verifyWorkspaceEmulator
+```
+
+`prepareWorkspaceEmulator` installs Drive, Gmail, Docs, and Sheets when APKs are available locally, opens a visible Google sign-in flow when credentials are supplied, skips recovery/address changes, and disables basic device backup before accepting Google services. It does not store credentials in the repo or app.
+
+APK lookup defaults are `DROIDLM_GOOGLE_APK_DIR` (`/tmp/droidlm-google-apks`) plus `/tmp/google-drive.apk`, `/tmp/google-gmail.apk`, `/tmp/google-docs.apk`, and `/tmp/google-sheets.apk`. Per-app overrides are `DROIDLM_DRIVE_APK`, `DROIDLM_GMAIL_APK`, `DROIDLM_DOCS_APK`, and `DROIDLM_SHEETS_APK`. If no APK is available, use `./gradlew openWorkspaceInstallPages` to open the install URL for the first missing app, finish installation in the emulator UI, then rerun `./gradlew verifyWorkspaceEmulator`.
+
+If the emulator already has real Google Drive installed, skip the Drive stub install and run:
 
 ```bash
 ./gradlew :app:connectedDebugAndroidTest

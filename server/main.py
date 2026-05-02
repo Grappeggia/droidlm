@@ -1,7 +1,9 @@
 import base64
 import json
 import os
+import secrets
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -11,16 +13,19 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
 PLANNER_MODEL = os.getenv("OPENAI_PLANNER_MODEL", "gpt-5.4-nano")
 VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-5.4")
 DEBUG_RETAIN_UPLOADS = os.getenv("DEBUG_RETAIN_UPLOADS", "false").lower() == "true"
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+SECRET_DIR = Path(os.getenv("DROIDLM_SECRET_DIR", ".secrets"))
+OPENAI_KEY_FILE = SECRET_DIR / "openai_key"
+SETUP_TOKEN = os.getenv("DROIDLM_SETUP_TOKEN") or secrets.token_urlsafe(24)
+if not os.getenv("DROIDLM_SETUP_TOKEN"):
+    print("DroidLM relay setup token:", SETUP_TOKEN)
 
 app = FastAPI(title="DroidLM Relay", version="0.1.3")
-client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 class PlanActionRequest(BaseModel):
@@ -29,6 +34,15 @@ class PlanActionRequest(BaseModel):
     packages: List[Dict[str, Any]] = Field(default_factory=list)
     history: List[str] = Field(default_factory=list)
     maxSteps: int = 12
+
+
+class OpenAiKeySetupRequest(BaseModel):
+    setupToken: str
+    openAiApiKey: str
+
+
+class SetupTokenRequest(BaseModel):
+    setupToken: str
 
 
 ACTION_SCHEMA = {
@@ -74,10 +88,67 @@ ACTION_SCHEMA = {
     "additionalProperties": True,
 }
 
+PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "model": {"type": "string"},
+        "summary": {"type": "string"},
+        "riskLevel": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+        "requiresConfirmation": {"type": "boolean"},
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    **ACTION_SCHEMA["properties"],
+                },
+                "required": ["index", "action", "reason", "requiresConfirmation"],
+                "additionalProperties": True,
+            },
+        },
+    },
+    "required": ["model", "summary", "riskLevel", "requiresConfirmation", "steps"],
+    "additionalProperties": True,
+}
+
 
 @app.get("/health")
 async def health() -> Dict[str, bool]:
     return {"ok": True}
+
+
+@app.get("/planner/status")
+async def planner_status() -> Dict[str, Any]:
+    key_configured = bool(read_openai_key())
+    return {
+        "openAiKeyConfigured": key_configured,
+        "plannerModel": PLANNER_MODEL,
+        "latestNanoModel": PLANNER_MODEL,
+        "relayReady": key_configured,
+    }
+
+
+@app.post("/setup/openai-key")
+async def setup_openai_key(payload: OpenAiKeySetupRequest) -> Dict[str, Any]:
+    verify_setup_token(payload.setupToken)
+    key = payload.openAiApiKey.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail={"errorCode": "OPENAI_API_KEY_EMPTY", "message": "OpenAI API key is empty"})
+    SECRET_DIR.mkdir(parents=True, exist_ok=True)
+    OPENAI_KEY_FILE.write_text(key)
+    os.chmod(OPENAI_KEY_FILE, 0o600)
+    return {"ok": True, "openAiKeyConfigured": True}
+
+
+@app.delete("/setup/openai-key")
+async def delete_openai_key(payload: SetupTokenRequest) -> Dict[str, Any]:
+    verify_setup_token(payload.setupToken)
+    try:
+        OPENAI_KEY_FILE.unlink()
+    except FileNotFoundError:
+        pass
+    return {"ok": True, "openAiKeyConfigured": bool(os.getenv("OPENAI_API_KEY"))}
 
 
 @app.post("/transcribe")
@@ -108,6 +179,41 @@ async def transcribe(
         return {"text": getattr(result, "text", "").strip()}
     finally:
         cleanup_temp(temp_path)
+
+
+@app.post("/plan-preview")
+async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
+    openai_client = require_openai()
+    system = (
+        "You plan safe Android UI actions for DroidLM. Return JSON only. "
+        "Create a short executable plan using only supported action names. "
+        "Prefer safe, minimal, local actions. Never claim actions were executed. "
+        "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
+        "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing."
+    )
+    user = {
+        "goal": payload.goal,
+        "uiState": payload.uiState,
+        "packages": payload.packages[:200],
+        "history": payload.history[-20:],
+        "maxSteps": payload.maxSteps,
+        "supportedActions": ACTION_SCHEMA["properties"]["action"]["enum"],
+    }
+    response = await openai_client.chat.completions.create(
+        model=PLANNER_MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "droidlm_plan", "schema": PLAN_SCHEMA, "strict": False},
+        },
+    )
+    content = response.choices[0].message.content or "{}"
+    parsed = json.loads(content)
+    parsed["model"] = parsed.get("model") or PLANNER_MODEL
+    return parsed
 
 
 @app.post("/plan-action")
@@ -192,10 +298,33 @@ async def realtime_token() -> Dict[str, str]:
     return {"message": "Ephemeral realtime token generation is not implemented in the MVP"}
 
 
+def read_openai_key() -> Optional[str]:
+    env_key = os.getenv("OPENAI_API_KEY")
+    if env_key:
+        return env_key.strip()
+    try:
+        key = OPENAI_KEY_FILE.read_text().strip()
+        return key or None
+    except FileNotFoundError:
+        return None
+
+
 def require_openai() -> AsyncOpenAI:
-    if client is None:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
-    return client
+    key = read_openai_key()
+    if not key:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "errorCode": "OPENAI_API_KEY_MISSING",
+                "message": "OpenAI API key is not configured on this DroidLM relay",
+            },
+        )
+    return AsyncOpenAI(api_key=key)
+
+
+def verify_setup_token(token: str) -> None:
+    if not secrets.compare_digest(token, SETUP_TOKEN):
+        raise HTTPException(status_code=403, detail={"errorCode": "SETUP_TOKEN_INVALID", "message": "Relay setup token is invalid"})
 
 
 def write_temp(data: bytes, suffix: str) -> str:

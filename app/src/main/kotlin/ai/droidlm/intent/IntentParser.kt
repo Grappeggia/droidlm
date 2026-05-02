@@ -10,6 +10,10 @@ class IntentParser {
         "my drive" to Alias("Drive", "com.google.android.apps.docs"),
         "gmail" to Alias("Gmail", "com.google.android.gm"),
         "google mail" to Alias("Gmail", "com.google.android.gm"),
+        "docs" to Alias("Google Docs", "com.google.android.apps.docs.editors.docs"),
+        "google docs" to Alias("Google Docs", "com.google.android.apps.docs.editors.docs"),
+        "sheets" to Alias("Google Sheets", "com.google.android.apps.docs.editors.sheets"),
+        "google sheets" to Alias("Google Sheets", "com.google.android.apps.docs.editors.sheets"),
         "chrome" to Alias("Chrome", "com.android.chrome"),
         "google chrome" to Alias("Chrome", "com.android.chrome")
     )

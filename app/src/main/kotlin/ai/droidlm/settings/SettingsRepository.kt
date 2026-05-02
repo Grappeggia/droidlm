@@ -33,6 +33,7 @@ class SettingsRepository(private val context: Context) {
         val wakeWordModelAssetPath = stringPreferencesKey("wake_word_model_asset_path")
         val wakeSensitivity = floatPreferencesKey("wake_sensitivity")
         val executionMode = stringPreferencesKey("execution_mode")
+        val autoAcceptSafePlans = booleanPreferencesKey("auto_accept_safe_plans")
         val mobilerunApiKeyConfigured = booleanPreferencesKey("mobilerun_api_key_configured")
         val mobilerunDeviceId = stringPreferencesKey("mobilerun_device_id")
         val mobilerunLlmModel = stringPreferencesKey("mobilerun_llm_model")
@@ -72,6 +73,7 @@ class SettingsRepository(private val context: Context) {
             wakeWordModelAssetPath = preferences[Keys.wakeWordModelAssetPath].orEmpty(),
             wakeSensitivity = preferences[Keys.wakeSensitivity] ?: 0.65f,
             executionMode = enumValueOrDefault(preferences[Keys.executionMode], ExecutionMode.LOCAL_RULE_FIRST),
+            autoAcceptSafePlans = preferences[Keys.autoAcceptSafePlans] ?: false,
             mobilerunApiKeyConfigured = preferences[Keys.mobilerunApiKeyConfigured] ?: hasMobilerunApiKey(),
             mobilerunDeviceId = preferences[Keys.mobilerunDeviceId].orEmpty(),
             mobilerunLlmModel = preferences[Keys.mobilerunLlmModel].orEmpty(),
@@ -106,6 +108,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateWakeWordModelAssetPath(value: String) = editString(Keys.wakeWordModelAssetPath, value.trim())
     suspend fun updateWakeSensitivity(value: Float) = context.settingsDataStore.edit { it[Keys.wakeSensitivity] = value.coerceIn(0f, 1f) }
     suspend fun updateExecutionMode(value: ExecutionMode) = editString(Keys.executionMode, value.name)
+    suspend fun updateAutoAcceptSafePlans(value: Boolean) = editBoolean(Keys.autoAcceptSafePlans, value)
     suspend fun updateMobilerunDeviceId(value: String) = editString(Keys.mobilerunDeviceId, value.trim())
     suspend fun updateMobilerunLlmModel(value: String) = editString(Keys.mobilerunLlmModel, value.trim())
     suspend fun updateMaxAutonomousSteps(value: Int) = context.settingsDataStore.edit { it[Keys.maxAutonomousSteps] = value.coerceIn(1, 40) }

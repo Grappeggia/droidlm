@@ -31,6 +31,7 @@ data class DroidLmSettings(
     val wakeWordModelAssetPath: String = "",
     val wakeSensitivity: Float = 0.65f,
     val executionMode: ExecutionMode = ExecutionMode.LOCAL_RULE_FIRST,
+    val autoAcceptSafePlans: Boolean = false,
     val mobilerunApiKeyConfigured: Boolean = false,
     val mobilerunDeviceId: String = "",
     val mobilerunLlmModel: String = "",

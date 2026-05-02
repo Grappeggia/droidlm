@@ -12,6 +12,7 @@ import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
+import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayPlanRequest
 import ai.droidlm.safety.SafetyClassifier
 import ai.droidlm.settings.ExecutionMode
@@ -41,6 +42,16 @@ data class PendingConfirmation(
     val prompt: String
 )
 
+data class PendingPlan(
+    val transcript: String,
+    val plan: PlanPreview
+)
+
+data class PlannerKeySetupRequest(
+    val message: String,
+    val retryTranscript: String
+)
+
 class DroidLmExecutor(
     private val settingsRepository: SettingsRepository,
     private val relayClient: RelayClient,
@@ -54,6 +65,12 @@ class DroidLmExecutor(
 ) {
     private val _uiState = MutableStateFlow(ExecutionUiState())
     val uiState: StateFlow<ExecutionUiState> = _uiState.asStateFlow()
+
+    private val _pendingPlan = MutableStateFlow<PendingPlan?>(null)
+    val pendingPlan: StateFlow<PendingPlan?> = _pendingPlan.asStateFlow()
+
+    private val _plannerKeySetupRequest = MutableStateFlow<PlannerKeySetupRequest?>(null)
+    val plannerKeySetupRequest: StateFlow<PlannerKeySetupRequest?> = _plannerKeySetupRequest.asStateFlow()
 
     private val _pendingConfirmation = MutableStateFlow<PendingConfirmation?>(null)
     val pendingConfirmation: StateFlow<PendingConfirmation?> = _pendingConfirmation.asStateFlow()
@@ -85,12 +102,111 @@ class DroidLmExecutor(
         }
     }
 
+    suspend fun planTranscript(transcript: String): ActionResult {
+        cancelled = false
+        val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        _plannerKeySetupRequest.value = null
+        _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano")
+        logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
+        val settings = settingsRepository.settings.first()
+        val state = runCatching { portalController.getState() }.getOrNull()
+        val packages = runCatching { portalController.listPackages() }.getOrDefault(emptyList()).take(160)
+        val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps)
+        return when (val result = relayClient.planPreview(settings.relayBaseUrl, request)) {
+            is RelayCallResult.Failure -> {
+                if (result.errorCode == "OPENAI_API_KEY_MISSING") {
+                    _plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                        message = "GPT-5.4 nano planning requires an OpenAI API key on your relay.",
+                        retryTranscript = stripped
+                    )
+                    logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing", result.errorCode)
+                    finish(ActionResult.fail("OpenAI API key is required for GPT-5.4 nano planning", result.errorCode))
+                } else {
+                    logs.log(ActionLogType.ERROR, result.message, result.errorCode)
+                    finish(ActionResult.fail(result.message, result.errorCode))
+                }
+            }
+            is RelayCallResult.Success -> {
+                val plan = result.value
+                val pending = PendingPlan(stripped, plan)
+                _pendingPlan.value = pending
+                _uiState.value = _uiState.value.copy(
+                    parsedAction = "PLAN ${plan.steps.size} steps via ${plan.model}",
+                    status = "Plan ready",
+                    lastResult = plan.summary
+                )
+                logs.log(ActionLogType.PARSED_ACTION, "Plan: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}")
+                if (settings.autoAcceptSafePlans && plan.isSafe) {
+                    logs.log(ActionLogType.CONFIRMATION_ACCEPTED, "Auto-accepted safe plan")
+                    executePlan(pending)
+                } else {
+                    ActionResult.ok("Plan ready for review")
+                }
+            }
+        }
+    }
+
+    suspend fun acceptPendingPlan(alwaysAcceptSafePlans: Boolean): ActionResult {
+        val pending = _pendingPlan.value ?: return ActionResult.fail("No pending plan", "NO_PENDING_PLAN")
+        if (alwaysAcceptSafePlans && pending.plan.isSafe) {
+            settingsRepository.updateAutoAcceptSafePlans(true)
+        }
+        logs.log(ActionLogType.CONFIRMATION_ACCEPTED, "User accepted GPT plan")
+        return executePlan(pending)
+    }
+
+    fun rejectPendingPlan() {
+        _pendingPlan.value = null
+        _uiState.value = _uiState.value.copy(status = "Plan rejected", lastResult = "Plan rejected")
+        logs.log(ActionLogType.CONFIRMATION_REJECTED, "User rejected GPT plan")
+    }
+
+    fun clearPlannerKeySetupRequest() {
+        _plannerKeySetupRequest.value = null
+    }
+
+    suspend fun retryPlannerKeySetupRequest(): ActionResult {
+        val retry = _plannerKeySetupRequest.value?.retryTranscript
+            ?: return ActionResult.fail("No planner request to retry", "NO_PLANNER_RETRY")
+        _plannerKeySetupRequest.value = null
+        return planTranscript(retry)
+    }
+
     fun cancelActive() {
         cancelled = true
         confirmationDeferred?.complete(false)
         _pendingConfirmation.value = null
+        _pendingPlan.value = null
+        _plannerKeySetupRequest.value = null
         _uiState.value = _uiState.value.copy(status = "Cancelled")
         logs.log(ActionLogType.CANCELLED, "Active automation loop cancelled")
+    }
+
+    private suspend fun executePlan(pending: PendingPlan): ActionResult {
+        val settings = settingsRepository.settings.first()
+        _pendingPlan.value = null
+        if (pending.plan.steps.isEmpty()) {
+            return finish(ActionResult.fail("Planner returned no steps", "EMPTY_PLAN"))
+        }
+        _uiState.value = _uiState.value.copy(status = "Executing plan", parsedAction = "PLAN ${pending.plan.steps.size} steps")
+        var last = ActionResult.ok("Started plan")
+        for (step in pending.plan.steps.take(settings.maxAutonomousSteps)) {
+            ensureNotCancelled()?.let { return finish(it) }
+            val state = runCatching { portalController.getState() }.getOrNull()
+            val safety = safetyClassifier.classify(pending.transcript, step.action, state, settings.sensitiveAppScreenshotDenylist)
+            if ((step.requiresConfirmation || safety.requiresConfirmation) && settings.requireRiskConfirmation) {
+                val confirmed = requestConfirmation(
+                    pending.transcript,
+                    step.action,
+                    safety.reason ?: step.reason.ifBlank { "Planner marked this step as sensitive" }
+                )
+                if (!confirmed) return finish(ActionResult.fail("Plan cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
+            }
+            logs.log(ActionLogType.ACTION_STARTED, "Plan step ${step.index}: ${step.actionLabel}", step.reason)
+            last = executeAction(step.action, pending.transcript, finishState = false)
+            if (!last.success) return finish(last)
+        }
+        return finish(ActionResult.ok("Plan executed: ${pending.plan.summary}"))
     }
 
     fun respondToConfirmation(accepted: Boolean) {

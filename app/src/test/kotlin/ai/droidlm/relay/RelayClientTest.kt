@@ -56,6 +56,26 @@ class RelayClientTest {
         assertTrue(action is DroidLmAction.OpenApp)
     }
 
+    @Test fun planPreviewJsonParse() {
+        val plan = RelayClient().parsePlanPreviewJson("""{
+            "model":"gpt-5.4-nano",
+            "summary":"Open Drive",
+            "riskLevel":"LOW",
+            "requiresConfirmation":false,
+            "steps":[{"index":1,"action":"OPEN_APP","appName":"Drive","packageName":"com.google.android.apps.docs","reason":"Open Drive","requiresConfirmation":false}]
+        }""")
+        assertEquals("gpt-5.4-nano", plan.model)
+        assertTrue(plan.isSafe)
+        assertEquals(1, plan.steps.size)
+        assertTrue(plan.steps.first().action is DroidLmAction.OpenApp)
+    }
+
+    @Test fun plannerStatusJsonParse() {
+        val status = RelayClient().parsePlannerStatusJson("{\"openAiKeyConfigured\":true,\"plannerModel\":\"gpt-5.4-nano\",\"latestNanoModel\":\"gpt-5.4-nano\",\"relayReady\":true}")
+        assertTrue(status.openAiKeyConfigured)
+        assertEquals("gpt-5.4-nano", status.plannerModel)
+    }
+
     @Test fun analyzeScreenshotJsonParse() {
         val result = RelayClient().parseVisionAnalysisJson("{\"fullText\":\"Budget\",\"suggestedAction\":{\"type\":\"TAP\",\"x\":1,\"y\":2,\"confidence\":0.74},\"lines\":[{\"text\":\"Budget\",\"boundingBox\":{\"x\":1,\"y\":2,\"width\":3,\"height\":4}}],\"elements\":[]}")
         assertEquals("Budget", result.fullText)

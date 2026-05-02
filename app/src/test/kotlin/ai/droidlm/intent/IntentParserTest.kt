@@ -20,6 +20,18 @@ class IntentParserTest {
         assertEquals("com.google.android.gm", (action as DroidLmAction.OpenApp).packageName)
     }
 
+    @Test fun docsCommandOpensGoogleDocsPackage() {
+        val action = parser.parse("open google docs")
+        assertTrue(action is DroidLmAction.OpenApp)
+        assertEquals("com.google.android.apps.docs.editors.docs", (action as DroidLmAction.OpenApp).packageName)
+    }
+
+    @Test fun sheetsCommandOpensGoogleSheetsPackage() {
+        val action = parser.parse("launch sheets")
+        assertTrue(action is DroidLmAction.OpenApp)
+        assertEquals("com.google.android.apps.docs.editors.sheets", (action as DroidLmAction.OpenApp).packageName)
+    }
+
     @Test fun goHomeRecognized() {
         assertEquals(DroidLmAction.PressHome, parser.parse("hey Droid L M go home"))
     }

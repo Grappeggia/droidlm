@@ -97,7 +97,7 @@ class WakeWordForegroundService : Service() {
                         val transcript = app.speechRecognitionController.recognizeCommand(
                             preferOffline = settings.preferOfflineSpeechRecognition
                         )
-                        app.executor.executeTranscript(transcript)
+                        app.executor.planTranscript(transcript)
                     }
                     TranscriptionProvider.OPENAI_RELAY -> {
                         val recorded = app.commandRecorder.recordCommand()
@@ -106,7 +106,7 @@ class WakeWordForegroundService : Service() {
                             when (val transcription = app.relayClient.transcribe(settings.relayBaseUrl, recorded.file, recorded.mimeType)) {
                                 is RelayCallResult.Success -> {
                                     app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_RESULT, transcription.value.text)
-                                    app.executor.executeTranscript(transcription.value.text)
+                                    app.executor.planTranscript(transcription.value.text)
                                 }
                                 is RelayCallResult.Failure -> {
                                     app.actionLogRepository.log(ActionLogType.ERROR, transcription.message, transcription.errorCode)

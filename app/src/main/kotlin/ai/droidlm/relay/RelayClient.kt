@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 data class TranscriptionResponse(val text: String, val durationMs: Long? = null)
+
 data class RelayPlanRequest(
     val goal: String,
     val uiState: PortalState?,
@@ -36,7 +37,39 @@ data class RelayPlanRequest(
     val maxSteps: Int
 )
 
+data class PlannerStatus(
+    val openAiKeyConfigured: Boolean,
+    val plannerModel: String,
+    val latestNanoModel: String?,
+    val relayReady: Boolean
+)
+
+data class PlanPreviewStep(
+    val index: Int,
+    val action: DroidLmAction,
+    val actionLabel: String,
+    val reason: String,
+    val requiresConfirmation: Boolean
+)
+
+data class PlanPreview(
+    val model: String,
+    val summary: String,
+    val riskLevel: String,
+    val requiresConfirmation: Boolean,
+    val steps: List<PlanPreviewStep>
+) {
+    val isSafe: Boolean
+        get() = riskLevel.equals("LOW", ignoreCase = true) && !requiresConfirmation && steps.none { it.requiresConfirmation }
+}
+
+data class OpenAiKeySetupResponse(
+    val ok: Boolean,
+    val openAiKeyConfigured: Boolean
+)
+
 data class VisionBoundingBox(val x: Int, val y: Int, val width: Int, val height: Int)
+
 data class VisionSuggestedAction(
     val type: String,
     val x: Int?,
@@ -44,6 +77,7 @@ data class VisionSuggestedAction(
     val confidence: Double?,
     val reason: String?
 )
+
 data class VisionAnalysis(
     val fullText: String,
     val suggestedAction: VisionSuggestedAction?,
@@ -69,6 +103,34 @@ class RelayClient(
         return execute(request) { body -> JSONObject(body).optBoolean("ok", false) }
     }
 
+    suspend fun plannerStatus(baseUrl: String): RelayCallResult<PlannerStatus> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        val request = Request.Builder().url("$normalized/planner/status").get().build()
+        return execute(request, ::parsePlannerStatusJson)
+    }
+
+    suspend fun saveOpenAiKey(baseUrl: String, setupToken: String, apiKey: String): RelayCallResult<OpenAiKeySetupResponse> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        val json = JSONObject()
+            .put("setupToken", setupToken)
+            .put("openAiApiKey", apiKey)
+        val request = Request.Builder()
+            .url("$normalized/setup/openai-key")
+            .post(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return execute(request, ::parseOpenAiKeySetupJson)
+    }
+
+    suspend fun deleteOpenAiKey(baseUrl: String, setupToken: String): RelayCallResult<OpenAiKeySetupResponse> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        val json = JSONObject().put("setupToken", setupToken)
+        val request = Request.Builder()
+            .url("$normalized/setup/openai-key")
+            .delete(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return execute(request, ::parseOpenAiKeySetupJson)
+    }
+
     suspend fun transcribe(
         baseUrl: String,
         audioFile: File,
@@ -92,17 +154,20 @@ class RelayClient(
 
     suspend fun planAction(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<DroidLmAction> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
-        val json = JSONObject()
-            .put("goal", requestBody.goal)
-            .put("uiState", requestBody.uiState?.toJson() ?: JSONObject())
-            .put("packages", JSONArray(requestBody.packages.map { it.toJson() }))
-            .put("history", JSONArray(requestBody.history))
-            .put("maxSteps", requestBody.maxSteps)
         val request = Request.Builder()
             .url("$normalized/plan-action")
-            .post(json.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .post(requestBody.toJson().toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
         return execute(request, ::parsePlanActionJson)
+    }
+
+    suspend fun planPreview(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        val request = Request.Builder()
+            .url("$normalized/plan-preview")
+            .post(requestBody.toJson().toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return execute(request, ::parsePlanPreviewJson)
     }
 
     suspend fun analyzeScreenshot(
@@ -130,6 +195,47 @@ class RelayClient(
         if (text.isBlank()) throw JSONException("Transcription text was empty")
         val duration = if (obj.has("durationMs")) obj.optLong("durationMs") else null
         return TranscriptionResponse(text, duration)
+    }
+
+    fun parsePlannerStatusJson(json: String): PlannerStatus {
+        val obj = JSONObject(json)
+        return PlannerStatus(
+            openAiKeyConfigured = obj.optBoolean("openAiKeyConfigured", false),
+            plannerModel = obj.optString("plannerModel", "gpt-5.4-nano"),
+            latestNanoModel = obj.optString("latestNanoModel").takeIf { it.isNotBlank() },
+            relayReady = obj.optBoolean("relayReady", false)
+        )
+    }
+
+    fun parseOpenAiKeySetupJson(json: String): OpenAiKeySetupResponse {
+        val obj = JSONObject(json)
+        return OpenAiKeySetupResponse(
+            ok = obj.optBoolean("ok", false),
+            openAiKeyConfigured = obj.optBoolean("openAiKeyConfigured", false)
+        )
+    }
+
+    fun parsePlanPreviewJson(json: String): PlanPreview {
+        val obj = JSONObject(json)
+        val stepsArray = obj.optJSONArray("steps") ?: JSONArray()
+        val steps = (0 until stepsArray.length()).mapNotNull { index ->
+            stepsArray.optJSONObject(index)?.let { step ->
+                PlanPreviewStep(
+                    index = step.optInt("index", index + 1),
+                    action = parsePlanActionJson(step.toString()),
+                    actionLabel = step.optString("action", "NO_OP"),
+                    reason = step.optString("reason", ""),
+                    requiresConfirmation = step.optBoolean("requiresConfirmation", false)
+                )
+            }
+        }
+        return PlanPreview(
+            model = obj.optString("model", "gpt-5.4-nano"),
+            summary = obj.optString("summary", ""),
+            riskLevel = obj.optString("riskLevel", "MEDIUM"),
+            requiresConfirmation = obj.optBoolean("requiresConfirmation", false),
+            steps = steps
+        )
     }
 
     fun parsePlanActionJson(json: String): DroidLmAction {
@@ -213,7 +319,13 @@ class RelayClient(
                     response.use {
                         val body = it.body?.string().orEmpty()
                         if (!it.isSuccessful) {
-                            continuation.resume(RelayCallResult.Failure("Relay returned HTTP ${it.code}: $body", "HTTP_${it.code}"))
+                            val relayError = parseRelayError(body)
+                            continuation.resume(
+                                RelayCallResult.Failure(
+                                    relayError.first ?: "Relay returned HTTP ${it.code}: $body",
+                                    relayError.second ?: "HTTP_${it.code}"
+                                )
+                            )
                             return
                         }
                         runCatching { parser(body) }
@@ -227,11 +339,32 @@ class RelayClient(
         }
     }
 
+    private fun parseRelayError(body: String): Pair<String?, String?> {
+        return runCatching {
+            val obj = JSONObject(body)
+            val detail = obj.opt("detail")
+            val detailObj = detail as? JSONObject
+            val code = detailObj?.optString("errorCode")?.takeIf { it.isNotBlank() }
+                ?: obj.optString("errorCode").takeIf { it.isNotBlank() }
+            val message = detailObj?.optString("message")?.takeIf { it.isNotBlank() }
+                ?: obj.optString("message").takeIf { it.isNotBlank() }
+                ?: obj.optString("detail").takeIf { it.isNotBlank() }
+            message to code
+        }.getOrDefault(null to null)
+    }
+
     private fun normalizeBaseUrl(baseUrl: String): String? {
         val trimmed = baseUrl.trim().trimEnd('/')
         if (trimmed.isBlank()) return null
         return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "http://$trimmed"
     }
+
+    private fun RelayPlanRequest.toJson(): JSONObject = JSONObject()
+        .put("goal", goal)
+        .put("uiState", uiState?.toJson() ?: JSONObject())
+        .put("packages", JSONArray(packages.map { it.toJson() }))
+        .put("history", JSONArray(history))
+        .put("maxSteps", maxSteps)
 
     private fun PortalState.toJson(): JSONObject = JSONObject()
         .put("packageName", packageName)

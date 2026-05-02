@@ -1,4 +1,6 @@
 package ai.droidlm
+import ai.droidlm.execution.PendingPlan
+import ai.droidlm.execution.PlannerKeySetupRequest
 
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
@@ -104,6 +106,8 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
     val speechRecognition by viewModel.speechRecognitionState.collectAsState()
     val overlayRunning by viewModel.overlayState.collectAsState()
+    val pendingPlan by viewModel.pendingPlan.collectAsState()
+    val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
 
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
@@ -198,6 +202,25 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     errorMessage = speechRecognition.errorMessage,
                     provider = settings.transcriptionProvider.name
                 )
+            }
+            plannerKeySetup?.let { setup ->
+                item {
+                    PlannerKeySetupCard(
+                        request = setup,
+                        onSave = viewModel::saveOpenAiKeyToRelay,
+                        onCancel = viewModel::dismissPlannerKeySetup
+                    )
+                }
+            }
+            pendingPlan?.let { plan ->
+                item {
+                    PlanPreviewCard(
+                        pendingPlan = plan,
+                        onAcceptOnce = { viewModel.acceptPendingPlan(false) },
+                        onAlwaysAcceptSafe = { viewModel.acceptPendingPlan(true) },
+                        onReject = viewModel::rejectPendingPlan
+                    )
+                }
             }
             pendingConfirmation?.let { pending ->
                 item {
@@ -320,6 +343,48 @@ private fun ConfirmationCard(
 }
 
 @Composable
+private fun PlannerKeySetupCard(
+    request: PlannerKeySetupRequest,
+    onSave: (String, String) -> Unit,
+    onCancel: () -> Unit
+) = DroidCard(container = Color(0xFFFFF1D6)) {
+    var apiKey by remember { mutableStateOf("") }
+    var setupToken by remember { mutableStateOf("") }
+    Text("OpenAI API key required", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text(request.message)
+    Text("The key is sent once to your configured relay and stored locally on that relay. DroidLM does not keep it in the APK or app settings.")
+    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI API key") })
+    OutlinedTextField(value = setupToken, onValueChange = { setupToken = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay setup token") })
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = { onSave(setupToken, apiKey); apiKey = "" }) { Text("Save to Relay") }
+        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+    }
+}
+
+@Composable
+private fun PlanPreviewCard(
+    pendingPlan: PendingPlan,
+    onAcceptOnce: () -> Unit,
+    onAlwaysAcceptSafe: () -> Unit,
+    onReject: () -> Unit
+) = DroidCard(container = Color(0xFFEAF4EA)) {
+    val plan = pendingPlan.plan
+    Text("GPT plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Transcript: ${pendingPlan.transcript}")
+    Text("Model: ${plan.model}")
+    Text("Risk: ${plan.riskLevel}")
+    Text(plan.summary, fontWeight = FontWeight.SemiBold)
+    plan.steps.forEach { step ->
+        Text("${step.index}. ${step.actionLabel}: ${step.reason}")
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = onAcceptOnce) { Text("Accept Once") }
+        if (plan.isSafe) Button(onClick = onAlwaysAcceptSafe) { Text("Always Accept Safe") }
+        OutlinedButton(onClick = onReject) { Text("Reject") }
+    }
+}
+
+@Composable
 private fun VoiceRecognitionCard(
     isListening: Boolean,
     partialTranscript: String,
@@ -381,6 +446,7 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
     Text("Shows a small overlay with a record circle and ... button so you can issue commands from other apps.", color = Color(0xFF42504D))
     ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
+    ToggleRow("Auto-accept safe GPT-5.4 nano plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
 
     Text("Wake-word provider", fontWeight = FontWeight.SemiBold)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
