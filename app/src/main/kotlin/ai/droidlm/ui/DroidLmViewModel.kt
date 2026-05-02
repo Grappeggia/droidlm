@@ -2,6 +2,7 @@ package ai.droidlm.ui
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.TranscriptionProvider
@@ -26,6 +27,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val pendingConfirmation = app.executor.pendingConfirmation
     val listeningState = WakeWordForegroundService.isRunningState
     val speechRecognitionState = app.speechRecognitionController.state
+    val overlayState = FloatingControlOverlayService.isRunningState
 
     private val _relayStatus = MutableStateFlow("Unknown")
     val relayStatus: StateFlow<String> = _relayStatus.asStateFlow()
@@ -53,6 +55,14 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             app,
             WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
         )
+    }
+
+    fun startOverlay() {
+        app.startService(FloatingControlOverlayService.intent(app, FloatingControlOverlayService.ACTION_SHOW))
+    }
+
+    fun stopOverlay() {
+        app.startService(FloatingControlOverlayService.intent(app, FloatingControlOverlayService.ACTION_STOP))
     }
 
     fun cancelCurrentTask() {
@@ -97,6 +107,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { app.settingsRepository.updateTranscriptionProvider(provider) }
     fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
     fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateShowPartialSpeechRecognition(value) }
+    fun updateHideOverlayDuringAutomation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateHideOverlayDuringAutomation(value) }
     fun updateMaxSteps(value: Int) = viewModelScope.launch { app.settingsRepository.updateMaxAutonomousSteps(value) }
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }

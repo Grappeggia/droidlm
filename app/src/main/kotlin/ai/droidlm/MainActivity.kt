@@ -103,11 +103,17 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val execution by viewModel.executionState.collectAsState()
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
     val speechRecognition by viewModel.speechRecognitionState.collectAsState()
+    val overlayRunning by viewModel.overlayState.collectAsState()
 
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> micGranted = granted }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> notificationGranted = granted }
+    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    val overlayLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        overlayGranted = Settings.canDrawOverlays(context)
+        if (overlayGranted) viewModel.startOverlay()
+    }
 
     LaunchedEffect(Unit) { viewModel.refreshAccessibility() }
 
@@ -135,6 +141,8 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     notificationGranted = notificationGranted,
                     listening = listening,
                     relayStatus = relayStatus,
+                    overlayRunning = overlayRunning,
+                    overlayGranted = overlayGranted,
                     settings = settings
                 )
             }
@@ -163,7 +171,23 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         )
                     },
                     onTestRelay = viewModel::testRelay,
-                    onTestOcr = viewModel::testOcr
+                    onTestOcr = viewModel::testOcr,
+                    onStartOverlay = {
+                        overlayGranted = Settings.canDrawOverlays(context)
+                        if (overlayGranted) {
+                            viewModel.startOverlay()
+                        } else {
+                            overlayLauncher.launch(
+                                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                            )
+                        }
+                    },
+                    onStopOverlay = viewModel::stopOverlay,
+                    onOpenOverlayPermission = {
+                        overlayLauncher.launch(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        )
+                    }
                 )
             }
             item {
@@ -208,7 +232,7 @@ private fun Header() {
 private fun DisclosureCard() = DroidCard {
     Text("First-run disclosure", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     Spacer(Modifier.height(8.dp))
-    Text("DroidLM uses Android's built-in speech recognition by default for push-to-talk, so basic voice commands do not require a paid external API. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI relay transcription, planning, and cloud screenshot analysis are optional. Accessibility lets DroidLM observe and control this device UI.")
+    Text("DroidLM uses Android's built-in speech recognition by default for push-to-talk, so basic voice commands do not require a paid external API. Optional floating controls can appear over other apps only after you grant Android overlay permission. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI relay transcription, planning, and cloud screenshot analysis are optional. Accessibility lets DroidLM observe and control this device UI.")
 }
 
 @Composable
@@ -218,6 +242,8 @@ private fun StatusCard(
     notificationGranted: Boolean,
     listening: Boolean,
     relayStatus: String,
+    overlayRunning: Boolean,
+    overlayGranted: Boolean,
     settings: DroidLmSettings
 ) = DroidCard {
     Text("Setup status", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
@@ -229,6 +255,8 @@ private fun StatusCard(
         StatusChip("Listening", listening)
         AssistChip(onClick = {}, label = { Text("Relay: $relayStatus") })
         AssistChip(onClick = {}, label = { Text("Voice: ${settings.transcriptionProvider.name}") })
+        StatusChip("Overlay", overlayRunning)
+        StatusChip("Overlay permission", overlayGranted)
         StatusChip("OCR", settings.onDeviceOcrEnabled)
         StatusChip("Cloud screenshots", settings.cloudScreenshotAnalysisEnabled)
         AssistChip(onClick = {}, label = { Text("Mode: ${settings.executionMode.name}") })
@@ -249,7 +277,10 @@ private fun ControlsCard(
     onOpenAccessibility: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onTestRelay: () -> Unit,
-    onTestOcr: () -> Unit
+    onTestOcr: () -> Unit,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit,
+    onOpenOverlayPermission: () -> Unit
 ) = DroidCard {
     Text("Controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     Spacer(Modifier.height(10.dp))
@@ -262,6 +293,9 @@ private fun ControlsCard(
         OutlinedButton(onClick = onOpenAppSettings) { Text("Open App Settings") }
         OutlinedButton(onClick = onTestRelay) { Text("Test Relay") }
         OutlinedButton(onClick = onTestOcr) { Text("Test OCR") }
+        Button(onClick = onStartOverlay) { Text("Start Floating Controls") }
+        OutlinedButton(onClick = onStopOverlay) { Text("Stop Floating Controls") }
+        OutlinedButton(onClick = onOpenOverlayPermission) { Text("Open Overlay Permission") }
     }
 }
 
@@ -343,6 +377,10 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     }
     ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
     ToggleRow("Show partial voice transcript", settings.showPartialSpeechRecognition, viewModel::updateShowPartialSpeech)
+
+    Text("Floating controls", fontWeight = FontWeight.SemiBold)
+    Text("Shows a small overlay with a record circle and ... button so you can issue commands from other apps.", color = Color(0xFF42504D))
+    ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
 
     Text("Wake-word provider", fontWeight = FontWeight.SemiBold)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

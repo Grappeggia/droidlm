@@ -24,6 +24,10 @@ class SettingsRepository(private val context: Context) {
         val transcriptionProvider = stringPreferencesKey("transcription_provider")
         val preferOfflineSpeechRecognition = booleanPreferencesKey("prefer_offline_speech_recognition")
         val showPartialSpeechRecognition = booleanPreferencesKey("show_partial_speech_recognition")
+        val floatingOverlayEnabled = booleanPreferencesKey("floating_overlay_enabled")
+        val overlayX = intPreferencesKey("overlay_x")
+        val overlayY = intPreferencesKey("overlay_y")
+        val hideOverlayDuringAutomation = booleanPreferencesKey("hide_overlay_during_automation")
         val wakeWordProvider = stringPreferencesKey("wake_word_provider")
         val picovoiceAccessKeyConfigured = booleanPreferencesKey("picovoice_access_key_configured")
         val wakeWordModelAssetPath = stringPreferencesKey("wake_word_model_asset_path")
@@ -56,6 +60,10 @@ class SettingsRepository(private val context: Context) {
             ),
             preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
             showPartialSpeechRecognition = preferences[Keys.showPartialSpeechRecognition] ?: true,
+            floatingOverlayEnabled = preferences[Keys.floatingOverlayEnabled] ?: false,
+            overlayX = preferences[Keys.overlayX] ?: 24,
+            overlayY = preferences[Keys.overlayY] ?: 250,
+            hideOverlayDuringAutomation = preferences[Keys.hideOverlayDuringAutomation] ?: true,
             wakeWordProvider = enumValueOrDefault(
                 preferences[Keys.wakeWordProvider],
                 WakeWordProvider.MANUAL_PUSH_TO_TALK
@@ -86,6 +94,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)
     suspend fun updatePreferOfflineSpeechRecognition(value: Boolean) = editBoolean(Keys.preferOfflineSpeechRecognition, value)
     suspend fun updateShowPartialSpeechRecognition(value: Boolean) = editBoolean(Keys.showPartialSpeechRecognition, value)
+    suspend fun updateFloatingOverlayEnabled(value: Boolean) = editBoolean(Keys.floatingOverlayEnabled, value)
+    suspend fun updateHideOverlayDuringAutomation(value: Boolean) = editBoolean(Keys.hideOverlayDuringAutomation, value)
+    suspend fun updateOverlayPosition(x: Int, y: Int) {
+        context.settingsDataStore.edit {
+            it[Keys.overlayX] = x.coerceAtLeast(0)
+            it[Keys.overlayY] = y.coerceAtLeast(0)
+        }
+    }
     suspend fun updateWakeWordProvider(value: WakeWordProvider) = editString(Keys.wakeWordProvider, value.name)
     suspend fun updateWakeWordModelAssetPath(value: String) = editString(Keys.wakeWordModelAssetPath, value.trim())
     suspend fun updateWakeSensitivity(value: Float) = context.settingsDataStore.edit { it[Keys.wakeSensitivity] = value.coerceIn(0f, 1f) }
