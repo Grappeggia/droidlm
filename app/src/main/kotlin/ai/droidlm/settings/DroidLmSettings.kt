@@ -1,0 +1,40 @@
+package ai.droidlm.settings
+
+enum class WakeWordProvider {
+    MANUAL_PUSH_TO_TALK,
+    PORCUPINE
+}
+
+enum class ExecutionMode {
+    LOCAL_RULE_FIRST,
+    LOCAL_LLM_LOOP,
+    MOBILERUN_CLOUD_TASK
+}
+
+data class DroidLmSettings(
+    val relayBaseUrl: String = "",
+    val wakePhrase: String = "DroidLM",
+    val wakeWordProvider: WakeWordProvider = WakeWordProvider.MANUAL_PUSH_TO_TALK,
+    val picovoiceAccessKeyConfigured: Boolean = false,
+    val wakeWordModelAssetPath: String = "",
+    val wakeSensitivity: Float = 0.65f,
+    val executionMode: ExecutionMode = ExecutionMode.LOCAL_RULE_FIRST,
+    val mobilerunApiKeyConfigured: Boolean = false,
+    val mobilerunDeviceId: String = "",
+    val mobilerunLlmModel: String = "",
+    val maxAutonomousSteps: Int = 12,
+    val requireRiskConfirmation: Boolean = true,
+    val onDeviceOcrEnabled: Boolean = true,
+    val cloudScreenshotAnalysisEnabled: Boolean = false,
+    val confirmBeforeSendingScreenshots: Boolean = true,
+    val debugScreenshotRetention: Boolean = false,
+    val debugAudioRetention: Boolean = false,
+    val sensitiveAppScreenshotDenylist: String = DEFAULT_SENSITIVE_DENYLIST,
+    val packageAllowlist: String = "",
+    val packageDenylist: String = ""
+) {
+    companion object {
+        const val DEFAULT_SENSITIVE_DENYLIST =
+            "bank,password,authenticator,health,gmail,mail,message,signal,whatsapp,telegram,pay,crypto,wallet,docs"
+    }
+}

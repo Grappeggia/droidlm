@@ -1,0 +1,143 @@
+package ai.droidlm.settings
+
+import android.content.Context
+import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore("droidlm_settings")
+
+class SettingsRepository(private val context: Context) {
+    private object Keys {
+        val relayBaseUrl = stringPreferencesKey("relay_base_url")
+        val wakePhrase = stringPreferencesKey("wake_phrase")
+        val wakeWordProvider = stringPreferencesKey("wake_word_provider")
+        val picovoiceAccessKeyConfigured = booleanPreferencesKey("picovoice_access_key_configured")
+        val wakeWordModelAssetPath = stringPreferencesKey("wake_word_model_asset_path")
+        val wakeSensitivity = floatPreferencesKey("wake_sensitivity")
+        val executionMode = stringPreferencesKey("execution_mode")
+        val mobilerunApiKeyConfigured = booleanPreferencesKey("mobilerun_api_key_configured")
+        val mobilerunDeviceId = stringPreferencesKey("mobilerun_device_id")
+        val mobilerunLlmModel = stringPreferencesKey("mobilerun_llm_model")
+        val maxAutonomousSteps = intPreferencesKey("max_autonomous_steps")
+        val requireRiskConfirmation = booleanPreferencesKey("require_risk_confirmation")
+        val onDeviceOcrEnabled = booleanPreferencesKey("on_device_ocr_enabled")
+        val cloudScreenshotAnalysisEnabled = booleanPreferencesKey("cloud_screenshot_analysis_enabled")
+        val confirmBeforeSendingScreenshots = booleanPreferencesKey("confirm_before_sending_screenshots")
+        val debugScreenshotRetention = booleanPreferencesKey("debug_screenshot_retention")
+        val debugAudioRetention = booleanPreferencesKey("debug_audio_retention")
+        val sensitiveAppScreenshotDenylist = stringPreferencesKey("sensitive_app_screenshot_denylist")
+        val packageAllowlist = stringPreferencesKey("package_allowlist")
+        val packageDenylist = stringPreferencesKey("package_denylist")
+    }
+
+    private val securePreferences: SharedPreferences by lazy { createSecurePreferences() }
+
+    val settings: Flow<DroidLmSettings> = context.settingsDataStore.data.map { preferences ->
+        DroidLmSettings(
+            relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
+            wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
+            wakeWordProvider = enumValueOrDefault(
+                preferences[Keys.wakeWordProvider],
+                WakeWordProvider.MANUAL_PUSH_TO_TALK
+            ),
+            picovoiceAccessKeyConfigured = preferences[Keys.picovoiceAccessKeyConfigured] ?: hasPicovoiceAccessKey(),
+            wakeWordModelAssetPath = preferences[Keys.wakeWordModelAssetPath].orEmpty(),
+            wakeSensitivity = preferences[Keys.wakeSensitivity] ?: 0.65f,
+            executionMode = enumValueOrDefault(preferences[Keys.executionMode], ExecutionMode.LOCAL_RULE_FIRST),
+            mobilerunApiKeyConfigured = preferences[Keys.mobilerunApiKeyConfigured] ?: hasMobilerunApiKey(),
+            mobilerunDeviceId = preferences[Keys.mobilerunDeviceId].orEmpty(),
+            mobilerunLlmModel = preferences[Keys.mobilerunLlmModel].orEmpty(),
+            maxAutonomousSteps = preferences[Keys.maxAutonomousSteps] ?: 12,
+            requireRiskConfirmation = preferences[Keys.requireRiskConfirmation] ?: true,
+            onDeviceOcrEnabled = preferences[Keys.onDeviceOcrEnabled] ?: true,
+            cloudScreenshotAnalysisEnabled = preferences[Keys.cloudScreenshotAnalysisEnabled] ?: false,
+            confirmBeforeSendingScreenshots = preferences[Keys.confirmBeforeSendingScreenshots] ?: true,
+            debugScreenshotRetention = preferences[Keys.debugScreenshotRetention] ?: false,
+            debugAudioRetention = preferences[Keys.debugAudioRetention] ?: false,
+            sensitiveAppScreenshotDenylist = preferences[Keys.sensitiveAppScreenshotDenylist]
+                ?: DroidLmSettings.DEFAULT_SENSITIVE_DENYLIST,
+            packageAllowlist = preferences[Keys.packageAllowlist].orEmpty(),
+            packageDenylist = preferences[Keys.packageDenylist].orEmpty()
+        )
+    }
+
+    suspend fun updateRelayBaseUrl(value: String) = editString(Keys.relayBaseUrl, value.trim())
+    suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
+    suspend fun updateWakeWordProvider(value: WakeWordProvider) = editString(Keys.wakeWordProvider, value.name)
+    suspend fun updateWakeWordModelAssetPath(value: String) = editString(Keys.wakeWordModelAssetPath, value.trim())
+    suspend fun updateWakeSensitivity(value: Float) = context.settingsDataStore.edit { it[Keys.wakeSensitivity] = value.coerceIn(0f, 1f) }
+    suspend fun updateExecutionMode(value: ExecutionMode) = editString(Keys.executionMode, value.name)
+    suspend fun updateMobilerunDeviceId(value: String) = editString(Keys.mobilerunDeviceId, value.trim())
+    suspend fun updateMobilerunLlmModel(value: String) = editString(Keys.mobilerunLlmModel, value.trim())
+    suspend fun updateMaxAutonomousSteps(value: Int) = context.settingsDataStore.edit { it[Keys.maxAutonomousSteps] = value.coerceIn(1, 40) }
+    suspend fun updateRequireRiskConfirmation(value: Boolean) = editBoolean(Keys.requireRiskConfirmation, value)
+    suspend fun updateOnDeviceOcrEnabled(value: Boolean) = editBoolean(Keys.onDeviceOcrEnabled, value)
+    suspend fun updateCloudScreenshotAnalysisEnabled(value: Boolean) = editBoolean(Keys.cloudScreenshotAnalysisEnabled, value)
+    suspend fun updateConfirmBeforeSendingScreenshots(value: Boolean) = editBoolean(Keys.confirmBeforeSendingScreenshots, value)
+    suspend fun updateDebugScreenshotRetention(value: Boolean) = editBoolean(Keys.debugScreenshotRetention, value)
+    suspend fun updateDebugAudioRetention(value: Boolean) = editBoolean(Keys.debugAudioRetention, value)
+    suspend fun updateSensitiveAppScreenshotDenylist(value: String) = editString(Keys.sensitiveAppScreenshotDenylist, value)
+    suspend fun updatePackageAllowlist(value: String) = editString(Keys.packageAllowlist, value)
+    suspend fun updatePackageDenylist(value: String) = editString(Keys.packageDenylist, value)
+
+    suspend fun savePicovoiceAccessKey(value: String) {
+        securePreferences.edit().putString(PICOVOICE_ACCESS_KEY, value).apply()
+        editBoolean(Keys.picovoiceAccessKeyConfigured, value.isNotBlank())
+    }
+
+    fun getPicovoiceAccessKey(): String? = securePreferences.getString(PICOVOICE_ACCESS_KEY, null)
+    fun hasPicovoiceAccessKey(): Boolean = !getPicovoiceAccessKey().isNullOrBlank()
+
+    suspend fun saveMobilerunApiKey(value: String) {
+        securePreferences.edit().putString(MOBILERUN_API_KEY, value).apply()
+        editBoolean(Keys.mobilerunApiKeyConfigured, value.isNotBlank())
+    }
+
+    fun getMobilerunApiKey(): String? = securePreferences.getString(MOBILERUN_API_KEY, null)
+    fun hasMobilerunApiKey(): Boolean = !getMobilerunApiKey().isNullOrBlank()
+
+    private suspend fun editString(key: Preferences.Key<String>, value: String) {
+        context.settingsDataStore.edit { it[key] = value }
+    }
+
+    private suspend fun editBoolean(key: Preferences.Key<Boolean>, value: Boolean) {
+        context.settingsDataStore.edit { it[key] = value }
+    }
+
+    private fun createSecurePreferences(): SharedPreferences {
+        return runCatching {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                "secure_settings",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        }.getOrElse {
+            context.getSharedPreferences("secure_settings_fallback", Context.MODE_PRIVATE)
+        }
+    }
+
+    private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T {
+        return value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default
+    }
+
+    companion object {
+        private const val PICOVOICE_ACCESS_KEY = "picovoice_access_key"
+        private const val MOBILERUN_API_KEY = "mobilerun_api_key"
+    }
+}
