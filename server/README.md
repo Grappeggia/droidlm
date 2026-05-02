@@ -13,6 +13,8 @@ cp .env.example .env
 uvicorn main:app --host 0.0.0.0 --port 8787
 ```
 
+Defaults use OpenAI's current speech-to-text model `gpt-4o-transcribe`, plus GPT-5.x models for optional planning and vision relay calls. Override `OPENAI_TRANSCRIBE_MODEL`, `OPENAI_PLANNER_MODEL`, or `OPENAI_VISION_MODEL` in `.env` if needed.
+
 ## Endpoints
 
 - `GET /health` returns `{ "ok": true }`.

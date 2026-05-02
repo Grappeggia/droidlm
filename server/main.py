@@ -12,14 +12,14 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
-PLANNER_MODEL = os.getenv("OPENAI_PLANNER_MODEL", "gpt-4.1-mini")
-VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
+TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+PLANNER_MODEL = os.getenv("OPENAI_PLANNER_MODEL", "gpt-5.4-nano")
+VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-5.4")
 DEBUG_RETAIN_UPLOADS = os.getenv("DEBUG_RETAIN_UPLOADS", "false").lower() == "true"
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-app = FastAPI(title="DroidLM Relay", version="0.1.0")
+app = FastAPI(title="DroidLM Relay", version="0.1.1")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
