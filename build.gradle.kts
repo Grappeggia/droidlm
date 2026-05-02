@@ -175,17 +175,39 @@ tasks.register("openWorkspaceInstallPages") {
     }
 }
 
-tasks.register("prepareWorkspaceEmulator", org.gradle.api.tasks.Exec::class) {
+tasks.register("prepareWorkspaceApps", org.gradle.api.tasks.Exec::class) {
     group = "verification"
     description = "Installs Workspace apps from local APKs and optionally signs the connected emulator into a Google account."
     environment("ADB", project.androidAdbPath())
     commandLine("bash", "scripts/prepare-google-workspace-emulator.sh")
 }
 
+tasks.register("installWorkspaceFixtures", org.gradle.api.tasks.Exec::class) {
+    group = "verification"
+    description = "Pushes public document, image, and spreadsheet fixtures to the connected emulator."
+    environment("ADB", project.androidAdbPath())
+    commandLine("bash", "scripts/install-workspace-fixtures.sh", "install")
+    mustRunAfter("prepareWorkspaceApps")
+}
+
+tasks.register("verifyWorkspaceFixtures", org.gradle.api.tasks.Exec::class) {
+    group = "verification"
+    description = "Opens every Workspace fixture on the connected emulator through Android intents."
+    environment("ADB", project.androidAdbPath())
+    commandLine("bash", "scripts/install-workspace-fixtures.sh", "verify")
+    mustRunAfter("installWorkspaceFixtures")
+}
+
+tasks.register("prepareWorkspaceEmulator") {
+    group = "verification"
+    description = "Installs Workspace apps and fixture files on the connected emulator."
+    dependsOn("prepareWorkspaceApps", "installWorkspaceFixtures")
+}
+
 tasks.register("verifyWorkspaceEmulator") {
     group = "verification"
-    description = "Verifies Workspace apps and reports Google account availability on the connected emulator."
-    dependsOn("checkWorkspaceAppsInstalled", "workspaceEmulatorReport")
+    description = "Verifies Workspace apps, account availability, and fixture file opening on the connected emulator."
+    dependsOn("checkWorkspaceAppsInstalled", "workspaceEmulatorReport", "verifyWorkspaceFixtures")
 }
 
 gradle.projectsEvaluated {

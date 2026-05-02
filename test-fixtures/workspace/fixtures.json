@@ -1,0 +1,94 @@
+{
+  "description": "Public online sample files used to seed the DroidLM Workspace emulator test environment.",
+  "deviceRoot": "/sdcard/Documents/DroidLMFixtures",
+  "fixtures": [
+    {
+      "bytes": 13264,
+      "category": "docs",
+      "file": "w3c-dummy.pdf",
+      "mime": "application/pdf",
+      "source": "W3C public test resource",
+      "sourceUrl": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    },
+    {
+      "bytes": 1311881,
+      "category": "docs",
+      "file": "calibre-demo.docx",
+      "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "source": "Calibre public demo document",
+      "sourceUrl": "https://calibre-ebook.com/downloads/demos/demo.docx"
+    },
+    {
+      "bytes": 151191,
+      "category": "docs",
+      "file": "gutenberg-alice.txt",
+      "mime": "text/plain",
+      "source": "Project Gutenberg public domain text",
+      "sourceUrl": "https://www.gutenberg.org/files/11/11-0.txt"
+    },
+    {
+      "bytes": 30838,
+      "category": "docs",
+      "file": "gutenberg-declaration.txt",
+      "mime": "text/plain",
+      "source": "Project Gutenberg public domain text",
+      "sourceUrl": "https://www.gutenberg.org/cache/epub/1/pg1.txt"
+    },
+    {
+      "bytes": 83418,
+      "category": "spreadsheets",
+      "file": "microsoft-financial-sample.xlsx",
+      "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "source": "Microsoft sample financial workbook",
+      "sourceUrl": "https://go.microsoft.com/fwlink/?LinkID=521962"
+    },
+    {
+      "bytes": 321,
+      "category": "spreadsheets",
+      "file": "airtravel.csv",
+      "mime": "text/csv",
+      "source": "John Burkardt CSV sample data",
+      "sourceUrl": "https://people.sc.fsu.edu/~jburkardt/data/csv/airtravel.csv"
+    },
+    {
+      "bytes": 8402,
+      "category": "spreadsheets",
+      "file": "cities.csv",
+      "mime": "text/csv",
+      "source": "John Burkardt CSV sample data",
+      "sourceUrl": "https://people.sc.fsu.edu/~jburkardt/data/csv/cities.csv"
+    },
+    {
+      "bytes": 3734,
+      "category": "spreadsheets",
+      "file": "hw-200.csv",
+      "mime": "text/csv",
+      "source": "John Burkardt CSV sample data",
+      "sourceUrl": "https://people.sc.fsu.edu/~jburkardt/data/csv/hw_200.csv"
+    },
+    {
+      "bytes": 267290,
+      "category": "images",
+      "file": "blue-marble.jpg",
+      "mime": "image/jpeg",
+      "source": "Wikimedia Commons thumbnail of NASA public domain image",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/The_Earth_seen_from_Apollo_17.jpg?width=640"
+    },
+    {
+      "bytes": 227581,
+      "category": "images",
+      "file": "hubble-ultra-deep-field.jpg",
+      "mime": "image/jpeg",
+      "source": "Wikimedia Commons thumbnail of NASA/ESA public domain image",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Hubble_ultra_deep_field.jpg?width=640"
+    },
+    {
+      "bytes": 344538,
+      "category": "images",
+      "file": "apollo-11-bootprint.jpg",
+      "mime": "image/jpeg",
+      "source": "Wikimedia Commons thumbnail of NASA public domain image",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Apollo_11_bootprint.jpg?width=640"
+    }
+  ]
+}

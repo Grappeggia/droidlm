@@ -93,7 +93,9 @@ DROIDLM_TEST_GOOGLE_PASSWORD='<test-account-password>' \
 ./gradlew verifyWorkspaceEmulator
 ```
 
-`prepareWorkspaceEmulator` installs Drive, Gmail, Docs, and Sheets when APKs are available locally, opens a visible Google sign-in flow when credentials are supplied, skips recovery/address changes, and disables basic device backup before accepting Google services. It does not store credentials in the repo or app.
+`prepareWorkspaceEmulator` installs Drive, Gmail, Docs, and Sheets when APKs are available locally, opens a visible Google sign-in flow when credentials are supplied, skips recovery/address changes, disables basic device backup before accepting Google services, and pushes the sample files under `test-fixtures/workspace` to `/sdcard/Documents/DroidLMFixtures`. It does not store credentials in the repo or app.
+
+`verifyWorkspaceEmulator` checks app availability and opens every fixture on-device through ADB intents. The fixture set includes public online document, image, and spreadsheet examples tracked in `test-fixtures/workspace/fixtures.json`.
 
 APK lookup defaults are `DROIDLM_GOOGLE_APK_DIR` (`/tmp/droidlm-google-apks`) plus `/tmp/google-drive.apk`, `/tmp/google-gmail.apk`, `/tmp/google-docs.apk`, and `/tmp/google-sheets.apk`. Per-app overrides are `DROIDLM_DRIVE_APK`, `DROIDLM_GMAIL_APK`, `DROIDLM_DOCS_APK`, and `DROIDLM_SHEETS_APK`. If no APK is available, use `./gradlew openWorkspaceInstallPages` to open the install URL for the first missing app, finish installation in the emulator UI, then rerun `./gradlew verifyWorkspaceEmulator`.
 
