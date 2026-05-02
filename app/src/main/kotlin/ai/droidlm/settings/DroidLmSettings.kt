@@ -11,9 +11,17 @@ enum class ExecutionMode {
     MOBILERUN_CLOUD_TASK
 }
 
+enum class TranscriptionProvider {
+    ANDROID_SPEECH_RECOGNIZER,
+    OPENAI_RELAY
+}
+
 data class DroidLmSettings(
     val relayBaseUrl: String = "",
     val wakePhrase: String = "DroidLM",
+    val transcriptionProvider: TranscriptionProvider = TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER,
+    val preferOfflineSpeechRecognition: Boolean = true,
+    val showPartialSpeechRecognition: Boolean = true,
     val wakeWordProvider: WakeWordProvider = WakeWordProvider.MANUAL_PUSH_TO_TALK,
     val picovoiceAccessKeyConfigured: Boolean = false,
     val wakeWordModelAssetPath: String = "",

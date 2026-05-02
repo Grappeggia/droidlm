@@ -21,6 +21,9 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val relayBaseUrl = stringPreferencesKey("relay_base_url")
         val wakePhrase = stringPreferencesKey("wake_phrase")
+        val transcriptionProvider = stringPreferencesKey("transcription_provider")
+        val preferOfflineSpeechRecognition = booleanPreferencesKey("prefer_offline_speech_recognition")
+        val showPartialSpeechRecognition = booleanPreferencesKey("show_partial_speech_recognition")
         val wakeWordProvider = stringPreferencesKey("wake_word_provider")
         val picovoiceAccessKeyConfigured = booleanPreferencesKey("picovoice_access_key_configured")
         val wakeWordModelAssetPath = stringPreferencesKey("wake_word_model_asset_path")
@@ -47,6 +50,12 @@ class SettingsRepository(private val context: Context) {
         DroidLmSettings(
             relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
+            transcriptionProvider = enumValueOrDefault(
+                preferences[Keys.transcriptionProvider],
+                TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
+            ),
+            preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
+            showPartialSpeechRecognition = preferences[Keys.showPartialSpeechRecognition] ?: true,
             wakeWordProvider = enumValueOrDefault(
                 preferences[Keys.wakeWordProvider],
                 WakeWordProvider.MANUAL_PUSH_TO_TALK
@@ -74,6 +83,9 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateRelayBaseUrl(value: String) = editString(Keys.relayBaseUrl, value.trim())
     suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
+    suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)
+    suspend fun updatePreferOfflineSpeechRecognition(value: Boolean) = editBoolean(Keys.preferOfflineSpeechRecognition, value)
+    suspend fun updateShowPartialSpeechRecognition(value: Boolean) = editBoolean(Keys.showPartialSpeechRecognition, value)
     suspend fun updateWakeWordProvider(value: WakeWordProvider) = editString(Keys.wakeWordProvider, value.name)
     suspend fun updateWakeWordModelAssetPath(value: String) = editString(Keys.wakeWordModelAssetPath, value.trim())
     suspend fun updateWakeSensitivity(value: Float) = context.settingsDataStore.edit { it[Keys.wakeSensitivity] = value.coerceIn(0f, 1f) }

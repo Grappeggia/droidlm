@@ -19,7 +19,7 @@ DEBUG_RETAIN_UPLOADS = os.getenv("DEBUG_RETAIN_UPLOADS", "false").lower() == "tr
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
-app = FastAPI(title="DroidLM Relay", version="0.1.1")
+app = FastAPI(title="DroidLM Relay", version="0.1.2")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 

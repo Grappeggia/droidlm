@@ -4,6 +4,7 @@ import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.settings.ExecutionMode
+import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
 import android.app.Application
@@ -24,6 +25,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val executionState = app.executor.uiState
     val pendingConfirmation = app.executor.pendingConfirmation
     val listeningState = WakeWordForegroundService.isRunningState
+    val speechRecognitionState = app.speechRecognitionController.state
 
     private val _relayStatus = MutableStateFlow("Unknown")
     val relayStatus: StateFlow<String> = _relayStatus.asStateFlow()
@@ -92,6 +94,9 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
     fun updateExecutionMode(mode: ExecutionMode) = viewModelScope.launch { app.settingsRepository.updateExecutionMode(mode) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
+    fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { app.settingsRepository.updateTranscriptionProvider(provider) }
+    fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
+    fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateShowPartialSpeechRecognition(value) }
     fun updateMaxSteps(value: Int) = viewModelScope.launch { app.settingsRepository.updateMaxAutonomousSteps(value) }
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }

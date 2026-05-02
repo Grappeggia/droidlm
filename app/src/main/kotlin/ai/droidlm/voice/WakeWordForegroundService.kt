@@ -3,6 +3,7 @@ package ai.droidlm.voice
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.relay.RelayCallResult
+import ai.droidlm.settings.TranscriptionProvider
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -66,6 +67,7 @@ class WakeWordForegroundService : Service() {
         isRunningState.value = false
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
+        app.speechRecognitionController.cancelCurrent()
         stopForegroundCompat()
         stopSelf()
     }
@@ -73,6 +75,7 @@ class WakeWordForegroundService : Service() {
     private fun cancelCurrent() {
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
+        app.speechRecognitionController.cancelCurrent()
         app.executor.cancelActive()
         app.actionLogRepository.log(ActionLogType.CANCELLED, "Current DroidLM task cancelled")
         if (!isRunningState.value) {
@@ -82,26 +85,37 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun startPushToTalk() {
-        startForegroundSafely("DroidLM is recording a push-to-talk command.")
+        startForegroundSafely("DroidLM is listening for your push-to-talk command.")
         app.actionLogRepository.log(ActionLogType.WAKE_DETECTED, "Push-to-talk started")
         commandJob?.cancel()
         commandJob = scope.launch {
             runCatching {
                 val settings = app.settingsRepository.settings.first()
-                val recorded = app.commandRecorder.recordCommand()
-                try {
-                    app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Sending command audio to relay")
-                    when (val transcription = app.relayClient.transcribe(settings.relayBaseUrl, recorded.file, recorded.mimeType)) {
-                        is RelayCallResult.Success -> {
-                            app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_RESULT, transcription.value.text)
-                            app.executor.executeTranscript(transcription.value.text)
-                        }
-                        is RelayCallResult.Failure -> {
-                            app.actionLogRepository.log(ActionLogType.ERROR, transcription.message, transcription.errorCode)
+                when (settings.transcriptionProvider) {
+                    TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER -> {
+                        app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Using Android SpeechRecognizer")
+                        val transcript = app.speechRecognitionController.recognizeCommand(
+                            preferOffline = settings.preferOfflineSpeechRecognition
+                        )
+                        app.executor.executeTranscript(transcript)
+                    }
+                    TranscriptionProvider.OPENAI_RELAY -> {
+                        val recorded = app.commandRecorder.recordCommand()
+                        try {
+                            app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Sending command audio to relay")
+                            when (val transcription = app.relayClient.transcribe(settings.relayBaseUrl, recorded.file, recorded.mimeType)) {
+                                is RelayCallResult.Success -> {
+                                    app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_RESULT, transcription.value.text)
+                                    app.executor.executeTranscript(transcription.value.text)
+                                }
+                                is RelayCallResult.Failure -> {
+                                    app.actionLogRepository.log(ActionLogType.ERROR, transcription.message, transcription.errorCode)
+                                }
+                            }
+                        } finally {
+                            if (!settings.debugAudioRetention) recorded.file.delete()
                         }
                     }
-                } finally {
-                    if (!settings.debugAudioRetention) recorded.file.delete()
                 }
             }.onFailure { error ->
                 app.actionLogRepository.log(ActionLogType.ERROR, error.message ?: "Push-to-talk failed")

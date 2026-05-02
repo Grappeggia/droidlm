@@ -3,6 +3,7 @@ package ai.droidlm
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.ExecutionMode
+import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.ui.DroidLmViewModel
 import android.Manifest
@@ -101,6 +102,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
+    val speechRecognition by viewModel.speechRecognitionState.collectAsState()
 
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
@@ -164,6 +166,15 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     onTestOcr = viewModel::testOcr
                 )
             }
+            item {
+                VoiceRecognitionCard(
+                    isListening = speechRecognition.isListening,
+                    partialTranscript = if (settings.showPartialSpeechRecognition) speechRecognition.partialTranscript else "",
+                    finalTranscript = speechRecognition.finalTranscript.ifBlank { execution.lastTranscript },
+                    errorMessage = speechRecognition.errorMessage,
+                    provider = settings.transcriptionProvider.name
+                )
+            }
             pendingConfirmation?.let { pending ->
                 item {
                     ConfirmationCard(
@@ -197,7 +208,7 @@ private fun Header() {
 private fun DisclosureCard() = DroidCard {
     Text("First-run disclosure", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     Spacer(Modifier.height(8.dp))
-    Text("DroidLM records short command clips only after push-to-talk or a configured local wake phrase. Audio goes to your configured relay for transcription. Accessibility lets DroidLM observe and control this device UI. On-device OCR is local by default; cloud screenshot analysis is off unless you enable and confirm it.")
+    Text("DroidLM uses Android's built-in speech recognition by default for push-to-talk, so basic voice commands do not require a paid external API. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI relay transcription, planning, and cloud screenshot analysis are optional. Accessibility lets DroidLM observe and control this device UI.")
 }
 
 @Composable
@@ -217,6 +228,7 @@ private fun StatusCard(
         StatusChip("Notifications", notificationGranted)
         StatusChip("Listening", listening)
         AssistChip(onClick = {}, label = { Text("Relay: $relayStatus") })
+        AssistChip(onClick = {}, label = { Text("Voice: ${settings.transcriptionProvider.name}") })
         StatusChip("OCR", settings.onDeviceOcrEnabled)
         StatusChip("Cloud screenshots", settings.cloudScreenshotAnalysisEnabled)
         AssistChip(onClick = {}, label = { Text("Mode: ${settings.executionMode.name}") })
@@ -274,6 +286,22 @@ private fun ConfirmationCard(
 }
 
 @Composable
+private fun VoiceRecognitionCard(
+    isListening: Boolean,
+    partialTranscript: String,
+    finalTranscript: String,
+    errorMessage: String?,
+    provider: String
+) = DroidCard(container = if (isListening) Color(0xFFFFF5DF) else Color(0xF4FFFFF8)) {
+    Text("Recognized voice", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Provider: $provider")
+    Text("State: ${if (isListening) "Listening..." else "Idle"}")
+    if (partialTranscript.isNotBlank()) Text("Heard so far: $partialTranscript", color = Color(0xFF6A4C35))
+    Text("Final transcript: ${finalTranscript.ifBlank { "None yet" }}", fontWeight = FontWeight.SemiBold)
+    errorMessage?.takeIf { it.isNotBlank() }?.let { Text("Voice error: $it", color = Color(0xFFB95F43)) }
+}
+
+@Composable
 private fun ExecutionCard(transcript: String, action: String, status: String, result: String) = DroidCard {
     Text("Execution", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     Text("Last transcript: ${transcript.ifBlank { "None" }}")
@@ -301,6 +329,20 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     OutlinedTextField(value = relayUrl, onValueChange = { relayUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay base URL") })
     Button(onClick = { viewModel.updateRelayBaseUrl(relayUrl) }) { Text("Save Relay URL") }
+
+    Text("Voice recognition", fontWeight = FontWeight.SemiBold)
+    Text("Android SpeechRecognizer is free and does not require OpenAI. OpenAI Relay remains optional.", color = Color(0xFF42504D))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TranscriptionProvider.entries.forEach { provider ->
+            FilterChip(
+                selected = settings.transcriptionProvider == provider,
+                onClick = { viewModel.updateTranscriptionProvider(provider) },
+                label = { Text(provider.name) }
+            )
+        }
+    }
+    ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
+    ToggleRow("Show partial voice transcript", settings.showPartialSpeechRecognition, viewModel::updateShowPartialSpeech)
 
     Text("Wake-word provider", fontWeight = FontWeight.SemiBold)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

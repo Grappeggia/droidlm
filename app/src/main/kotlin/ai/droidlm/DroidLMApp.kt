@@ -13,6 +13,7 @@ import ai.droidlm.settings.SettingsRepository
 import ai.droidlm.textedit.TextEditingController
 import ai.droidlm.voice.CommandRecorder
 import ai.droidlm.voice.ManualWakeWordEngine
+import ai.droidlm.voice.SpeechRecognitionController
 import android.app.Application
 import android.content.Context
 
@@ -36,6 +37,8 @@ class DroidLMApp : Application() {
     lateinit var executor: DroidLmExecutor
         private set
     lateinit var commandRecorder: CommandRecorder
+        private set
+    lateinit var speechRecognitionController: SpeechRecognitionController
         private set
     lateinit var manualWakeWordEngine: ManualWakeWordEngine
         private set
@@ -61,6 +64,7 @@ class DroidLMApp : Application() {
             mobilerunCloudClient = mobilerunCloudClient
         )
         commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository)
+        speechRecognitionController = SpeechRecognitionController(this, actionLogRepository)
         manualWakeWordEngine = ManualWakeWordEngine()
     }
 
