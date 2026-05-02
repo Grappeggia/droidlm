@@ -68,6 +68,27 @@ Push-to-talk is always available, even when Porcupine wake-word setup is incompl
 - `DroidLM replace draft with final` replaces visible editable text.
 - `DroidLM append new line signed comma Alex` appends a newline and signature.
 
+## Emulator E2E Voice Invocation Test
+
+The repository includes an emulator E2E suite for the command `DroidLM open the Google Drive App`.
+It installs a test-only Drive-compatible target app with package `com.google.android.apps.docs`, uses the packaged spoken WAV sample at `app/src/androidTest/assets/droidlm_open_google_drive.wav`, posts that audio to a mock `/transcribe` relay, and verifies DroidLM launches the Drive package.
+
+Run it with a booted emulator:
+
+```bash
+adb devices
+./gradlew connectedVoiceE2e
+```
+
+If the emulator already has real Google Drive installed, skip the stub install and run:
+
+```bash
+./gradlew :app:connectedDebugAndroidTest
+```
+
+The E2E test APK is built by `./gradlew :app:assembleDebugAndroidTest`, and the Drive stub APK is built by `./gradlew :driveStub:assembleDebug`.
+
+
 ## OCR And Text Editing
 
 DroidLM first uses Accessibility text and selection APIs. It falls back to screenshot + ML Kit OCR for coordinate estimates only when structured text is unavailable. Cloud screenshot analysis is disabled by default and requires explicit settings plus confirmation where configured.
