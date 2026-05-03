@@ -116,6 +116,7 @@ class FloatingControlOverlayService : Service() {
 
         recordButton = Button(this).apply {
             text = OverlayStatusFormatter.recordButton(false, "Idle")
+            contentDescription = RECORD_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
             minWidth = (48 * density).toInt()
             minHeight = (48 * density).toInt()
@@ -131,6 +132,7 @@ class FloatingControlOverlayService : Service() {
         }
         val moreButton = Button(this).apply {
             text = "..."
+            contentDescription = MORE_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
             minWidth = (48 * density).toInt()
             minHeight = (48 * density).toInt()
@@ -208,7 +210,7 @@ class FloatingControlOverlayService : Service() {
     private fun toggleRecord() {
         val speech = app.speechRecognitionController.state.value
         val execution = app.executor.uiState.value
-        if (speech.isListening || execution.status !in setOf("Idle", "Error")) {
+        if (speech.isListening || execution.status !in setOf("Idle", "Error", "Cancelled")) {
             startService(WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_CANCEL))
         } else {
             ContextCompat.startForegroundService(
@@ -248,6 +250,8 @@ class FloatingControlOverlayService : Service() {
         const val ACTION_STOP = "ai.droidlm.action.STOP_OVERLAY"
         const val ACTION_TOGGLE_RECORD = "ai.droidlm.action.OVERLAY_TOGGLE_RECORD"
         const val ACTION_OPEN_APP = "ai.droidlm.action.OVERLAY_OPEN_APP"
+        const val RECORD_BUTTON_CONTENT_DESCRIPTION = "DroidLM record command"
+        const val MORE_BUTTON_CONTENT_DESCRIPTION = "DroidLM open full app"
         val isRunningState = MutableStateFlow(false)
 
         fun intent(context: Context, action: String): Intent =

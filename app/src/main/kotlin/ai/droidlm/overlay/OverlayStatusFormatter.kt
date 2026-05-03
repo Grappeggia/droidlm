@@ -10,7 +10,7 @@ object OverlayStatusFormatter {
     ): String = when {
         isListening && partialTranscript.isNotBlank() -> "Heard: ${partialTranscript.take(40)}"
         isListening -> "Listening..."
-        executionStatus !in setOf("Idle", "Error") -> executionStatus.take(40)
+        executionStatus !in IDLE_STATUSES -> executionStatus.take(40)
         finalTranscript.isNotBlank() -> "Heard: ${finalTranscript.take(40)}"
         lastResult.isNotBlank() -> lastResult.take(40)
         else -> "Tap circle to speak"
@@ -18,7 +18,9 @@ object OverlayStatusFormatter {
 
     fun recordButton(isListening: Boolean, executionStatus: String): String = when {
         isListening -> "■"
-        executionStatus !in setOf("Idle", "Error") -> "×"
+        executionStatus !in IDLE_STATUSES -> "×"
         else -> "●"
     }
+
+    private val IDLE_STATUSES = setOf("Idle", "Error", "Cancelled")
 }

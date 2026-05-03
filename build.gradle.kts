@@ -37,6 +37,17 @@ fun org.gradle.api.Project.adbOutput(adb: String, vararg arguments: String): Str
 fun org.gradle.api.Project.isPackageInstalled(adb: String, packageName: String): Boolean =
     adbOutput(adb, "shell", "pm", "path", packageName).contains("package:")
 
+fun org.gradle.api.Project.localEnvValue(name: String): String? {
+    val envFile = file(".env.local")
+    if (!envFile.isFile) return null
+    return envFile.readLines()
+        .map { it.trim() }
+        .firstOrNull { it.startsWith("$name=") }
+        ?.substringAfter('=')
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+}
+
 tasks.register("ensureDriveForE2e") {
     group = "verification"
     description = "Ensures com.google.android.apps.docs exists on the connected emulator, installing the test stub only when real Drive is missing."
@@ -208,6 +219,45 @@ tasks.register("verifyWorkspaceEmulator") {
     group = "verification"
     description = "Verifies Workspace apps, account availability, and fixture file opening on the connected emulator."
     dependsOn("checkWorkspaceAppsInstalled", "workspaceEmulatorReport", "verifyWorkspaceFixtures")
+}
+
+tasks.register("connectedWorkspaceFileOpsE2e") {
+    group = "verification"
+    description = "Runs hover-widget Workspace file operation E2E tests against the connected emulator."
+    dependsOn("prepareWorkspaceEmulator", ":app:installDebug", ":app:installDebugAndroidTest")
+
+    doLast {
+        val adb = project.androidAdbPath()
+        val args = mutableListOf(
+            "shell",
+            "am",
+            "instrument",
+            "-w",
+            "-r",
+            "-e",
+            "workspaceFileOpsE2e",
+            "true",
+            "-e",
+            "class",
+            "ai.droidlm.e2e.DroidLmWorkspaceFileOpsE2ETest"
+        )
+        project.localEnvValue("OPENAI_API_KEY")?.let { key ->
+            args += listOf("-e", "openAiApiKey", key)
+        }
+        args += "ai.droidlm.test/androidx.test.runner.AndroidJUnitRunner"
+        val output = java.io.ByteArrayOutputStream()
+        val result = exec {
+            commandLine(adb, *args.toTypedArray())
+            standardOutput = output
+            errorOutput = output
+            isIgnoreExitValue = true
+        }
+        val text = output.toString()
+        print(text)
+        if (result.exitValue != 0 || text.contains("FAILURES!!!") || text.contains("INSTRUMENTATION_CODE: -1")) {
+            throw org.gradle.api.GradleException("Workspace file operation E2E tests failed")
+        }
+    }
 }
 
 gradle.projectsEvaluated {

@@ -5,6 +5,7 @@ import ai.droidlm.logs.ActionLogType
 import ai.droidlm.settings.SettingsRepository
 import android.Manifest
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
@@ -21,10 +22,23 @@ class CommandRecorder(
     private val logs: ActionLogRepository
 ) {
     @Volatile private var activeRecorder: MediaRecorder? = null
+    @Volatile private var debugRecordedCommand: RecordedCommand? = null
+
+    fun queueDebugRecordedCommand(file: File, mimeType: String, durationMs: Long) {
+        check(isDebuggable()) { "Debug audio overrides are only available in debug builds" }
+        debugRecordedCommand = RecordedCommand(file, durationMs, mimeType)
+    }
 
     suspend fun recordCommand(maxDurationMs: Long = 12_000): RecordedCommand = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("Microphone permission is missing")
+        }
+        debugRecordedCommand?.let { queued ->
+            check(isDebuggable()) { "Debug audio overrides are only available in debug builds" }
+            debugRecordedCommand = null
+            logs.log(ActionLogType.RECORDING_STARTED, "Using queued debug command audio")
+            logs.log(ActionLogType.RECORDING_STOPPED, "Queued debug command audio ready")
+            return@withContext queued
         }
         val file = File.createTempFile("droidlm-command-", ".m4a", context.cacheDir)
         val recorder = createMediaRecorder()
@@ -63,9 +77,13 @@ class CommandRecorder(
             runCatching { recorder.reset() }
             runCatching { recorder.release() }
         }
+        debugRecordedCommand = null
         activeRecorder = null
         logs.log(ActionLogType.CANCELLED, "Command recording cancelled")
     }
+
+    private fun isDebuggable(): Boolean =
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     @Suppress("DEPRECATION")
     private fun createMediaRecorder(): MediaRecorder =
