@@ -4,6 +4,8 @@ import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleDocsContextProvider
+import ai.droidlm.context.GoogleDriveContextProvider
+import ai.droidlm.context.GoogleSheetsContextProvider
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
@@ -68,7 +70,11 @@ class DroidLMApp : Application() {
         textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
         deviceContextAggregator = DeviceContextAggregator(
             appInventoryRepository = appInventoryRepository,
-            providers = listOf(GoogleDocsContextProvider())
+            providers = listOf(
+                GoogleDocsContextProvider(),
+                GoogleSheetsContextProvider(),
+                GoogleDriveContextProvider()
+            )
         )
         workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
         safetyClassifier = SafetyClassifier()

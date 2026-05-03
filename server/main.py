@@ -190,7 +190,11 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
         "You plan safe Android UI actions for DroidLM. Return JSON only. "
         "Create a short executable plan using only supported action names. "
         "Use deviceContext as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits. "
+        "For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits. "
+        "For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations. "
         "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
+        "If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files. "
+        "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal, local actions. Never claim actions were executed. "
         "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
         "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing."
@@ -228,7 +232,11 @@ async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
     system = (
         "You control an Android device through a limited tool interface. Return one JSON action only. "
         "Use deviceContext as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before choosing edits. "
+        "For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits. "
+        "For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations. "
         "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
+        "If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files. "
+        "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal actions. Ask for confirmation for risky operations. Never claim you executed an action. "
         "Use DONE when task is complete. Do not request actions outside the available Android tool schema."
     )
