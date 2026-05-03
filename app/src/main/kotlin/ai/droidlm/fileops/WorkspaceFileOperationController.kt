@@ -23,10 +23,12 @@ class WorkspaceFileOperationController(
     private val logs: ActionLogRepository
 ) {
     suspend fun formatCurrentLineAsBullet(transcript: String, action: DroidLmAction.FormatCurrentLineAsBullet): ActionResult {
-        runEditableTextUpdate { target, text, selection ->
-            val lineIndex = lineIndexForSelection(text, selection)
-            addBulletToLine(text, action.bulletPrefix, lineIndex)
-        }?.let { return it }
+        if (action.fileUri.isNullOrBlank()) {
+            runEditableTextUpdate { target, text, selection ->
+                val lineIndex = lineIndexForSelection(text, selection)
+                addBulletToLine(text, action.bulletPrefix, lineIndex)
+            }?.let { return it }
+        }
 
         val file = resolveFile(action.fileUri, FileKind.DOCUMENT)
             ?: return ActionResult.fail("No editable document file found", "FILE_NOT_FOUND")
@@ -40,8 +42,10 @@ class WorkspaceFileOperationController(
         val replacementText = action.replacementText.ifBlank { inferred?.second.orEmpty() }
         if (targetText.isBlank()) return ActionResult.fail("No replacement target was provided", "MISSING_TARGET_TEXT")
 
-        val editable = textEditingController.replaceText(targetText, replacementText)
-        if (editable.success) return editable
+        if (action.fileUri.isNullOrBlank()) {
+            val editable = textEditingController.replaceText(targetText, replacementText)
+            if (editable.success) return editable
+        }
 
         val file = resolveFile(action.fileUri, FileKind.DOCUMENT)
             ?: return ActionResult.fail("No editable document file found", "FILE_NOT_FOUND")
@@ -56,8 +60,10 @@ class WorkspaceFileOperationController(
         if (note.isBlank()) return ActionResult.fail("No note text was provided", "MISSING_NOTE_TEXT")
         val textToAppend = "\n$note"
 
-        val editable = textEditingController.appendText(textToAppend)
-        if (editable.success) return editable
+        if (action.fileUri.isNullOrBlank()) {
+            val editable = textEditingController.appendText(textToAppend)
+            if (editable.success) return editable
+        }
 
         val file = resolveFile(action.fileUri, FileKind.DOCUMENT)
             ?: return ActionResult.fail("No editable document file found", "FILE_NOT_FOUND")
@@ -71,8 +77,10 @@ class WorkspaceFileOperationController(
         val value = action.value.ifBlank { inferCurrentCellValue(transcript) }
         if (value.isBlank()) return ActionResult.fail("No cell value was provided", "MISSING_CELL_VALUE")
 
-        val editable = textEditingController.replaceSelection(value)
-        if (editable.success) return editable
+        if (action.fileUri.isNullOrBlank()) {
+            val editable = textEditingController.replaceSelection(value)
+            if (editable.success) return editable
+        }
 
         val file = resolveFile(action.fileUri, FileKind.SPREADSHEET)
             ?: return ActionResult.fail("No editable spreadsheet file found", "FILE_NOT_FOUND")
@@ -85,8 +93,10 @@ class WorkspaceFileOperationController(
         if (values.isEmpty()) return ActionResult.fail("No row values were provided", "MISSING_ROW_VALUES")
         val rowText = values.joinToString("\t")
 
-        val editable = textEditingController.insertTextAtSelection(rowText)
-        if (editable.success) return editable
+        if (action.fileUri.isNullOrBlank()) {
+            val editable = textEditingController.insertTextAtSelection(rowText)
+            if (editable.success) return editable
+        }
 
         val file = resolveFile(action.fileUri, FileKind.SPREADSHEET)
             ?: return ActionResult.fail("No editable spreadsheet file found", "FILE_NOT_FOUND")
@@ -225,26 +235,12 @@ class WorkspaceFileOperationController(
             .orEmpty()
 
     private fun appendOrNormalizeNote(text: String, note: String): String {
-        val hadTrailingNewline = text.endsWith("\n")
-        val lines = text.trimEnd('\n').split('\n').toMutableList()
-        val matchIndex = lines.indexOfFirst { it.trim().equals(note, ignoreCase = true) }
-        if (matchIndex >= 0) {
-            lines[matchIndex] = note
-            return lines.joinToString("\n") + "\n"
-        }
         val separator = if (text.endsWith("\n") || text.isBlank()) "" else "\n"
-        return text + separator + note + if (hadTrailingNewline || text.isNotBlank()) "\n" else ""
+        return text + separator + note + "\n"
     }
 
     private fun appendOrNormalizeCsvRow(text: String, values: List<String>): String {
         val desiredRow = values.joinToString(",")
-        val hadTrailingNewline = text.endsWith("\n")
-        val lines = text.trimEnd('\n').split('\n').toMutableList()
-        val matchIndex = lines.indexOfFirst { it.trim().equals(desiredRow, ignoreCase = true) }
-        if (matchIndex >= 0) {
-            lines[matchIndex] = desiredRow
-            return lines.joinToString("\n") + if (hadTrailingNewline) "\n" else ""
-        }
         val separator = if (text.endsWith("\n") || text.isBlank()) "" else "\n"
         return text + separator + desiredRow + "\n"
     }

@@ -23,6 +23,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -126,6 +127,22 @@ class DroidLmWorkspaceFileOpsE2ETest {
     }
 
     @Test
+    fun replaceOnlyFirstDraftMatchFromHoverWidgetWithPlannedFileAction() = runBlocking {
+        runOperationWithPlannedFileAction(
+            operation = WorkspaceOperation(
+                transcript = "Replace draft with final",
+                devicePath = "$DEVICE_RUN_ROOT/docs/replace-first-only.txt",
+                mimeType = "text/plain",
+                viewerPackage = DOCS_PACKAGE,
+                seedText = "draft title\ndraft body\n",
+                expectedTexts = listOf("final title", "draft body"),
+                expectedFileText = "final title\ndraft body\n",
+                unsupportedAction = "REPLACE_CURRENT_DOCUMENT_TEXT"
+            )
+        )
+    }
+
+    @Test
     fun appendReviewNoteFromHoverWidgetWithOpenAiKeyWhenRequested() = runBlocking {
         runOperationWithOpenAiKeyWhenRequested(
             operation = WorkspaceOperation(
@@ -135,6 +152,22 @@ class DroidLmWorkspaceFileOpsE2ETest {
                 viewerPackage = DOCS_PACKAGE,
                 seedText = "Quarterly notes\n",
                 expectedTexts = listOf("reviewed by DroidLM"),
+                unsupportedAction = "APPEND_DOCUMENT_NOTE"
+            )
+        )
+    }
+
+    @Test
+    fun appendDuplicateReviewNoteFromHoverWidgetWithPlannedFileAction() = runBlocking {
+        runOperationWithPlannedFileAction(
+            operation = WorkspaceOperation(
+                transcript = "Append a note saying reviewed by DroidLM",
+                devicePath = "$DEVICE_RUN_ROOT/docs/append-duplicate-note.txt",
+                mimeType = "text/plain",
+                viewerPackage = DOCS_PACKAGE,
+                seedText = "Quarterly notes\nreviewed by DroidLM\n",
+                expectedTexts = listOf("reviewed by DroidLM"),
+                expectedFileText = "Quarterly notes\nreviewed by DroidLM\nreviewed by DroidLM\n",
                 unsupportedAction = "APPEND_DOCUMENT_NOTE"
             )
         )
@@ -170,6 +203,22 @@ class DroidLmWorkspaceFileOpsE2ETest {
         )
     }
 
+    @Test
+    fun addDuplicateSpreadsheetRowFromHoverWidgetWithPlannedFileAction() = runBlocking {
+        runOperationWithPlannedFileAction(
+            operation = WorkspaceOperation(
+                transcript = "Add a row with April, 120, approved",
+                devicePath = "$DEVICE_RUN_ROOT/spreadsheets/add-duplicate-row.csv",
+                mimeType = "text/csv",
+                viewerPackage = SHEETS_PACKAGE,
+                seedText = "Month,Value,Status\nMarch,80,pending\nApril,120,approved\n",
+                expectedTexts = listOf("April", "120", "approved"),
+                expectedFileText = "Month,Value,Status\nMarch,80,pending\nApril,120,approved\nApril,120,approved\n",
+                unsupportedAction = "ADD_SPREADSHEET_ROW"
+            )
+        )
+    }
+
     private suspend fun runOperationWithoutOpenAiKey(operation: WorkspaceOperation) {
         server.dispatcher = operationDispatcher(operation, firstPlanMissingKey = true, secondPlanUnsupported = false)
         openOperationFile(operation)
@@ -185,6 +234,14 @@ class DroidLmWorkspaceFileOpsE2ETest {
         waitForPlannerKeyRequest()
         saveOpenAiKeyToRelay()
         app.executor.retryPlannerKeySetupRequest()
+        waitForExecutionToSettle()
+        assertExpectedTextsVisible(operation)
+    }
+
+    private suspend fun runOperationWithPlannedFileAction(operation: WorkspaceOperation) {
+        server.dispatcher = operationDispatcher(operation, firstPlanMissingKey = false, secondPlanUnsupported = true)
+        openOperationFile(operation)
+        triggerHoverWidgetVoiceCommand(operation.transcript)
         waitForExecutionToSettle()
         assertExpectedTextsVisible(operation)
     }
@@ -319,11 +376,13 @@ class DroidLmWorkspaceFileOpsE2ETest {
     private fun assertExpectedTextsVisible(operation: WorkspaceOperation) {
         val visible = waitUntil(10_000) {
             val fileText = readDeviceFile(operation.devicePath)
-            operation.expectedTexts.all { expected ->
+            val textExpectationsMet = operation.expectedTexts.all { expected ->
                 device.hasObject(By.textContains(expected)) ||
                     device.hasObject(By.descContains(expected)) ||
                     fileText.contains(expected)
             }
+            val exactFileMatch = operation.expectedFileText?.let { fileText == it } ?: true
+            textExpectationsMet && exactFileMatch
         }
         val fileText = readDeviceFile(operation.devicePath)
         val missing = operation.expectedTexts.filterNot { expected ->
@@ -332,15 +391,19 @@ class DroidLmWorkspaceFileOpsE2ETest {
                 fileText.contains(expected)
         }
         val state = app.executor.uiState.value
+        val expectedFileSuffix = operation.expectedFileText?.let { "; expected file=${it.take(200)}" }.orEmpty()
         assertTrue(
             "Expected ${operation.expectedTexts} after '${operation.transcript}', but missing $missing. " +
                 "Last status=${state.status}; last result=${state.lastResult}; parsed=${state.parsedAction}; " +
-                "device file=${fileText.take(200)}",
+                "device file=${fileText.take(200)}$expectedFileSuffix",
             visible
         )
+        operation.expectedFileText?.let { expectedFileText ->
+            assertEquals("Expected exact device file for '${operation.transcript}'", expectedFileText, fileText)
+        }
     }
 
-    private fun readDeviceFile(devicePath: String): String = executeShell("cat \"$devicePath\"")
+    private fun readDeviceFile(devicePath: String): String = executeShell("cat $devicePath")
 
     private fun grantRuntimePermissions() {
         executeShell("pm grant ${targetContext.packageName} ${Manifest.permission.RECORD_AUDIO}")
@@ -426,7 +489,8 @@ class DroidLmWorkspaceFileOpsE2ETest {
         val viewerPackage: String,
         val seedText: String,
         val expectedTexts: List<String>,
-        val unsupportedAction: String
+        val unsupportedAction: String,
+        val expectedFileText: String? = null
     ) {
         fun planFieldsJson(): String = when (unsupportedAction) {
             "FORMAT_CURRENT_LINE_AS_BULLET" -> "\"fileUri\":\"file://$devicePath\",\"bulletPrefix\":\"- \","
