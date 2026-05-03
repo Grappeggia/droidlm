@@ -25,14 +25,14 @@ class OverlayStatusFormatterTest {
 
     @Test fun accessibilitySetupGivesActionableSteps() {
         assertEquals(
-            "Tap Enable for Settings > Accessibility > Installed apps/services > DroidLM Device Control.",
+            "Enable Accessibility settings to unblock actions",
             OverlayStatusFormatter.accessibilitySetupLabel()
         )
     }
 
-    @Test fun accessibilitySetupAfterOpeningSettingsShowsFullPath() {
+    @Test fun accessibilitySetupAfterOpeningSettingsKeepsMessageShort() {
         assertEquals(
-            "Settings > Accessibility > Installed apps/services > DroidLM Device Control > Turn on. Then tap Check.",
+            "Enable Accessibility settings to unblock actions",
             OverlayStatusFormatter.accessibilitySetupLabel(settingsOpened = true)
         )
     }

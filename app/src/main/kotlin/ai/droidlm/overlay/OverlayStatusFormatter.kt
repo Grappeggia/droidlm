@@ -27,11 +27,7 @@ object OverlayStatusFormatter {
     fun accessibilitySetupLabel(
         serviceName: String = "DroidLM Device Control",
         settingsOpened: Boolean = false
-    ): String = if (settingsOpened) {
-        "Settings > Accessibility > Installed apps/services > $serviceName > Turn on. Then tap Check."
-    } else {
-        "Tap Enable for Settings > Accessibility > Installed apps/services > $serviceName."
-    }
+    ): String = "Enable Accessibility settings to unblock actions"
 
     fun compactPlan(plan: PlanPreview, maxChars: Int = 96): String {
         val prefix = if (plan.riskLevel.equals("LOW", ignoreCase = true)) "P:" else "P[${plan.riskLevel.uppercase()}]:"
