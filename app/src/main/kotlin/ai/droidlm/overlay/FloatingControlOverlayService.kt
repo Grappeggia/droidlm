@@ -66,6 +66,7 @@ class FloatingControlOverlayService : Service() {
     private var moreButton: Button? = null
     private var statusText: TextView? = null
     private var accessibilityEnabled: Boolean = false
+    private var accessibilitySettingsOpened: Boolean = false
     private var accessibilityPollingJob: Job? = null
 
     override fun onCreate() {
@@ -354,7 +355,7 @@ class FloatingControlOverlayService : Service() {
             enableAccessibilityButton?.visibility = View.VISIBLE
             checkAccessibilityButton?.visibility = View.VISIBLE
             moreButton?.visibility = View.VISIBLE
-            statusText?.text = OverlayStatusFormatter.accessibilitySetupLabel()
+            statusText?.text = OverlayStatusFormatter.accessibilitySetupLabel(settingsOpened = accessibilitySettingsOpened)
             return
         }
         recordButton?.visibility = View.VISIBLE
@@ -411,6 +412,8 @@ class FloatingControlOverlayService : Service() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.fold(
             onSuccess = {
+                accessibilitySettingsOpened = true
+                updateOverlayText()
                 app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Accessibility Settings from floating controls")
                 startAccessibilityPolling()
             },
@@ -424,7 +427,10 @@ class FloatingControlOverlayService : Service() {
     private fun refreshAccessibilityStatus() {
         scope.launch {
             accessibilityEnabled = app.portalController.isAccessibilityEnabled()
-            if (accessibilityEnabled) accessibilityPollingJob?.cancel()
+            if (accessibilityEnabled) {
+                accessibilitySettingsOpened = false
+                accessibilityPollingJob?.cancel()
+            }
             updateOverlayText()
         }
     }
@@ -434,6 +440,7 @@ class FloatingControlOverlayService : Service() {
         accessibilityPollingJob = scope.launch {
             repeat(60) {
                 accessibilityEnabled = app.portalController.isAccessibilityEnabled()
+                if (accessibilityEnabled) accessibilitySettingsOpened = false
                 updateOverlayText()
                 if (accessibilityEnabled) return@launch
                 delay(1000)
