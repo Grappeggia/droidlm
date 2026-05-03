@@ -55,10 +55,7 @@ class SettingsRepository(private val context: Context) {
         DroidLmSettings(
             relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
-            transcriptionProvider = enumValueOrDefault(
-                preferences[Keys.transcriptionProvider],
-                TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
-            ),
+            transcriptionProvider = androidSpeechTranscriptionProvider(preferences[Keys.transcriptionProvider]),
             preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
             showPartialSpeechRecognition = preferences[Keys.showPartialSpeechRecognition] ?: true,
             floatingOverlayEnabled = preferences[Keys.floatingOverlayEnabled] ?: false,
@@ -160,6 +157,13 @@ class SettingsRepository(private val context: Context) {
             )
         }.getOrElse {
             context.getSharedPreferences("secure_settings_fallback", Context.MODE_PRIVATE)
+        }
+    }
+
+    private fun androidSpeechTranscriptionProvider(value: String?): TranscriptionProvider {
+        return when (enumValueOrDefault(value, TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER)) {
+            TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER -> TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
+            TranscriptionProvider.OPENAI_RELAY -> TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
         }
     }
 

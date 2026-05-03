@@ -5,7 +5,6 @@ import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.ExecutionMode
-import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.ui.DroidLmViewModel
 import android.Manifest
@@ -197,10 +196,8 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
             item {
                 VoiceRecognitionCard(
                     isListening = speechRecognition.isListening,
-                    partialTranscript = if (settings.showPartialSpeechRecognition) speechRecognition.partialTranscript else "",
                     finalTranscript = speechRecognition.finalTranscript.ifBlank { execution.lastTranscript },
-                    errorMessage = speechRecognition.errorMessage,
-                    provider = settings.transcriptionProvider.name
+                    errorMessage = speechRecognition.errorMessage
                 )
             }
             plannerKeySetup?.let { setup ->
@@ -255,7 +252,7 @@ private fun Header() {
 private fun DisclosureCard() = DroidCard {
     Text("First-run disclosure", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     Spacer(Modifier.height(8.dp))
-    Text("DroidLM uses Android's built-in speech recognition by default for push-to-talk, so basic voice commands do not require a paid external API. Optional floating controls can appear over other apps only after you grant Android overlay permission. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI relay transcription, planning, and cloud screenshot analysis are optional. Accessibility lets DroidLM observe and control this device UI.")
+    Text("DroidLM uses Android's built-in speech recognition for push-to-talk, so basic voice commands do not require a paid external API. Optional floating controls can appear over other apps only after you grant Android overlay permission. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI-backed planning and cloud screenshot analysis remain optional through the relay. Accessibility lets DroidLM observe and control this device UI.")
 }
 
 @Composable
@@ -277,7 +274,7 @@ private fun StatusCard(
         StatusChip("Notifications", notificationGranted)
         StatusChip("Listening", listening)
         AssistChip(onClick = {}, label = { Text("Relay: $relayStatus") })
-        AssistChip(onClick = {}, label = { Text("Voice: ${settings.transcriptionProvider.name}") })
+        AssistChip(onClick = {}, label = { Text("Voice: Android SpeechRecognizer") })
         StatusChip("Overlay", overlayRunning)
         StatusChip("Overlay permission", overlayGranted)
         StatusChip("OCR", settings.onDeviceOcrEnabled)
@@ -387,15 +384,12 @@ private fun PlanPreviewCard(
 @Composable
 private fun VoiceRecognitionCard(
     isListening: Boolean,
-    partialTranscript: String,
     finalTranscript: String,
-    errorMessage: String?,
-    provider: String
+    errorMessage: String?
 ) = DroidCard(container = if (isListening) Color(0xFFFFF5DF) else Color(0xF4FFFFF8)) {
     Text("Recognized voice", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Text("Provider: $provider")
+    Text("Provider: Android SpeechRecognizer")
     Text("State: ${if (isListening) "Listening..." else "Idle"}")
-    if (partialTranscript.isNotBlank()) Text("Heard so far: $partialTranscript", color = Color(0xFF6A4C35))
     Text("Final transcript: ${finalTranscript.ifBlank { "None yet" }}", fontWeight = FontWeight.SemiBold)
     errorMessage?.takeIf { it.isNotBlank() }?.let { Text("Voice error: $it", color = Color(0xFFB95F43)) }
 }
@@ -430,18 +424,8 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     Button(onClick = { viewModel.updateRelayBaseUrl(relayUrl) }) { Text("Save Relay URL") }
 
     Text("Voice recognition", fontWeight = FontWeight.SemiBold)
-    Text("Android SpeechRecognizer is free and does not require OpenAI. OpenAI Relay remains optional.", color = Color(0xFF42504D))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TranscriptionProvider.entries.forEach { provider ->
-            FilterChip(
-                selected = settings.transcriptionProvider == provider,
-                onClick = { viewModel.updateTranscriptionProvider(provider) },
-                label = { Text(provider.name) }
-            )
-        }
-    }
+    Text("Voice commands always use Android SpeechRecognizer. Interim transcript text stays hidden until recording stops.", color = Color(0xFF42504D))
     ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
-    ToggleRow("Show partial voice transcript", settings.showPartialSpeechRecognition, viewModel::updateShowPartialSpeech)
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
     Text("Shows a small overlay with a record circle and ... button so you can issue commands from other apps.", color = Color(0xFF42504D))

@@ -141,8 +141,8 @@ class FloatingControlOverlayService : Service() {
         }
 
         pill.addView(recordButton)
-        pill.addView(statusText)
         pill.addView(moreButton)
+        pill.addView(statusText)
         attachDragHandler(pill, layoutParams)
         return pill
     }
@@ -210,7 +210,9 @@ class FloatingControlOverlayService : Service() {
     private fun toggleRecord() {
         val speech = app.speechRecognitionController.state.value
         val execution = app.executor.uiState.value
-        if (speech.isListening || execution.status !in setOf("Idle", "Error", "Cancelled")) {
+        if (speech.isListening) {
+            startService(WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_STOP_LISTENING))
+        } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
             startService(WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_CANCEL))
         } else {
             ContextCompat.startForegroundService(

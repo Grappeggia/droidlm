@@ -2,8 +2,6 @@ package ai.droidlm.voice
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
-import ai.droidlm.relay.RelayCallResult
-import ai.droidlm.settings.TranscriptionProvider
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -64,10 +62,10 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun stopListening() {
+        if (app.speechRecognitionController.stopCurrent()) return
         isRunningState.value = false
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
-        app.speechRecognitionController.cancelCurrent()
         stopForegroundCompat()
         stopSelf()
     }
@@ -91,32 +89,11 @@ class WakeWordForegroundService : Service() {
         commandJob = scope.launch {
             runCatching {
                 val settings = app.settingsRepository.settings.first()
-                when (settings.transcriptionProvider) {
-                    TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER -> {
-                        app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Using Android SpeechRecognizer")
-                        val transcript = app.speechRecognitionController.recognizeCommand(
-                            preferOffline = settings.preferOfflineSpeechRecognition
-                        )
-                        app.executor.planTranscript(transcript)
-                    }
-                    TranscriptionProvider.OPENAI_RELAY -> {
-                        val recorded = app.commandRecorder.recordCommand()
-                        try {
-                            app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Sending command audio to relay")
-                            when (val transcription = app.relayClient.transcribe(settings.relayBaseUrl, recorded.file, recorded.mimeType)) {
-                                is RelayCallResult.Success -> {
-                                    app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_RESULT, transcription.value.text)
-                                    app.executor.planTranscript(transcription.value.text)
-                                }
-                                is RelayCallResult.Failure -> {
-                                    app.actionLogRepository.log(ActionLogType.ERROR, transcription.message, transcription.errorCode)
-                                }
-                            }
-                        } finally {
-                            if (!settings.debugAudioRetention) recorded.file.delete()
-                        }
-                    }
-                }
+                app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Using Android SpeechRecognizer")
+                val transcript = app.speechRecognitionController.recognizeCommand(
+                    preferOffline = settings.preferOfflineSpeechRecognition
+                )
+                app.executor.planTranscript(transcript)
             }.onFailure { error ->
                 app.actionLogRepository.log(ActionLogType.ERROR, error.message ?: "Push-to-talk failed")
             }

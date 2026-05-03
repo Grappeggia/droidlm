@@ -1,7 +1,6 @@
 package ai.droidlm.overlay
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OverlayStatusFormatterTest {
@@ -10,9 +9,9 @@ class OverlayStatusFormatterTest {
         assertEquals("●", OverlayStatusFormatter.recordButton(false, "Idle"))
     }
 
-    @Test fun listeningShowsPartialTranscript() {
+    @Test fun listeningHidesPartialTranscript() {
         val label = OverlayStatusFormatter.label(true, "open drive", "", "Idle", "")
-        assertTrue(label.contains("open drive"))
+        assertEquals("Listening...", label)
         assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
     }
 

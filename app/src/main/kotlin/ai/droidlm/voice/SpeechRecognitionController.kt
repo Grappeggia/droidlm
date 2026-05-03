@@ -52,7 +52,7 @@ class SpeechRecognitionController(
             throw IllegalStateException(message)
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            val message = "No Android speech recognizer is available on this device. Install or enable a speech recognition service, or use OpenAI Relay mode."
+            val message = "No Android speech recognizer is available on this device. Install or enable a speech recognition service."
             _state.value = _state.value.copy(isListening = false, errorMessage = message)
             throw IllegalStateException(message)
         }
@@ -78,7 +78,7 @@ class SpeechRecognitionController(
 
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    _state.value = SpeechRecognitionUiState(isListening = true)
+                    _state.value = _state.value.copy(isListening = true, partialTranscript = "", errorMessage = null)
                     logs.log(ActionLogType.RECORDING_STARTED, "Android speech recognition started")
                 }
 
@@ -106,10 +106,11 @@ class SpeechRecognitionController(
                         if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
                         return
                     }
+                    val finalText = appendTranscript(_state.value.finalTranscript, transcript)
                     _state.value = _state.value.copy(
                         isListening = false,
                         partialTranscript = "",
-                        finalTranscript = transcript,
+                        finalTranscript = finalText,
                         errorMessage = null
                     )
                     logs.log(ActionLogType.RECORDING_STOPPED, "Android speech recognition stopped")
@@ -117,12 +118,7 @@ class SpeechRecognitionController(
                     if (continuation.isActive) continuation.resume(transcript)
                 }
 
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val partial = bestTranscript(partialResults)
-                    if (partial.isNotBlank()) {
-                        _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null)
-                    }
-                }
+                override fun onPartialResults(partialResults: Bundle?) = Unit
 
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
             })
@@ -137,7 +133,7 @@ class SpeechRecognitionController(
 
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
@@ -145,9 +141,19 @@ class SpeechRecognitionController(
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 700L)
             }
-            _state.value = SpeechRecognitionUiState(isListening = true)
+            _state.value = _state.value.copy(isListening = true, partialTranscript = "", errorMessage = null)
             recognizer.startListening(intent)
         }
+    }
+
+    fun stopCurrent(): Boolean {
+        val recognizer = activeRecognizer ?: return false
+        mainHandler.post {
+            runCatching { recognizer.stopListening() }
+            _state.value = _state.value.copy(isListening = false, partialTranscript = "", errorMessage = null)
+            logs.log(ActionLogType.RECORDING_STOPPED, "Android speech recognition stop requested")
+        }
+        return true
     }
 
     fun cancelCurrent() {
@@ -164,6 +170,12 @@ class SpeechRecognitionController(
 
     fun clear() {
         _state.value = SpeechRecognitionUiState()
+    }
+
+    private fun appendTranscript(current: String, transcript: String): String = when {
+        current.isBlank() -> transcript
+        transcript.isBlank() -> current
+        else -> "$current\n$transcript"
     }
 
     private fun bestTranscript(results: Bundle?): String {

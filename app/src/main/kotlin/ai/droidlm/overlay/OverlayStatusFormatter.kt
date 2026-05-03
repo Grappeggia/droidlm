@@ -8,7 +8,6 @@ object OverlayStatusFormatter {
         executionStatus: String,
         lastResult: String
     ): String = when {
-        isListening && partialTranscript.isNotBlank() -> "Heard: ${partialTranscript.take(40)}"
         isListening -> "Listening..."
         executionStatus !in IDLE_STATUSES -> executionStatus.take(40)
         finalTranscript.isNotBlank() -> "Heard: ${finalTranscript.take(40)}"
