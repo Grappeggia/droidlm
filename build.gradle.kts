@@ -10,6 +10,13 @@ data class WorkspaceApp(
     val installableFromPlay: Boolean = true
 )
 
+data class AndroidE2eSuite(
+    val className: String,
+    val sourcePath: String,
+    val artifactSubdirectory: String,
+    val instrumentationArgs: Map<String, String> = emptyMap()
+)
+
 val googleWorkspaceApps = listOf(
     WorkspaceApp("Google Drive", "com.google.android.apps.docs"),
     WorkspaceApp("Gmail", "com.google.android.gm"),
@@ -46,6 +53,89 @@ fun org.gradle.api.Project.localEnvValue(name: String): String? {
         ?.substringAfter('=')
         ?.trim()
         ?.takeIf { it.isNotBlank() }
+}
+
+fun org.gradle.api.Project.androidTestMethodNames(sourcePath: String): List<String> {
+    val text = file(sourcePath).readText()
+    return Regex("@Test\\s+fun\\s+(\\w+)\\s*\\(")
+        .findAll(text)
+        .map { it.groupValues[1] }
+        .toList()
+        .ifEmpty { error("No @Test methods found in $sourcePath") }
+}
+
+fun org.gradle.api.Project.sanitizeArtifactName(value: String): String =
+    value.replace(Regex("[^A-Za-z0-9._-]+"), "-").trim('-').ifBlank { "artifact" }
+
+fun org.gradle.api.Project.startScreenRecording(adb: String, deviceVideoPath: String): Process {
+    adbOutput(adb, "shell", "rm", "-f", deviceVideoPath)
+    return ProcessBuilder(adb, "shell", "screenrecord", "--time-limit", "180", deviceVideoPath)
+        .redirectErrorStream(true)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .start()
+}
+
+fun org.gradle.api.Project.stopScreenRecording(adb: String, recorder: Process) {
+    adbOutput(adb, "shell", "pkill", "-INT", "screenrecord")
+    recorder.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+    if (recorder.isAlive) recorder.destroyForcibly()
+    Thread.sleep(1500)
+}
+
+fun org.gradle.api.Project.pullRecordedVideo(adb: String, deviceVideoPath: String, hostVideo: java.io.File) {
+    val pullOutput = adbOutput(adb, "pull", deviceVideoPath, hostVideo.absolutePath)
+    if (pullOutput.isNotBlank()) println(pullOutput)
+    if (!hostVideo.isFile || hostVideo.length() == 0L) {
+        error("Expected recorded video at ${hostVideo.absolutePath}")
+    }
+    adbOutput(adb, "shell", "rm", "-f", deviceVideoPath)
+}
+
+fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: AndroidE2eSuite) {
+    val artifactDir = file("test-artifacts/e2e-videos/${suite.artifactSubdirectory}").apply { mkdirs() }
+    val deviceVideoDir = "/sdcard/Documents/DroidLMTestRuns/videos"
+    adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
+    val failures = mutableListOf<String>()
+
+    androidTestMethodNames(suite.sourcePath).forEach { methodName ->
+        val selector = "${suite.className}#$methodName"
+        val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
+        val hostVideo = artifactDir.resolve(videoFileName)
+        val deviceVideoPath = "$deviceVideoDir/$videoFileName"
+        println("Recording $selector to ${hostVideo.relativeTo(projectDir)}")
+        val recorder = startScreenRecording(adb, deviceVideoPath)
+        Thread.sleep(1000)
+        val output = java.io.ByteArrayOutputStream()
+
+        try {
+            val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
+            suite.instrumentationArgs.forEach { (key, value) ->
+                args += listOf("-e", key, value)
+            }
+            args += listOf("-e", "class", selector)
+            args += "ai.droidlm.test/androidx.test.runner.AndroidJUnitRunner"
+
+            val result = exec {
+                commandLine(adb, *args.toTypedArray())
+                standardOutput = output
+                errorOutput = output
+                isIgnoreExitValue = true
+            }
+            val text = output.toString()
+            print(text)
+            if (result.exitValue != 0 || text.contains("FAILURES!!!")) {
+                failures += selector
+            }
+        } finally {
+            runCatching { stopScreenRecording(adb, recorder) }
+            runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+                .onFailure { failures += "$selector (video capture failed: ${it.message})" }
+        }
+    }
+
+    if (failures.isNotEmpty()) {
+        error("Android E2E failures: ${failures.joinToString(", ")}")
+    }
 }
 
 tasks.register("ensureDriveForE2e") {
@@ -228,35 +318,21 @@ tasks.register("connectedWorkspaceFileOpsE2e") {
 
     doLast {
         val adb = project.androidAdbPath()
-        val args = mutableListOf(
-            "shell",
-            "am",
-            "instrument",
-            "-w",
-            "-r",
-            "-e",
-            "workspaceFileOpsE2e",
-            "true",
-            "-e",
-            "class",
-            "ai.droidlm.e2e.DroidLmWorkspaceFileOpsE2ETest"
+        val instrumentationArgs = mutableMapOf(
+            "workspaceFileOpsE2e" to "true"
         )
         project.localEnvValue("OPENAI_API_KEY")?.let { key ->
-            args += listOf("-e", "openAiApiKey", key)
+            instrumentationArgs["openAiApiKey"] = key
         }
-        args += "ai.droidlm.test/androidx.test.runner.AndroidJUnitRunner"
-        val output = java.io.ByteArrayOutputStream()
-        val result = exec {
-            commandLine(adb, *args.toTypedArray())
-            standardOutput = output
-            errorOutput = output
-            isIgnoreExitValue = true
-        }
-        val text = output.toString()
-        print(text)
-        if (result.exitValue != 0 || text.contains("FAILURES!!!")) {
-            throw org.gradle.api.GradleException("Workspace file operation E2E tests failed")
-        }
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmWorkspaceFileOpsE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmWorkspaceFileOpsE2ETest.kt",
+                artifactSubdirectory = "workspace-file-ops",
+                instrumentationArgs = instrumentationArgs
+            )
+        )
     }
 }
 
@@ -267,6 +343,17 @@ gradle.projectsEvaluated {
 tasks.register("connectedVoiceE2e") {
     group = "verification"
     description = "Runs DroidLM emulator voice invocation E2E tests. Requires a running emulator."
-    dependsOn(":ensureDriveForE2e", ":app:connectedDebugAndroidTest")
-}
+    dependsOn("ensureDriveForE2e", ":app:installDebug", ":app:installDebugAndroidTest")
 
+    doLast {
+        val adb = project.androidAdbPath()
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmDriveVoiceInvocationE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmDriveVoiceInvocationE2ETest.kt",
+                artifactSubdirectory = "drive-voice"
+            )
+        )
+    }
+}
