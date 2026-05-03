@@ -37,6 +37,13 @@ class OverlayStatusFormatterTest {
         )
     }
 
+    @Test fun microphonePermissionMessageIsShort() {
+        assertEquals(
+            "Enable microphone permission to record",
+            OverlayStatusFormatter.microphonePermissionLabel()
+        )
+    }
+
 
     @Test fun errorResultWinsOverFinalTranscript() {
         val label = OverlayStatusFormatter.label(

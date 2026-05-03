@@ -3,11 +3,14 @@ package ai.droidlm.overlay
 import ai.droidlm.DroidLMApp
 import ai.droidlm.MainActivity
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.permissions.RecordingPermissionActivity
 import ai.droidlm.voice.WakeWordForegroundService
+import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -389,6 +392,10 @@ class FloatingControlOverlayService : Service() {
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING))
             } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL))
+            } else if (!hasMicPermission()) {
+                statusText?.text = OverlayStatusFormatter.microphonePermissionLabel()
+                app.actionLogRepository.log(ActionLogType.ERROR, "Microphone permission is required for push-to-talk", "RECORD_AUDIO_PERMISSION_MISSING")
+                startActivity(RecordingPermissionActivity.intent(this@FloatingControlOverlayService, startPushToTalkAfterGrant = true))
             } else {
                 ContextCompat.startForegroundService(
                     this@FloatingControlOverlayService,
@@ -405,6 +412,10 @@ class FloatingControlOverlayService : Service() {
     private fun rejectPendingPlan() {
         app.executor.rejectPendingPlan()
     }
+
+
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
 
     private fun openAccessibilitySettings() {

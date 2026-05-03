@@ -4,4 +4,12 @@
         <item name="android:navigationBarColor">#F5EFE2</item>
         <item name="android:statusBarColor">#F5EFE2</item>
     </style>
+
+    <style name="Theme.DroidLM.Permission" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:colorAccent">#153D3B</item>
+    </style>
 </resources>

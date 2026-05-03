@@ -44,6 +44,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".permissions.RecordingPermissionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.DroidLM.Permission" />
+
         <service
             android:name=".portal.DroidLMAccessibilityService"
             android:exported="true"
