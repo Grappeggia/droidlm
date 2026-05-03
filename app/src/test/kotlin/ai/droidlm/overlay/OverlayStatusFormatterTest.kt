@@ -18,4 +18,27 @@ class OverlayStatusFormatterTest {
     @Test fun executingShowsCancelButton() {
         assertEquals("×", OverlayStatusFormatter.recordButton(false, "Executing OPEN_APP"))
     }
+
+
+    @Test fun overlayYStaysAboveBottomGestureArea() {
+        val safeY = FloatingOverlayBounds.safeY(
+            requestedY = 920,
+            displayHeight = 1000,
+            viewHeight = 72,
+            bottomInset = 96,
+            density = 1f
+        )
+        assertEquals(824, safeY)
+    }
+
+    @Test fun overlayYUsesMinimumGestureGuardWhenInsetIsMissing() {
+        val safeY = FloatingOverlayBounds.safeY(
+            requestedY = 920,
+            displayHeight = 1000,
+            viewHeight = 72,
+            bottomInset = 0,
+            density = 1f
+        )
+        assertEquals(872, safeY)
+    }
 }

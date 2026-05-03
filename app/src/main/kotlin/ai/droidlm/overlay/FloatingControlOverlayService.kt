@@ -7,6 +7,7 @@ import ai.droidlm.voice.WakeWordForegroundService
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -16,6 +17,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -29,6 +31,24 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+
+internal object FloatingOverlayBounds {
+    private const val MIN_BOTTOM_GUARD_DP = 48f
+    private const val EDGE_MARGIN_DP = 8f
+
+    fun safeY(
+        requestedY: Int,
+        displayHeight: Int,
+        viewHeight: Int,
+        bottomInset: Int,
+        density: Float
+    ): Int {
+        val bottomGuard = kotlin.math.max(bottomInset, (MIN_BOTTOM_GUARD_DP * density).toInt())
+        val edgeMargin = (EDGE_MARGIN_DP * density).toInt()
+        val safeMaxY = (displayHeight - bottomGuard - edgeMargin - viewHeight).coerceAtLeast(0)
+        return requestedY.coerceIn(0, safeMaxY)
+    }
+}
 
 class FloatingControlOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -59,6 +79,11 @@ class FloatingControlOverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        overlayView?.post { applySafeOverlayPosition(persist = true) }
+    }
+
     override fun onDestroy() {
         stopOverlay(removeSelf = false)
         scope.cancel()
@@ -75,7 +100,10 @@ class FloatingControlOverlayService : Service() {
             stopSelf()
             return
         }
-        if (overlayView != null) return
+        if (overlayView != null) {
+            overlayView?.post { applySafeOverlayPosition(persist = true) }
+            return
+        }
         scope.launch {
             val settings = app.settingsRepository.settings.first()
             val layoutParams = WindowManager.LayoutParams(
@@ -91,11 +119,15 @@ class FloatingControlOverlayService : Service() {
                 x = settings.overlayX
                 y = settings.overlayY
             }
+            val view = createOverlayView(layoutParams)
+            view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            val clampedOnStart = clampLayoutParamsY(layoutParams, view.measuredHeight)
             params = layoutParams
-            overlayView = createOverlayView(layoutParams)
-            windowManager.addView(overlayView, layoutParams)
+            overlayView = view
+            windowManager.addView(view, layoutParams)
             isRunningState.value = true
             app.settingsRepository.updateFloatingOverlayEnabled(true)
+            if (clampedOnStart) app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y)
             app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Floating controls shown")
             observeState()
         }
@@ -166,7 +198,7 @@ class FloatingControlOverlayService : Service() {
                     val dy = (event.rawY - touchStartY).toInt()
                     if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
                         layoutParams.x = (startX + dx).coerceAtLeast(0)
-                        layoutParams.y = (startY + dy).coerceAtLeast(0)
+                        layoutParams.y = safeOverlayY(startY + dy, view.height)
                         overlayView?.let { windowManager.updateViewLayout(it, layoutParams) }
                         true
                     } else {
@@ -174,12 +206,62 @@ class FloatingControlOverlayService : Service() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
+                    applySafeOverlayPosition(persist = false)
                     scope.launch { app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y) }
                     false
                 }
                 else -> false
             }
         }
+    }
+
+    private fun applySafeOverlayPosition(persist: Boolean) {
+        val layoutParams = params ?: return
+        val view = overlayView ?: return
+        val oldY = layoutParams.y
+        val clamped = clampLayoutParamsY(layoutParams, view.height)
+        if (clamped) runCatching { windowManager.updateViewLayout(view, layoutParams) }
+        if (persist && (clamped || oldY != layoutParams.y)) {
+            scope.launch { app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y) }
+        }
+    }
+
+    private fun clampLayoutParamsY(layoutParams: WindowManager.LayoutParams, measuredHeight: Int): Boolean {
+        val safeY = safeOverlayY(layoutParams.y, measuredHeight)
+        if (safeY == layoutParams.y) return false
+        layoutParams.y = safeY
+        return true
+    }
+
+    private fun safeOverlayY(requestedY: Int, measuredHeight: Int): Int {
+        val density = resources.displayMetrics.density
+        val fallbackHeight = (64 * density).toInt()
+        return FloatingOverlayBounds.safeY(
+            requestedY = requestedY,
+            displayHeight = displayHeight(),
+            viewHeight = measuredHeight.takeIf { it > 0 } ?: fallbackHeight,
+            bottomInset = bottomSystemInset(),
+            density = density
+        )
+    }
+
+    private fun displayHeight(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds.height()
+        } else {
+            @Suppress("DEPRECATION")
+            resources.displayMetrics.heightPixels
+        }
+    }
+
+    private fun bottomSystemInset(): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return windowManager.currentWindowMetrics.windowInsets
+                .getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars())
+                .bottom
+        }
+        val resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
     }
 
     private fun observeState() {
