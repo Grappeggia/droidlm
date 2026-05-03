@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -60,8 +61,12 @@ class FloatingControlOverlayService : Service() {
     private var recordButton: Button? = null
     private var acceptPlanButton: Button? = null
     private var rejectPlanButton: Button? = null
+    private var enableAccessibilityButton: Button? = null
+    private var checkAccessibilityButton: Button? = null
     private var moreButton: Button? = null
     private var statusText: TextView? = null
+    private var accessibilityEnabled: Boolean = false
+    private var accessibilityPollingJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -74,6 +79,8 @@ class FloatingControlOverlayService : Service() {
             ACTION_STOP -> stopOverlay()
             ACTION_TOGGLE_RECORD -> toggleRecord()
             ACTION_OPEN_APP -> openFullApp()
+            ACTION_OPEN_ACCESSIBILITY_SETTINGS -> openAccessibilitySettings()
+            ACTION_CHECK_ACCESSIBILITY -> refreshAccessibilityStatus()
             ACTION_SHOW, null -> showOverlay()
             else -> showOverlay()
         }
@@ -133,6 +140,7 @@ class FloatingControlOverlayService : Service() {
             if (clampedOnStart) app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y)
             app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Floating controls shown")
             observeState()
+            refreshAccessibilityStatus()
         }
     }
 
@@ -191,6 +199,30 @@ class FloatingControlOverlayService : Service() {
             visibility = View.GONE
             setOnClickListener { rejectPendingPlan() }
         }
+        enableAccessibilityButton = Button(this).apply {
+            text = "Enable"
+            contentDescription = ENABLE_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION
+            textSize = 13f
+            minWidth = (56 * density).toInt()
+            minimumWidth = (56 * density).toInt()
+            minHeight = (48 * density).toInt()
+            setPadding((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener { openAccessibilitySettings() }
+        }
+        checkAccessibilityButton = Button(this).apply {
+            text = "Check"
+            contentDescription = CHECK_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION
+            textSize = 13f
+            minWidth = (52 * density).toInt()
+            minimumWidth = (52 * density).toInt()
+            minHeight = (48 * density).toInt()
+            setPadding((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener { refreshAccessibilityStatus() }
+        }
         moreButton = Button(this).apply {
             text = "..."
             contentDescription = MORE_BUTTON_CONTENT_DESCRIPTION
@@ -202,6 +234,8 @@ class FloatingControlOverlayService : Service() {
         pill.addView(recordButton)
         pill.addView(acceptPlanButton)
         pill.addView(rejectPlanButton)
+        pill.addView(enableAccessibilityButton)
+        pill.addView(checkAccessibilityButton)
         pill.addView(moreButton)
         pill.addView(statusText)
         attachDragHandler(pill, layoutParams)
@@ -313,6 +347,19 @@ class FloatingControlOverlayService : Service() {
         val speech = app.speechRecognitionController.state.value
         val execution = app.executor.uiState.value
         val hasPendingPlan = pendingPlan != null
+        if (!accessibilityEnabled) {
+            recordButton?.visibility = View.GONE
+            acceptPlanButton?.visibility = View.GONE
+            rejectPlanButton?.visibility = View.GONE
+            enableAccessibilityButton?.visibility = View.VISIBLE
+            checkAccessibilityButton?.visibility = View.VISIBLE
+            moreButton?.visibility = View.VISIBLE
+            statusText?.text = OverlayStatusFormatter.accessibilitySetupLabel()
+            return
+        }
+        recordButton?.visibility = View.VISIBLE
+        enableAccessibilityButton?.visibility = View.GONE
+        checkAccessibilityButton?.visibility = View.GONE
         acceptPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
@@ -327,17 +374,26 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun toggleRecord() {
-        val speech = app.speechRecognitionController.state.value
-        val execution = app.executor.uiState.value
-        if (speech.isListening) {
-            startService(WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_STOP_LISTENING))
-        } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
-            startService(WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_CANCEL))
-        } else {
-            ContextCompat.startForegroundService(
-                this,
-                WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
-            )
+        scope.launch {
+            if (!app.portalController.isAccessibilityEnabled()) {
+                accessibilityEnabled = false
+                updateOverlayText()
+                return@launch
+            }
+            accessibilityEnabled = true
+            updateOverlayText()
+            val speech = app.speechRecognitionController.state.value
+            val execution = app.executor.uiState.value
+            if (speech.isListening) {
+                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING))
+            } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
+                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL))
+            } else {
+                ContextCompat.startForegroundService(
+                    this@FloatingControlOverlayService,
+                    WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
+                )
+            }
         }
     }
 
@@ -347,6 +403,42 @@ class FloatingControlOverlayService : Service() {
 
     private fun rejectPendingPlan() {
         app.executor.rejectPendingPlan()
+    }
+
+
+    private fun openAccessibilitySettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.fold(
+            onSuccess = {
+                app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Accessibility Settings from floating controls")
+                startAccessibilityPolling()
+            },
+            onFailure = { error ->
+                app.actionLogRepository.log(ActionLogType.ERROR, "Failed to open Accessibility Settings: ${error.message}", "OPEN_ACCESSIBILITY_SETTINGS_FAILED")
+                openFullApp()
+            }
+        )
+    }
+
+    private fun refreshAccessibilityStatus() {
+        scope.launch {
+            accessibilityEnabled = app.portalController.isAccessibilityEnabled()
+            if (accessibilityEnabled) accessibilityPollingJob?.cancel()
+            updateOverlayText()
+        }
+    }
+
+    private fun startAccessibilityPolling() {
+        accessibilityPollingJob?.cancel()
+        accessibilityPollingJob = scope.launch {
+            repeat(60) {
+                accessibilityEnabled = app.portalController.isAccessibilityEnabled()
+                updateOverlayText()
+                if (accessibilityEnabled) return@launch
+                delay(1000)
+            }
+        }
     }
 
 
@@ -360,6 +452,8 @@ class FloatingControlOverlayService : Service() {
     private fun stopOverlay(removeSelf: Boolean = true) {
         stateJob?.cancel()
         stateJob = null
+        accessibilityPollingJob?.cancel()
+        accessibilityPollingJob = null
         overlayView?.let { view -> runCatching { windowManager.removeView(view) } }
         overlayView = null
         params = null
@@ -380,10 +474,14 @@ class FloatingControlOverlayService : Service() {
         const val ACTION_STOP = "ai.droidlm.action.STOP_OVERLAY"
         const val ACTION_TOGGLE_RECORD = "ai.droidlm.action.OVERLAY_TOGGLE_RECORD"
         const val ACTION_OPEN_APP = "ai.droidlm.action.OVERLAY_OPEN_APP"
+        const val ACTION_OPEN_ACCESSIBILITY_SETTINGS = "ai.droidlm.action.OVERLAY_OPEN_ACCESSIBILITY_SETTINGS"
+        const val ACTION_CHECK_ACCESSIBILITY = "ai.droidlm.action.OVERLAY_CHECK_ACCESSIBILITY"
         const val RECORD_BUTTON_CONTENT_DESCRIPTION = "DroidLM record command"
         const val MORE_BUTTON_CONTENT_DESCRIPTION = "DroidLM open full app"
         const val ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM accept plan"
         const val REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM reject plan"
+        const val ENABLE_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION = "DroidLM enable Accessibility service"
+        const val CHECK_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION = "DroidLM check Accessibility service"
         val isRunningState = MutableStateFlow(false)
 
         fun intent(context: Context, action: String): Intent =

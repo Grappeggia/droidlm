@@ -23,6 +23,13 @@ class OverlayStatusFormatterTest {
         assertEquals("×", OverlayStatusFormatter.recordButton(false, "Executing OPEN_APP"))
     }
 
+    @Test fun accessibilitySetupGivesActionableSteps() {
+        assertEquals(
+            "Enable Accessibility: tap Enable, choose DroidLM Device Control, turn it on. Then tap Check.",
+            OverlayStatusFormatter.accessibilitySetupLabel()
+        )
+    }
+
 
     @Test fun errorResultWinsOverFinalTranscript() {
         val label = OverlayStatusFormatter.label(
