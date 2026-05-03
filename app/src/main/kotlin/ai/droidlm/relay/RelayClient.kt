@@ -36,7 +36,8 @@ data class RelayPlanRequest(
     val packages: List<AppPackage>,
     val history: List<String>,
     val maxSteps: Int,
-    val activeApp: ActiveApp? = null
+    val activeApp: ActiveApp? = null,
+    val deviceContext: DeviceContext? = null
 )
 
 data class ActiveApp(
@@ -47,7 +48,9 @@ data class ActiveApp(
 
 data class DeviceContext(
     val activeApp: ActiveApp?,
-    val packages: List<AppPackage>
+    val packages: List<AppPackage>,
+    val schemaVersion: Int = 1,
+    val extras: JSONObject = JSONObject()
 )
 
 data class PlannerStatus(
@@ -409,12 +412,19 @@ class RelayClient(
         .put("uiState", uiState?.toJson() ?: JSONObject())
         .put("packages", JSONArray(packages.map { it.toJson() }))
         .put("activeApp", activeApp?.toJson() ?: JSONObject())
+        .put("deviceContext", deviceContext?.toJson() ?: JSONObject())
         .put("history", JSONArray(history))
         .put("maxSteps", maxSteps)
 
-    private fun DeviceContext.toJson(): JSONObject = JSONObject()
-        .put("activeApp", activeApp?.toJson() ?: JSONObject())
-        .put("packages", JSONArray(packages.map { it.toJson() }))
+    private fun DeviceContext.toJson(): JSONObject {
+        val json = JSONObject()
+            .put("schemaVersion", schemaVersion)
+            .put("activeApp", activeApp?.toJson() ?: JSONObject())
+            .put("installedApps", JSONArray(packages.map { it.toJson() }))
+            .put("packages", JSONArray(packages.map { it.toJson() }))
+        extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
+        return json
+    }
 
     private fun ActiveApp.toJson(): JSONObject = JSONObject()
         .put("packageName", packageName)

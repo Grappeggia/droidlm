@@ -33,6 +33,7 @@ class PlanActionRequest(BaseModel):
     uiState: Dict[str, Any] = Field(default_factory=dict)
     packages: List[Dict[str, Any]] = Field(default_factory=list)
     activeApp: Dict[str, Any] = Field(default_factory=dict)
+    deviceContext: Dict[str, Any] = Field(default_factory=dict)
     history: List[str] = Field(default_factory=list)
     maxSteps: int = 12
 
@@ -188,7 +189,8 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
     system = (
         "You plan safe Android UI actions for DroidLM. Return JSON only. "
         "Create a short executable plan using only supported action names. "
-        "Use activeApp as the current foreground app and packages as the full installed app inventory. "
+        "Use deviceContext as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits. "
+        "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
         "Prefer safe, minimal, local actions. Never claim actions were executed. "
         "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
         "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing."
@@ -196,6 +198,7 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
     user = {
         "goal": payload.goal,
         "activeApp": payload.activeApp,
+        "deviceContext": payload.deviceContext,
         "uiState": payload.uiState,
         "packages": payload.packages,
         "history": payload.history[-20:],
@@ -224,13 +227,15 @@ async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
     openai_client = require_openai()
     system = (
         "You control an Android device through a limited tool interface. Return one JSON action only. "
-        "Use activeApp as the current foreground app and packages as the full installed app inventory. "
+        "Use deviceContext as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before choosing edits. "
+        "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
         "Prefer safe, minimal actions. Ask for confirmation for risky operations. Never claim you executed an action. "
         "Use DONE when task is complete. Do not request actions outside the available Android tool schema."
     )
     user = {
         "goal": payload.goal,
         "activeApp": payload.activeApp,
+        "deviceContext": payload.deviceContext,
         "uiState": payload.uiState,
         "packages": payload.packages,
         "history": payload.history[-20:],

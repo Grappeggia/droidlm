@@ -6,6 +6,7 @@ import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.ActiveApp
+import ai.droidlm.relay.DeviceContext
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
@@ -82,13 +83,15 @@ class OpenAiClient(
         }
         Each step object must include an action field and all required fields for that action.
         Supported actions: OPEN_APP, OPEN_SETTINGS, TAP_NODE, FOCUS_NODE, TAP, LONG_PRESS, SWIPE, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
-        Use Active app as the current foreground app and Installed packages as the full installed app inventory.
+        Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits.
+        If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing.
         Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
         Keep plans to the minimum safe number of steps.
 
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
         Active app: ${request.activeApp?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
         UI state: ${request.uiState?.toJson() ?: JSONObject()}
         Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
         History: ${JSONArray(request.history)}
@@ -98,7 +101,8 @@ class OpenAiClient(
         Choose exactly one next Android automation action for this user goal.
         Return only one JSON action object. Do not wrap it in markdown.
         Supported actions and fields are the same as the plan preview prompt.
-        Use Active app as the current foreground app and Installed packages as the full installed app inventory.
+        Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before choosing edits.
+        If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing.
         Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
         If the task is complete, return {"action":"DONE","reason":"Task complete"}.
         If no useful action is possible, return {"action":"NO_OP","message":"brief reason"}.
@@ -106,6 +110,7 @@ class OpenAiClient(
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
         Active app: ${request.activeApp?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
         UI state: ${request.uiState?.toJson() ?: JSONObject()}
         Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
         History: ${JSONArray(request.history)}
@@ -167,6 +172,7 @@ class OpenAiClient(
         .put("uiState", uiState?.toJson() ?: JSONObject())
         .put("packages", JSONArray(packages.map { it.toJson() }))
         .put("activeApp", activeApp?.toJson() ?: JSONObject())
+        .put("deviceContext", deviceContext?.toJson() ?: JSONObject())
         .put("history", JSONArray(history))
         .put("maxSteps", maxSteps)
 
@@ -181,6 +187,16 @@ class OpenAiClient(
         .put("packageName", packageName)
         .put("activityName", activityName)
         .put("label", label)
+
+    private fun DeviceContext.toJson(): JSONObject {
+        val json = JSONObject()
+            .put("schemaVersion", schemaVersion)
+            .put("activeApp", activeApp?.toJson() ?: JSONObject())
+            .put("installedApps", JSONArray(packages.map { it.toJson() }))
+            .put("packages", JSONArray(packages.map { it.toJson() }))
+        extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
+        return json
+    }
 
     companion object {
         const val DEFAULT_MODEL = "gpt-4.1-mini"

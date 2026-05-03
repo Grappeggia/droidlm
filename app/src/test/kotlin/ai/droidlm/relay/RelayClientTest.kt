@@ -1,6 +1,8 @@
 package ai.droidlm.relay
 
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.portal.AppPackage
+import ai.droidlm.portal.PortalState
 
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -10,6 +12,7 @@ import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class RelayClientTest {
@@ -112,6 +115,34 @@ class RelayClientTest {
         assertEquals(1, plan.steps.size)
         assertTrue(plan.steps.first().action is DroidLmAction.OpenApp)
     }
+
+    @Test fun planActionRequestIncludesDeviceContext() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{\"action\":\"NO_OP\",\"message\":\"ok\"}"))
+            server.start()
+            val activeApp = ActiveApp("com.google.android.apps.docs.editors.docs", "DocsActivity", "Docs")
+            val request = RelayPlanRequest(
+                goal = "append note",
+                uiState = PortalState(activeApp.packageName, activeApp.activityName, 100, 200, emptyList()),
+                packages = listOf(AppPackage(activeApp.packageName, "Docs")),
+                history = emptyList(),
+                maxSteps = 3,
+                activeApp = activeApp,
+                deviceContext = DeviceContext(
+                    activeApp = activeApp,
+                    packages = listOf(AppPackage(activeApp.packageName, "Docs")),
+                    extras = JSONObject().put("docsContext", JSONObject().put("uiMode", "DOCUMENT_EDIT"))
+                )
+            )
+
+            val result = RelayClient().planAction(server.url("/").toString(), request)
+            assertTrue(result is RelayCallResult.Success)
+            val body = JSONObject(server.takeRequest().body.readUtf8())
+            assertEquals("DOCUMENT_EDIT", body.getJSONObject("deviceContext").getJSONObject("docsContext").getString("uiMode"))
+            assertEquals(activeApp.packageName, body.getJSONObject("deviceContext").getJSONObject("activeApp").getString("packageName"))
+        }
+    }
+
 
     @Test fun plannerStatusJsonParse() {
         val status = RelayClient().parsePlannerStatusJson("{\"openAiKeyConfigured\":true,\"plannerModel\":\"gpt-5.4-nano\",\"latestNanoModel\":\"gpt-5.4-nano\",\"relayReady\":true}")

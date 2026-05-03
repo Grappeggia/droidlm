@@ -2,6 +2,8 @@ package ai.droidlm
 
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
+import ai.droidlm.context.DeviceContextAggregator
+import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
@@ -33,6 +35,8 @@ class DroidLMApp : Application() {
         private set
     lateinit var appInventoryRepository: AppInventoryRepository
         private set
+    lateinit var deviceContextAggregator: DeviceContextAggregator
+        private set
     lateinit var ocrEngine: OcrEngine
         private set
     lateinit var textEditingController: TextEditingController
@@ -62,6 +66,10 @@ class DroidLMApp : Application() {
         appInventoryRepository = AppInventoryRepository(this)
         ocrEngine = MlKitOcrEngine()
         textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
+        deviceContextAggregator = DeviceContextAggregator(
+            appInventoryRepository = appInventoryRepository,
+            providers = listOf(GoogleDocsContextProvider())
+        )
         workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
         safetyClassifier = SafetyClassifier()
         mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository)
@@ -73,6 +81,7 @@ class DroidLMApp : Application() {
             workspaceFileOperationController = workspaceFileOperationController,
             ocrEngine = ocrEngine,
             appInventoryRepository = appInventoryRepository,
+            deviceContextAggregator = deviceContextAggregator,
             logs = actionLogRepository,
             safetyClassifier = safetyClassifier,
             mobilerunCloudClient = mobilerunCloudClient
