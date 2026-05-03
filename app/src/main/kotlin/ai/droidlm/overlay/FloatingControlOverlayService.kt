@@ -13,13 +13,16 @@ import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
@@ -54,11 +57,48 @@ internal object FloatingOverlayBounds {
     }
 }
 
+internal object FloatingOverlayDismissTarget {
+    private const val TARGET_SIZE_DP = 64f
+    private const val TARGET_MARGIN_BOTTOM_DP = 24f
+    private const val TARGET_LABEL_HEIGHT_DP = 20f
+    private const val HOVER_EXPANSION_DP = 10f
+
+    fun targetRect(
+        displayWidth: Int,
+        displayHeight: Int,
+        bottomInset: Int,
+        density: Float
+    ): Rect {
+        val targetSize = (TARGET_SIZE_DP * density).toInt()
+        val labelHeight = (TARGET_LABEL_HEIGHT_DP * density).toInt()
+        val targetHeight = targetSize + labelHeight
+        val bottomMargin = kotlin.math.max(bottomInset, (TARGET_MARGIN_BOTTOM_DP * density).toInt())
+        val left = ((displayWidth - targetSize) / 2).coerceAtLeast(0)
+        val top = (displayHeight - bottomMargin - targetHeight).coerceAtLeast(0)
+        return Rect(left, top, left + targetSize, top + targetSize)
+    }
+
+    fun isWithinDismissZone(
+        centerX: Int,
+        centerY: Int,
+        targetRect: Rect,
+        density: Float
+    ): Boolean {
+        val expansion = (HOVER_EXPANSION_DP * density).toInt()
+        val left = targetRect.left - expansion
+        val top = targetRect.top - expansion
+        val right = targetRect.right + expansion
+        val bottom = targetRect.bottom + expansion
+        return centerX >= left && centerX < right && centerY >= top && centerY < bottom
+    }
+}
+
 class FloatingControlOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var app: DroidLMApp
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private var dismissTargetView: View? = null
     private var params: WindowManager.LayoutParams? = null
     private var stateJob: Job? = null
     private var recordButton: Button? = null
@@ -72,6 +112,8 @@ class FloatingControlOverlayService : Service() {
     private var accessibilitySettingsOpened: Boolean = false
     private var accessibilityPollingJob: Job? = null
     private var transientStatusMessage: String? = null
+    private var isDraggingOverlay: Boolean = false
+    private var isInDismissZone: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -249,6 +291,7 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun attachDragHandler(view: View, layoutParams: WindowManager.LayoutParams) {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         var startX = 0
         var startY = 0
         var touchStartX = 0f
@@ -256,6 +299,8 @@ class FloatingControlOverlayService : Service() {
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    isDraggingOverlay = false
+                    isInDismissZone = false
                     startX = layoutParams.x
                     startY = layoutParams.y
                     touchStartX = event.rawX
@@ -265,9 +310,24 @@ class FloatingControlOverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - touchStartX).toInt()
                     val dy = (event.rawY - touchStartY).toInt()
-                    if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
-                        layoutParams.x = (startX + dx).coerceAtLeast(0)
-                        layoutParams.y = safeOverlayY(startY + dy, view.height)
+                    if (!isDraggingOverlay && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                        isDraggingOverlay = true
+                        showDismissTarget()
+                    }
+                    if (isDraggingOverlay) {
+                        val candidateX = (startX + dx).coerceAtLeast(0)
+                        val candidateY = safeOverlayY(startY + dy, view.height)
+                        val hovered = updateDismissTargetHover(candidateX, candidateY, view.width, view.height)
+                        if (hovered) {
+                            val targetRect = dismissTargetRect()
+                            val snappedX = (targetRect.centerX() - (view.width / 2)).coerceAtLeast(0)
+                            val snappedY = safeOverlayY(targetRect.centerY() - (view.height / 2), view.height)
+                            layoutParams.x = ((candidateX * 2) + snappedX) / 3
+                            layoutParams.y = ((candidateY * 2) + snappedY) / 3
+                        } else {
+                            layoutParams.x = candidateX
+                            layoutParams.y = candidateY
+                        }
                         overlayView?.let { windowManager.updateViewLayout(it, layoutParams) }
                         true
                     } else {
@@ -275,14 +335,137 @@ class FloatingControlOverlayService : Service() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
-                    applySafeOverlayPosition(persist = false)
-                    scope.launch { app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y) }
+                    val droppedOnDismiss = isDraggingOverlay && isInDismissZone
+                    hideDismissTarget()
+                    isDraggingOverlay = false
+                    isInDismissZone = false
+                    if (droppedOnDismiss) {
+                        app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Removed floating controls from dismiss target")
+                        stopOverlay()
+                        true
+                    } else {
+                        applySafeOverlayPosition(persist = false)
+                        scope.launch { app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y) }
+                        false
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    hideDismissTarget()
+                    isDraggingOverlay = false
+                    isInDismissZone = false
                     false
                 }
                 else -> false
             }
         }
     }
+
+    private fun showDismissTarget() {
+        if (dismissTargetView != null) return
+        val density = resources.displayMetrics.density
+        val targetSize = (64 * density).toInt()
+        val labelHeight = (20 * density).toInt()
+        val targetWidth = targetSize
+        val targetHeight = targetSize + labelHeight
+        val targetRect = dismissTargetRect()
+        val layoutParams = WindowManager.LayoutParams(
+            targetWidth,
+            targetHeight,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = targetRect.left
+            y = targetRect.top
+        }
+        val targetView = createDismissTargetView(targetSize, labelHeight)
+        dismissTargetView = targetView
+        windowManager.addView(targetView, layoutParams)
+        targetView.alpha = 0f
+        targetView.scaleX = 0.9f
+        targetView.scaleY = 0.9f
+        targetView.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+    }
+
+    private fun hideDismissTarget() {
+        updateDismissTargetAppearance(false)
+        dismissTargetView?.animate()?.cancel()
+        dismissTargetView?.let { view -> runCatching { windowManager.removeView(view) } }
+        dismissTargetView = null
+    }
+
+    private fun createDismissTargetView(targetSize: Int, labelHeight: Int): View {
+        val density = resources.displayMetrics.density
+        val circleBackground = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(230, 32, 32, 32))
+        }
+        val circle = TextView(this).apply {
+            text = "X"
+            gravity = Gravity.CENTER
+            textSize = 28f
+            setTextColor(Color.WHITE)
+            background = circleBackground
+            contentDescription = "Remove DroidLM floating controls"
+            layoutParams = LinearLayout.LayoutParams(targetSize, targetSize)
+        }
+        val label = TextView(this).apply {
+            text = "Remove"
+            gravity = Gravity.CENTER
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, labelHeight)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+            addView(circle)
+            addView(label)
+            tag = circleBackground
+        }
+    }
+
+    private fun updateDismissTargetHover(candidateX: Int, candidateY: Int, viewWidth: Int, viewHeight: Int): Boolean {
+        val hovered = FloatingOverlayDismissTarget.isWithinDismissZone(
+            centerX = candidateX + (viewWidth / 2),
+            centerY = candidateY + (viewHeight / 2),
+            targetRect = dismissTargetRect(),
+            density = resources.displayMetrics.density
+        )
+        if (hovered != isInDismissZone) {
+            isInDismissZone = hovered
+            updateDismissTargetAppearance(hovered)
+            if (hovered) overlayView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+        return hovered
+    }
+
+    private fun updateDismissTargetAppearance(hovered: Boolean) {
+        val targetView = dismissTargetView ?: return
+        val background = targetView.tag as? GradientDrawable ?: return
+        val color = if (hovered) Color.argb(245, 198, 40, 40) else Color.argb(230, 32, 32, 32)
+        background.setColor(color)
+        targetView.animate().cancel()
+        targetView.animate()
+            .scaleX(if (hovered) 1.12f else 1f)
+            .scaleY(if (hovered) 1.12f else 1f)
+            .alpha(1f)
+            .setDuration(120)
+            .start()
+    }
+
+    private fun dismissTargetRect(): Rect = FloatingOverlayDismissTarget.targetRect(
+        displayWidth = displayWidth(),
+        displayHeight = displayHeight(),
+        bottomInset = bottomSystemInset(),
+        density = resources.displayMetrics.density
+    )
 
     private fun applySafeOverlayPosition(persist: Boolean) {
         val layoutParams = params ?: return
@@ -320,6 +503,15 @@ class FloatingControlOverlayService : Service() {
         } else {
             @Suppress("DEPRECATION")
             resources.displayMetrics.heightPixels
+        }
+    }
+
+    private fun displayWidth(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            windowManager.currentWindowMetrics.bounds.width()
+        } else {
+            @Suppress("DEPRECATION")
+            resources.displayMetrics.widthPixels
         }
     }
 
@@ -486,6 +678,9 @@ class FloatingControlOverlayService : Service() {
         stateJob = null
         accessibilityPollingJob?.cancel()
         accessibilityPollingJob = null
+        hideDismissTarget()
+        isDraggingOverlay = false
+        isInDismissZone = false
         overlayView?.let { view -> runCatching { windowManager.removeView(view) } }
         overlayView = null
         params = null
