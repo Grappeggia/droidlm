@@ -11,6 +11,7 @@ import ai.droidlm.portal.PortalController
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.ScreenshotResult
 import ai.droidlm.relay.RelayClient
+import ai.droidlm.relay.DeviceContext
 import android.graphics.Bitmap
 import android.graphics.Rect
 import org.junit.Assert.assertEquals
@@ -49,7 +50,7 @@ class TextEditingControllerTest {
     private fun controller(portal: FakePortal) = TextEditingController(
         portal,
         object : OcrEngine {
-            override suspend fun recognize(bitmap: Bitmap) = OcrResult("", emptyList(), emptyList(), emptyList(), emptyList(), OcrSource.ML_KIT_ON_DEVICE)
+            override suspend fun recognize(bitmap: Bitmap, deviceContext: DeviceContext?) = OcrResult("", emptyList(), emptyList(), emptyList(), emptyList(), OcrSource.ML_KIT_ON_DEVICE)
         },
         RelayClient(),
         ActionLogRepository()

@@ -1,5 +1,7 @@
 package ai.droidlm.ocr
 
+import ai.droidlm.relay.DeviceContext
+
 import android.graphics.Bitmap
 import android.graphics.Point
 import com.google.mlkit.vision.common.InputImage
@@ -13,7 +15,7 @@ import kotlin.coroutines.resumeWithException
 class MlKitOcrEngine : OcrEngine {
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
-    override suspend fun recognize(bitmap: Bitmap): OcrResult {
+    override suspend fun recognize(bitmap: Bitmap, deviceContext: DeviceContext?): OcrResult {
         val image = InputImage.fromBitmap(bitmap, 0)
         val text = suspendCancellableCoroutine<Text> { continuation ->
             recognizer.process(image)

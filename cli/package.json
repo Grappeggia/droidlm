@@ -1,0 +1,41 @@
+{
+  "name": "droidlm",
+  "version": "0.1.0",
+  "description": "Developer CLI for installing and diagnosing DroidLM Android assistant builds.",
+  "type": "module",
+  "bin": {
+    "droidlm": "bin/droidlm.js"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --check bin/droidlm.js && node bin/droidlm.js --help && node bin/droidlm.js version",
+    "prepublishOnly": "npm test",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "keywords": [
+    "android",
+    "adb",
+    "assistant",
+    "accessibility",
+    "droidlm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Grappeggia/droidlm.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/Grappeggia/droidlm/issues"
+  },
+  "homepage": "https://github.com/Grappeggia/droidlm#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

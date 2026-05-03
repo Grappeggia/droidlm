@@ -32,6 +32,28 @@ Install with:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## NPM CLI
+
+DroidLM includes a developer npm CLI for install and diagnostics:
+
+```bash
+cd cli
+npm test
+npm pack --dry-run
+```
+
+After publishing to npm, use:
+
+```bash
+npx droidlm doctor
+npx droidlm install --apk app/build/outputs/apk/debug/app-debug.apk
+npx droidlm relay check --url http://<relay-host>:8787
+```
+
+The npm package is a developer convenience wrapper. It does not enable Accessibility, grant Android permissions, execute Android actions remotely, or store OpenAI API keys.
+
+License: MIT. See `LICENSE`.
+
 ## Run The Relay
 
 ```bash

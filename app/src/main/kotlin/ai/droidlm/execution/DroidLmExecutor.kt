@@ -1,5 +1,6 @@
 package ai.droidlm.execution
 
+import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.fileops.WorkspaceFileOperationController
@@ -13,6 +14,7 @@ import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.openai.OpenAiClient
+import ai.droidlm.relay.DeviceContext
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayPlanRequest
 import ai.droidlm.safety.SafetyClassifier
@@ -60,6 +62,7 @@ class DroidLmExecutor(
     private val textEditingController: TextEditingController,
     private val workspaceFileOperationController: WorkspaceFileOperationController,
     @Suppress("unused") private val ocrEngine: OcrEngine,
+    private val appInventoryRepository: AppInventoryRepository,
     private val logs: ActionLogRepository,
     private val safetyClassifier: SafetyClassifier,
     private val mobilerunCloudClient: MobilerunCloudClient,
@@ -86,7 +89,7 @@ class DroidLmExecutor(
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val settings = settingsRepository.settings.first()
-        val packages = runCatching { portalController.listPackages() }.getOrDefault(emptyList())
+        val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val action = parser.parse(stripped, packages)
         _uiState.value = _uiState.value.copy(parsedAction = action.displayName())
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
@@ -121,8 +124,9 @@ class DroidLmExecutor(
             return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
         }
         val state = runCatching { portalController.getState() }.getOrNull()
-        val packages = runCatching { portalController.listPackages() }.getOrDefault(emptyList()).take(160)
-        val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps)
+        val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
+        val activeApp = runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
+        val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps, activeApp)
         return when (val result = openAiClient.planPreview(apiKey, settings.openAiModel, request)) {
             is RelayCallResult.Failure -> {
                 logs.log(ActionLogType.ERROR, result.message, result.errorCode)
@@ -241,7 +245,8 @@ class DroidLmExecutor(
             ensureNotCancelled()?.let { return finish(it) }
             _uiState.value = _uiState.value.copy(status = "Planning step $step/$maxSteps")
             val state = portalController.getState()
-            val packages = portalController.listPackages().take(120)
+            val packages = appInventoryRepository.getInstalledApps()
+            val activeApp = appInventoryRepository.activeAppFor(state)
             val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
             if (apiKey.isBlank()) {
                 _plannerKeySetupRequest.value = PlannerKeySetupRequest(
@@ -250,7 +255,7 @@ class DroidLmExecutor(
                 )
                 return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
             }
-            when (val planned = openAiClient.planAction(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps))) {
+            when (val planned = openAiClient.planAction(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp))) {
                 is RelayCallResult.Failure -> return finish(ActionResult.fail(planned.message, planned.errorCode))
                 is RelayCallResult.Success -> {
                     val action = planned.value
@@ -344,7 +349,14 @@ class DroidLmExecutor(
         if (!screenshot.success || screenshot.bitmap == null) return ActionResult.fail(screenshot.message, screenshot.errorCode)
         logs.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR")
         logs.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
-        return runCatching { ocrEngine.recognize(screenshot.bitmap) }
+        val deviceContext = runCatching {
+            val state = portalController.getState()
+            DeviceContext(
+                activeApp = appInventoryRepository.activeAppFor(state),
+                packages = appInventoryRepository.getInstalledApps()
+            )
+        }.getOrNull()
+        return runCatching { ocrEngine.recognize(screenshot.bitmap, deviceContext) }
             .fold(
                 onSuccess = {
                     logs.log(ActionLogType.OCR_RESULT, "OCR detected ${it.lines.size} lines")

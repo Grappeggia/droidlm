@@ -35,7 +35,19 @@ data class RelayPlanRequest(
     val uiState: PortalState?,
     val packages: List<AppPackage>,
     val history: List<String>,
-    val maxSteps: Int
+    val maxSteps: Int,
+    val activeApp: ActiveApp? = null
+)
+
+data class ActiveApp(
+    val packageName: String,
+    val activityName: String?,
+    val label: String?
+)
+
+data class DeviceContext(
+    val activeApp: ActiveApp?,
+    val packages: List<AppPackage>
 )
 
 data class PlannerStatus(
@@ -175,7 +187,8 @@ class RelayClient(
         baseUrl: String,
         imageFile: File,
         goal: String,
-        uiStateJson: String? = null
+        uiStateJson: String? = null,
+        deviceContext: DeviceContext? = null
     ): RelayCallResult<VisionAnalysis> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
         if (!imageFile.exists() || imageFile.length() <= 0) return RelayCallResult.Failure("Screenshot file is empty", "EMPTY_SCREENSHOT")
@@ -183,6 +196,7 @@ class RelayClient(
             .addFormDataPart("image", imageFile.name, imageFile.asRequestBody("image/png".toMediaType()))
             .addFormDataPart("goal", goal)
         uiStateJson?.let { bodyBuilder.addFormDataPart("uiState", it) }
+        deviceContext?.let { bodyBuilder.addFormDataPart("deviceContext", it.toJson().toString()) }
         val request = Request.Builder()
             .url("$normalized/analyze-screenshot")
             .post(bodyBuilder.build())
@@ -394,8 +408,18 @@ class RelayClient(
         .put("goal", goal)
         .put("uiState", uiState?.toJson() ?: JSONObject())
         .put("packages", JSONArray(packages.map { it.toJson() }))
+        .put("activeApp", activeApp?.toJson() ?: JSONObject())
         .put("history", JSONArray(history))
         .put("maxSteps", maxSteps)
+
+    private fun DeviceContext.toJson(): JSONObject = JSONObject()
+        .put("activeApp", activeApp?.toJson() ?: JSONObject())
+        .put("packages", JSONArray(packages.map { it.toJson() }))
+
+    private fun ActiveApp.toJson(): JSONObject = JSONObject()
+        .put("packageName", packageName)
+        .put("activityName", activityName)
+        .put("label", label)
 
     private fun PortalState.toJson(): JSONObject = UiContextJson.portalStateToJson(this)
 

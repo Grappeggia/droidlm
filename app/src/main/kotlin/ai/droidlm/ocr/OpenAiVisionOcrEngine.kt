@@ -2,6 +2,7 @@ package ai.droidlm.ocr
 
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
+import ai.droidlm.relay.DeviceContext
 import android.content.Context
 import android.graphics.Bitmap
 import java.io.File
@@ -13,11 +14,11 @@ class OpenAiVisionOcrEngine(
     private val baseUrlProvider: suspend () -> String,
     private val goalProvider: () -> String = { "Extract visible text and useful tap coordinates" }
 ) : OcrEngine {
-    override suspend fun recognize(bitmap: Bitmap): OcrResult {
+    override suspend fun recognize(bitmap: Bitmap, deviceContext: DeviceContext?): OcrResult {
         val file = File.createTempFile("droidlm-screen-", ".png", context.cacheDir)
         FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
         return try {
-            when (val result = relayClient.analyzeScreenshot(baseUrlProvider(), file, goalProvider())) {
+            when (val result = relayClient.analyzeScreenshot(baseUrlProvider(), file, goalProvider(), deviceContext = deviceContext)) {
                 is RelayCallResult.Success -> OcrResult(
                     fullText = result.value.fullText,
                     blocks = emptyList(),

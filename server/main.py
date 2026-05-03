@@ -32,6 +32,7 @@ class PlanActionRequest(BaseModel):
     goal: str
     uiState: Dict[str, Any] = Field(default_factory=dict)
     packages: List[Dict[str, Any]] = Field(default_factory=list)
+    activeApp: Dict[str, Any] = Field(default_factory=dict)
     history: List[str] = Field(default_factory=list)
     maxSteps: int = 12
 
@@ -187,14 +188,16 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
     system = (
         "You plan safe Android UI actions for DroidLM. Return JSON only. "
         "Create a short executable plan using only supported action names. "
+        "Use activeApp as the current foreground app and packages as the full installed app inventory. "
         "Prefer safe, minimal, local actions. Never claim actions were executed. "
         "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
         "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing."
     )
     user = {
         "goal": payload.goal,
+        "activeApp": payload.activeApp,
         "uiState": payload.uiState,
-        "packages": payload.packages[:200],
+        "packages": payload.packages,
         "history": payload.history[-20:],
         "maxSteps": payload.maxSteps,
         "supportedActions": ACTION_SCHEMA["properties"]["action"]["enum"],
@@ -221,13 +224,15 @@ async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
     openai_client = require_openai()
     system = (
         "You control an Android device through a limited tool interface. Return one JSON action only. "
+        "Use activeApp as the current foreground app and packages as the full installed app inventory. "
         "Prefer safe, minimal actions. Ask for confirmation for risky operations. Never claim you executed an action. "
         "Use DONE when task is complete. Do not request actions outside the available Android tool schema."
     )
     user = {
         "goal": payload.goal,
+        "activeApp": payload.activeApp,
         "uiState": payload.uiState,
-        "packages": payload.packages[:200],
+        "packages": payload.packages,
         "history": payload.history[-20:],
         "maxSteps": payload.maxSteps,
     }
@@ -251,6 +256,7 @@ async def analyze_screenshot(
     image: UploadFile = File(...),
     goal: str = Form(...),
     uiState: Optional[str] = Form(default=None),
+    deviceContext: Optional[str] = Form(default=None),
 ) -> Dict[str, Any]:
     openai_client = require_openai()
     content_type = (image.content_type or "").lower()
@@ -266,7 +272,7 @@ async def analyze_screenshot(
     prompt = (
         "Analyze this Android screenshot for the user's goal. Return JSON only with fullText, suggestedAction, lines, and elements. "
         "Use suggestedAction only if a coordinate is reasonably clear. Bounding boxes use x, y, width, height. "
-        f"Goal: {goal}\nUI state: {uiState or '{}'}"
+        f"Goal: {goal}\nDevice context: {deviceContext or '{}'}\nUI state: {uiState or '{}'}"
     )
     response = await openai_client.chat.completions.create(
         model=VISION_MODEL,

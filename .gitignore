@@ -10,3 +10,6 @@ server/.venv/
 .project
 .settings/
 
+node_modules/
+*.tgz
+.npmrc

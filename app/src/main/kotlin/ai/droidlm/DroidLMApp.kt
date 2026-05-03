@@ -1,5 +1,6 @@
 package ai.droidlm
 
+import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
@@ -30,6 +31,8 @@ class DroidLMApp : Application() {
         private set
     lateinit var portalController: PortalController
         private set
+    lateinit var appInventoryRepository: AppInventoryRepository
+        private set
     lateinit var ocrEngine: OcrEngine
         private set
     lateinit var textEditingController: TextEditingController
@@ -56,6 +59,7 @@ class DroidLMApp : Application() {
         relayClient = RelayClient()
         openAiClient = OpenAiClient()
         portalController = AccessibilityPortalController(this, actionLogRepository)
+        appInventoryRepository = AppInventoryRepository(this)
         ocrEngine = MlKitOcrEngine()
         textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
         workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
@@ -68,6 +72,7 @@ class DroidLMApp : Application() {
             textEditingController = textEditingController,
             workspaceFileOperationController = workspaceFileOperationController,
             ocrEngine = ocrEngine,
+            appInventoryRepository = appInventoryRepository,
             logs = actionLogRepository,
             safetyClassifier = safetyClassifier,
             mobilerunCloudClient = mobilerunCloudClient
