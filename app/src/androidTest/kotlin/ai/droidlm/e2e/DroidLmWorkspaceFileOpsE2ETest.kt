@@ -66,7 +66,7 @@ class DroidLmWorkspaceFileOpsE2ETest {
         server.start()
         app.executor.cancelActive()
         app.settingsRepository.updateRelayBaseUrl(server.url("/").toString())
-        app.settingsRepository.updateTranscriptionProvider(TranscriptionProvider.OPENAI_RELAY)
+        app.settingsRepository.updateTranscriptionProvider(TranscriptionProvider.OPENAI_DIRECT)
         app.settingsRepository.updateAutoAcceptSafePlans(true)
         app.settingsRepository.updateRequireRiskConfirmation(false)
         app.settingsRepository.updateDebugAudioRetention(false)

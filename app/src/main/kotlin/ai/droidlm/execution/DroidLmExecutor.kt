@@ -12,7 +12,7 @@ import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
 import ai.droidlm.relay.RelayCallResult
-import ai.droidlm.relay.RelayClient
+import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayPlanRequest
 import ai.droidlm.safety.SafetyClassifier
@@ -55,7 +55,7 @@ data class PlannerKeySetupRequest(
 
 class DroidLmExecutor(
     private val settingsRepository: SettingsRepository,
-    private val relayClient: RelayClient,
+    private val openAiClient: OpenAiClient,
     private val portalController: PortalController,
     private val textEditingController: TextEditingController,
     private val workspaceFileOperationController: WorkspaceFileOperationController,
@@ -111,28 +111,22 @@ class DroidLmExecutor(
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val settings = settingsRepository.settings.first()
+        val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
+        if (apiKey.isBlank()) {
+            _plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                message = "GPT planning requires an OpenAI API key saved on this device.",
+                retryTranscript = stripped
+            )
+            logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing", "OPENAI_API_KEY_MISSING")
+            return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
+        }
         val state = runCatching { portalController.getState() }.getOrNull()
         val packages = runCatching { portalController.listPackages() }.getOrDefault(emptyList()).take(160)
         val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps)
-        return when (val result = relayClient.planPreview(settings.relayBaseUrl, request)) {
+        return when (val result = openAiClient.planPreview(apiKey, settings.openAiModel, request)) {
             is RelayCallResult.Failure -> {
-                if (result.errorCode == "OPENAI_API_KEY_MISSING") {
-                    _plannerKeySetupRequest.value = PlannerKeySetupRequest(
-                        message = "GPT-5.4 nano planning requires an OpenAI API key on your relay.",
-                        retryTranscript = stripped
-                    )
-                    logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing", result.errorCode)
-                    val localAction = parser.parse(stripped, packages)
-                    if (localAction !is DroidLmAction.NeedLlmPlanning && localAction !is DroidLmAction.NoOp) {
-                        logs.log(ActionLogType.PARSED_ACTION, localAction.displayName(), "local fallback after missing planner key")
-                        executeAction(localAction, stripped)
-                    } else {
-                        finish(ActionResult.fail("OpenAI API key is required for GPT-5.4 nano planning", result.errorCode))
-                    }
-                } else {
-                    logs.log(ActionLogType.ERROR, result.message, result.errorCode)
-                    finish(ActionResult.fail(result.message, result.errorCode))
-                }
+                logs.log(ActionLogType.ERROR, result.message, result.errorCode)
+                finish(ActionResult.fail(result.message, result.errorCode))
             }
             is RelayCallResult.Success -> {
                 val plan = result.value
@@ -248,7 +242,15 @@ class DroidLmExecutor(
             _uiState.value = _uiState.value.copy(status = "Planning step $step/$maxSteps")
             val state = portalController.getState()
             val packages = portalController.listPackages().take(120)
-            when (val planned = relayClient.planAction(settings.relayBaseUrl, RelayPlanRequest(goal, state, packages, history, maxSteps))) {
+            val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
+            if (apiKey.isBlank()) {
+                _plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                    message = "GPT planning requires an OpenAI API key saved on this device.",
+                    retryTranscript = goal
+                )
+                return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
+            }
+            when (val planned = openAiClient.planAction(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps))) {
                 is RelayCallResult.Failure -> return finish(ActionResult.fail(planned.message, planned.errorCode))
                 is RelayCallResult.Success -> {
                     val action = planned.value

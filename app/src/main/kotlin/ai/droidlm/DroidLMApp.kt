@@ -5,6 +5,7 @@ import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.ocr.MlKitOcrEngine
+import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.AccessibilityPortalController
 import ai.droidlm.portal.PortalController
@@ -24,6 +25,8 @@ class DroidLMApp : Application() {
     lateinit var actionLogRepository: ActionLogRepository
         private set
     lateinit var relayClient: RelayClient
+        private set
+    lateinit var openAiClient: OpenAiClient
         private set
     lateinit var portalController: PortalController
         private set
@@ -51,6 +54,7 @@ class DroidLMApp : Application() {
         settingsRepository = SettingsRepository(this)
         actionLogRepository = ActionLogRepository()
         relayClient = RelayClient()
+        openAiClient = OpenAiClient()
         portalController = AccessibilityPortalController(this, actionLogRepository)
         ocrEngine = MlKitOcrEngine()
         textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
@@ -59,7 +63,7 @@ class DroidLMApp : Application() {
         mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository)
         executor = DroidLmExecutor(
             settingsRepository = settingsRepository,
-            relayClient = relayClient,
+            openAiClient = openAiClient,
             portalController = portalController,
             textEditingController = textEditingController,
             workspaceFileOperationController = workspaceFileOperationController,

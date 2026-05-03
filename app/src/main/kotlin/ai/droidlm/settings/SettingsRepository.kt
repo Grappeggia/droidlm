@@ -20,6 +20,8 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 class SettingsRepository(private val context: Context) {
     private object Keys {
         val relayBaseUrl = stringPreferencesKey("relay_base_url")
+        val openAiApiKeyConfigured = booleanPreferencesKey("openai_api_key_configured")
+        val openAiModel = stringPreferencesKey("openai_model")
         val wakePhrase = stringPreferencesKey("wake_phrase")
         val transcriptionProvider = stringPreferencesKey("transcription_provider")
         val preferOfflineSpeechRecognition = booleanPreferencesKey("prefer_offline_speech_recognition")
@@ -54,6 +56,8 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<DroidLmSettings> = context.settingsDataStore.data.map { preferences ->
         DroidLmSettings(
             relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
+            openAiApiKeyConfigured = preferences[Keys.openAiApiKeyConfigured] ?: hasOpenAiApiKey(),
+            openAiModel = preferences[Keys.openAiModel] ?: "gpt-4.1-mini",
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
             transcriptionProvider = androidSpeechTranscriptionProvider(preferences[Keys.transcriptionProvider]),
             preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
@@ -89,6 +93,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun updateRelayBaseUrl(value: String) = editString(Keys.relayBaseUrl, value.trim())
+    suspend fun updateOpenAiModel(value: String) = editString(Keys.openAiModel, value.trim().ifBlank { "gpt-4.1-mini" })
     suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
     suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)
     suspend fun updatePreferOfflineSpeechRecognition(value: Boolean) = editBoolean(Keys.preferOfflineSpeechRecognition, value)
@@ -118,6 +123,19 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateSensitiveAppScreenshotDenylist(value: String) = editString(Keys.sensitiveAppScreenshotDenylist, value)
     suspend fun updatePackageAllowlist(value: String) = editString(Keys.packageAllowlist, value)
     suspend fun updatePackageDenylist(value: String) = editString(Keys.packageDenylist, value)
+
+    suspend fun saveOpenAiApiKey(value: String) {
+        securePreferences.edit().putString(OPENAI_API_KEY, value).apply()
+        editBoolean(Keys.openAiApiKeyConfigured, value.isNotBlank())
+    }
+
+    suspend fun clearOpenAiApiKey() {
+        securePreferences.edit().remove(OPENAI_API_KEY).apply()
+        editBoolean(Keys.openAiApiKeyConfigured, false)
+    }
+
+    fun getOpenAiApiKey(): String? = securePreferences.getString(OPENAI_API_KEY, null)
+    fun hasOpenAiApiKey(): Boolean = !getOpenAiApiKey().isNullOrBlank()
 
     suspend fun savePicovoiceAccessKey(value: String) {
         securePreferences.edit().putString(PICOVOICE_ACCESS_KEY, value).apply()
@@ -163,7 +181,7 @@ class SettingsRepository(private val context: Context) {
     private fun androidSpeechTranscriptionProvider(value: String?): TranscriptionProvider {
         return when (enumValueOrDefault(value, TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER)) {
             TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER -> TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
-            TranscriptionProvider.OPENAI_RELAY -> TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
+            TranscriptionProvider.OPENAI_DIRECT -> TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER
         }
     }
 
@@ -172,6 +190,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     companion object {
+        private const val OPENAI_API_KEY = "openai_api_key"
         private const val PICOVOICE_ACCESS_KEY = "picovoice_access_key"
         private const val MOBILERUN_API_KEY = "mobilerun_api_key"
     }

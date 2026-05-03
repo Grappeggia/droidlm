@@ -3,7 +3,6 @@ package ai.droidlm
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.logs.ActionLogEntry
-import ai.droidlm.relay.PlannerStatus
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.WakeWordProvider
@@ -98,8 +97,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsState(initial = DroidLmSettings())
     val logs by viewModel.logs.collectAsState()
-    val relayStatus by viewModel.relayStatus.collectAsState()
-    val plannerStatus by viewModel.plannerStatus.collectAsState()
     val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsState()
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
@@ -146,7 +143,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
 
     LaunchedEffect(Unit) {
         viewModel.refreshAccessibility()
-        viewModel.checkPlannerStatus()
     }
 
     Box(
@@ -170,8 +166,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     SettingsPage(
                         settings = settings,
                         viewModel = viewModel,
-                        relayStatus = relayStatus,
-                        plannerStatus = plannerStatus,
                         plannerKeySetup = plannerKeySetup,
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
@@ -190,7 +184,8 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
                             )
                         },
-                        onSaveOpenAiKey = viewModel::saveOpenAiKeyToRelay,
+                        onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
+                        onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
                         onExecuteTextCommand = viewModel::executeTextCommand
                     )
@@ -198,6 +193,17 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 item { Text("Action log", fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.Serif) }
                 items(logs) { LogRow(it) }
             } else {
+                plannerKeySetup?.let { setup ->
+                    item {
+                        PlannerSettingsCard(
+                            settings = settings,
+                            plannerKeySetup = setup,
+                            onSave = viewModel::saveOpenAiApiKey,
+                            onClear = viewModel::clearOpenAiApiKey,
+                            onCancel = viewModel::dismissPlannerKeySetup
+                        )
+                    }
+                }
                 pendingPlan?.let { plan ->
                     item {
                         PlanPreviewCard(
@@ -290,8 +296,6 @@ private fun HoverControlRow(
 private fun SettingsPage(
     settings: DroidLmSettings,
     viewModel: DroidLmViewModel,
-    relayStatus: String,
-    plannerStatus: PlannerStatus?,
     plannerKeySetup: PlannerKeySetupRequest?,
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
@@ -302,7 +306,8 @@ private fun SettingsPage(
     onOpenAccessibility: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onOpenOverlayPermission: () -> Unit,
-    onSaveOpenAiKey: (String, String) -> Unit,
+    onSaveOpenAiKey: (String) -> Unit,
+    onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
     onExecuteTextCommand: (String) -> Unit
 ) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -312,23 +317,21 @@ private fun SettingsPage(
         micGranted = micGranted,
         notificationGranted = notificationGranted,
         listening = listening,
-        relayStatus = relayStatus,
         overlayRunning = overlayRunning,
         overlayGranted = overlayGranted,
         settings = settings
     )
     PlannerSettingsCard(
-        plannerStatus = plannerStatus,
+        settings = settings,
         plannerKeySetup = plannerKeySetup,
         onSave = onSaveOpenAiKey,
-        onCancel = onDismissPlannerKeySetup,
-        onRefresh = viewModel::checkPlannerStatus
+        onClear = onClearOpenAiKey,
+        onCancel = onDismissPlannerKeySetup
     )
     SettingsCard(settings, viewModel)
     AdvancedControlsCard(
         onOpenAccessibility = onOpenAccessibility,
         onOpenAppSettings = onOpenAppSettings,
-        onTestRelay = viewModel::testRelay,
         onTestOcr = viewModel::testOcr,
         onOpenOverlayPermission = onOpenOverlayPermission
     )
@@ -341,7 +344,6 @@ private fun SetupStatusCard(
     micGranted: Boolean,
     notificationGranted: Boolean,
     listening: Boolean,
-    relayStatus: String,
     overlayRunning: Boolean,
     overlayGranted: Boolean,
     settings: DroidLmSettings
@@ -353,7 +355,7 @@ private fun SetupStatusCard(
         StatusChip("Microphone", micGranted)
         StatusChip("Notifications", notificationGranted)
         StatusChip("Listening", listening)
-        AssistChip(onClick = {}, label = { Text("Relay: $relayStatus") })
+        StatusChip("OpenAI", settings.openAiApiKeyConfigured)
         AssistChip(onClick = {}, label = { Text("Voice: Android SpeechRecognizer") })
         StatusChip("Overlay", overlayRunning)
         StatusChip("Overlay permission", overlayGranted)
@@ -372,7 +374,6 @@ private fun StatusChip(label: String, ok: Boolean) {
 private fun AdvancedControlsCard(
     onOpenAccessibility: () -> Unit,
     onOpenAppSettings: () -> Unit,
-    onTestRelay: () -> Unit,
     onTestOcr: () -> Unit,
     onOpenOverlayPermission: () -> Unit
 ) = DroidCard {
@@ -380,7 +381,6 @@ private fun AdvancedControlsCard(
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onOpenAccessibility) { Text("Open Accessibility Settings") }
         OutlinedButton(onClick = onOpenAppSettings) { Text("Open App Settings") }
-        OutlinedButton(onClick = onTestRelay) { Text("Test Relay") }
         OutlinedButton(onClick = onTestOcr) { Text("Test OCR") }
         OutlinedButton(onClick = onOpenOverlayPermission) { Text("Open Overlay Permission") }
     }
@@ -408,27 +408,25 @@ private fun ConfirmationCard(
 
 @Composable
 private fun PlannerSettingsCard(
-    plannerStatus: PlannerStatus?,
+    settings: DroidLmSettings,
     plannerKeySetup: PlannerKeySetupRequest?,
-    onSave: (String, String) -> Unit,
-    onCancel: () -> Unit,
-    onRefresh: () -> Unit
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+    onCancel: () -> Unit
 ) = DroidCard(container = Color(0xFFFFF1D6)) {
     var apiKey by remember { mutableStateOf("") }
-    var setupToken by remember { mutableStateOf("") }
-    val configured = plannerStatus?.openAiKeyConfigured == true
-    Text("OpenAI relay key", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Text("Status: ${if (configured) "Configured" else "Not configured"}")
+    Text("OpenAI API key", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Status: ${if (settings.openAiApiKeyConfigured) "Configured" else "Not configured"}")
     plannerKeySetup?.let { Text(it.message, color = Color(0xFF6A4C35)) }
-    if (!configured) {
+    if (!settings.openAiApiKeyConfigured) {
         OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI API key") })
-        OutlinedTextField(value = setupToken, onValueChange = { setupToken = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay setup token") })
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { onSave(setupToken, apiKey); apiKey = "" }) { Text("Save to Relay") }
+            Button(onClick = { onSave(apiKey); apiKey = "" }) { Text("Save Key") }
             OutlinedButton(onClick = onCancel) { Text("Cancel") }
         }
+    } else {
+        OutlinedButton(onClick = onClear) { Text("Clear Key") }
     }
-    OutlinedButton(onClick = onRefresh) { Text("Refresh Key Status") }
 }
 
 @Composable
@@ -473,22 +471,22 @@ private fun CommandTestCard(onExecute: (String) -> Unit) = DroidCard {
 
 @Composable
 private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel) = DroidCard {
-    var relayUrl by remember(settings.relayBaseUrl) { mutableStateOf(settings.relayBaseUrl) }
+    var openAiModel by remember(settings.openAiModel) { mutableStateOf(settings.openAiModel) }
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
     var mobilerunKey by remember { mutableStateOf("") }
     var mobilerunDeviceId by remember(settings.mobilerunDeviceId) { mutableStateOf(settings.mobilerunDeviceId) }
     var picovoiceKey by remember { mutableStateOf("") }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    OutlinedTextField(value = relayUrl, onValueChange = { relayUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay base URL") })
-    Button(onClick = { viewModel.updateRelayBaseUrl(relayUrl) }) { Text("Save Relay URL") }
+    OutlinedTextField(value = openAiModel, onValueChange = { openAiModel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI model") })
+    Button(onClick = { viewModel.updateOpenAiModel(openAiModel) }) { Text("Save OpenAI Model") }
 
     Text("Voice recognition", fontWeight = FontWeight.SemiBold)
     ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
     ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
-    ToggleRow("Auto-accept safe GPT-5.4 nano plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
+    ToggleRow("Auto-accept safe GPT plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
 
     Text("Wake-word provider", fontWeight = FontWeight.SemiBold)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

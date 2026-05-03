@@ -3,8 +3,6 @@ package ai.droidlm.ui
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
-import ai.droidlm.relay.RelayCallResult
-import ai.droidlm.relay.PlannerStatus
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
@@ -32,11 +30,6 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val plannerKeySetupRequest = app.executor.plannerKeySetupRequest
     val overlayState = FloatingControlOverlayService.isRunningState
 
-    private val _relayStatus = MutableStateFlow("Unknown")
-    val relayStatus: StateFlow<String> = _relayStatus.asStateFlow()
-
-    private val _plannerStatus = MutableStateFlow<PlannerStatus?>(null)
-    val plannerStatus: StateFlow<PlannerStatus?> = _plannerStatus.asStateFlow()
 
     private val _accessibilityEnabled = MutableStateFlow(false)
     val accessibilityEnabled: StateFlow<Boolean> = _accessibilityEnabled.asStateFlow()
@@ -83,19 +76,18 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         app.executor.clearPlannerKeySetupRequest()
     }
 
-    fun saveOpenAiKeyToRelay(setupToken: String, apiKey: String) {
+    fun saveOpenAiApiKey(apiKey: String) {
         viewModelScope.launch {
-            val relayUrl = settings.first().relayBaseUrl
-            when (val result = app.relayClient.saveOpenAiKey(relayUrl, setupToken, apiKey)) {
-                is RelayCallResult.Success -> {
-                    app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI key saved on relay")
-                    checkPlannerStatus()
-                    app.executor.retryPlannerKeySetupRequest()
-                }
-                is RelayCallResult.Failure -> {
-                    app.actionLogRepository.log(ActionLogType.ERROR, "Could not save OpenAI key on relay: ${result.message}", result.errorCode)
-                }
-            }
+            app.settingsRepository.saveOpenAiApiKey(apiKey)
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key saved on this device")
+            app.executor.retryPlannerKeySetupRequest()
+        }
+    }
+
+    fun clearOpenAiApiKey() {
+        viewModelScope.launch {
+            app.settingsRepository.clearOpenAiApiKey()
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key cleared from this device")
         }
     }
 
@@ -108,32 +100,6 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { app.executor.executeTranscript(command) }
     }
 
-    fun testRelay() {
-        viewModelScope.launch {
-            _relayStatus.value = "Checking..."
-            val relayUrl = settings.first().relayBaseUrl
-            when (val result = app.relayClient.health(relayUrl)) {
-                is RelayCallResult.Success -> _relayStatus.value = if (result.value) "Reachable" else "Unhealthy"
-                is RelayCallResult.Failure -> _relayStatus.value = "Unreachable: ${result.message}"
-            }
-        }
-    }
-
-    fun checkPlannerStatus() {
-        viewModelScope.launch {
-            val relayUrl = settings.first().relayBaseUrl
-            when (val result = app.relayClient.plannerStatus(relayUrl)) {
-                is RelayCallResult.Success -> {
-                    _plannerStatus.value = result.value
-                    _relayStatus.value = if (result.value.relayReady) "Reachable" else "Unhealthy"
-                }
-                is RelayCallResult.Failure -> {
-                    _plannerStatus.value = null
-                    _relayStatus.value = "Unreachable: ${result.message}"
-                }
-            }
-        }
-    }
 
     fun testOcr() {
         viewModelScope.launch {
@@ -152,7 +118,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun rejectPending() = app.executor.respondToConfirmation(false)
     fun updateAutoAcceptSafePlans(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateAutoAcceptSafePlans(value) }
 
-    fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
+    fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
     fun updateExecutionMode(mode: ExecutionMode) = viewModelScope.launch { app.settingsRepository.updateExecutionMode(mode) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
     fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { app.settingsRepository.updateTranscriptionProvider(provider) }

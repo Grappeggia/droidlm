@@ -13,11 +13,13 @@ enum class ExecutionMode {
 
 enum class TranscriptionProvider {
     ANDROID_SPEECH_RECOGNIZER,
-    OPENAI_RELAY
+    OPENAI_DIRECT
 }
 
 data class DroidLmSettings(
     val relayBaseUrl: String = "",
+    val openAiApiKeyConfigured: Boolean = false,
+    val openAiModel: String = "gpt-4.1-mini",
     val wakePhrase: String = "DroidLM",
     val transcriptionProvider: TranscriptionProvider = TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER,
     val preferOfflineSpeechRecognition: Boolean = true,
