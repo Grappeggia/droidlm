@@ -596,10 +596,7 @@ class FloatingControlOverlayService : Service() {
                 app.actionLogRepository.log(ActionLogType.ERROR, "Microphone permission is required for push-to-talk", "RECORD_AUDIO_PERMISSION_MISSING")
                 startActivity(RecordingPermissionActivity.intent(this@FloatingControlOverlayService))
             } else {
-                ContextCompat.startForegroundService(
-                    this@FloatingControlOverlayService,
-                    WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
-                )
+                startPushToTalkService()
             }
         }
     }
@@ -615,8 +612,30 @@ class FloatingControlOverlayService : Service() {
 
     private fun showMicPermissionReady() {
         showOverlay()
-        transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
-        updateOverlayText()
+        scope.launch {
+            accessibilityEnabled = true
+            transientStatusMessage = OverlayStatusFormatter.microphonePermissionLabel()
+            updateOverlayText()
+            delay(600)
+            startPushToTalkService()
+            repeat(40) {
+                if (app.speechRecognitionController.state.value.isListening) {
+                    transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
+                    updateOverlayText()
+                    return@launch
+                }
+                delay(50)
+            }
+            transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
+            updateOverlayText()
+        }
+    }
+
+    private fun startPushToTalkService() {
+        ContextCompat.startForegroundService(
+            this,
+            WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
+        )
     }
 
 

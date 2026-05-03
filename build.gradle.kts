@@ -347,6 +347,18 @@ tasks.register("connectedVoiceE2e") {
 
     doLast {
         val adb = project.androidAdbPath()
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmOverlayRecordPermissionE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmOverlayRecordPermissionE2ETest.kt",
+                artifactSubdirectory = "overlay-record-permission"
+            )
+        )
         runInstrumentedSuiteWithVideos(
             adb,
             AndroidE2eSuite(
