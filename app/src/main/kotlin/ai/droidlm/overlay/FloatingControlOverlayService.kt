@@ -58,6 +58,9 @@ class FloatingControlOverlayService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var stateJob: Job? = null
     private var recordButton: Button? = null
+    private var acceptPlanButton: Button? = null
+    private var rejectPlanButton: Button? = null
+    private var moreButton: Button? = null
     private var statusText: TextView? = null
 
     override fun onCreate() {
@@ -164,7 +167,31 @@ class FloatingControlOverlayService : Service() {
             maxWidth = (220 * density).toInt()
             setPadding((8 * density).toInt(), 0, (8 * density).toInt(), 0)
         }
-        val moreButton = Button(this).apply {
+        acceptPlanButton = Button(this).apply {
+            text = "Y"
+            contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
+            textSize = 16f
+            minWidth = (24 * density).toInt()
+            minimumWidth = (24 * density).toInt()
+            minHeight = (48 * density).toInt()
+            setPadding(0, 0, 0, 0)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener { acceptPendingPlan() }
+        }
+        rejectPlanButton = Button(this).apply {
+            text = "N"
+            contentDescription = REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION
+            textSize = 16f
+            minWidth = (24 * density).toInt()
+            minimumWidth = (24 * density).toInt()
+            minHeight = (48 * density).toInt()
+            setPadding(0, 0, 0, 0)
+            setTextColor(Color.WHITE)
+            visibility = View.GONE
+            setOnClickListener { rejectPendingPlan() }
+        }
+        moreButton = Button(this).apply {
             text = "..."
             contentDescription = MORE_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
@@ -177,6 +204,8 @@ class FloatingControlOverlayService : Service() {
         }
 
         pill.addView(recordButton)
+        pill.addView(acceptPlanButton)
+        pill.addView(rejectPlanButton)
         pill.addView(moreButton)
         pill.addView(statusText)
         attachDragHandler(pill, layoutParams)
@@ -277,14 +306,22 @@ class FloatingControlOverlayService : Service() {
             launch {
                 app.executor.uiState.collect { updateOverlayText() }
             }
+            launch {
+                app.executor.pendingPlan.collect { updateOverlayText() }
+            }
         }
     }
 
     private fun updateOverlayText() {
+        val pendingPlan = app.executor.pendingPlan.value
         val speech = app.speechRecognitionController.state.value
         val execution = app.executor.uiState.value
+        val hasPendingPlan = pendingPlan != null
+        acceptPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
+        rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
+        moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
         recordButton?.text = OverlayStatusFormatter.recordButton(speech.isListening, execution.status)
-        statusText?.text = OverlayStatusFormatter.label(
+        statusText?.text = pendingPlan?.let { OverlayStatusFormatter.compactPlan(it.plan) } ?: OverlayStatusFormatter.label(
             isListening = speech.isListening,
             partialTranscript = speech.partialTranscript,
             finalTranscript = speech.finalTranscript,
@@ -307,6 +344,15 @@ class FloatingControlOverlayService : Service() {
             )
         }
     }
+
+    private fun acceptPendingPlan() {
+        scope.launch { app.executor.acceptPendingPlan(false) }
+    }
+
+    private fun rejectPendingPlan() {
+        app.executor.rejectPendingPlan()
+    }
+
 
     private fun openFullApp() {
         startActivity(
@@ -340,6 +386,8 @@ class FloatingControlOverlayService : Service() {
         const val ACTION_OPEN_APP = "ai.droidlm.action.OVERLAY_OPEN_APP"
         const val RECORD_BUTTON_CONTENT_DESCRIPTION = "DroidLM record command"
         const val MORE_BUTTON_CONTENT_DESCRIPTION = "DroidLM open full app"
+        const val ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM accept plan"
+        const val REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM reject plan"
         val isRunningState = MutableStateFlow(false)
 
         fun intent(context: Context, action: String): Intent =
