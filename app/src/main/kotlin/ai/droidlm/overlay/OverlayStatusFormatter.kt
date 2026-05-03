@@ -31,6 +31,8 @@ object OverlayStatusFormatter {
 
     fun microphonePermissionLabel(): String = "Enable microphone permission to record"
 
+    fun microphoneReadyLabel(): String = "Mic enabled. Tap record to speak"
+
     fun compactPlan(plan: PlanPreview, maxChars: Int = 96): String {
         val prefix = if (plan.riskLevel.equals("LOW", ignoreCase = true)) "P:" else "P[${plan.riskLevel.uppercase()}]:"
         val visibleSteps = plan.steps.take(4).joinToString(">") { compactStep(it.actionLabel) }

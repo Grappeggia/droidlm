@@ -2,7 +2,7 @@ package ai.droidlm.permissions
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
-import ai.droidlm.voice.WakeWordForegroundService
+import ai.droidlm.overlay.FloatingControlOverlayService
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -15,7 +15,7 @@ class RecordingPermissionActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (hasMicPermission()) {
-            startPushToTalkIfRequested()
+            notifyMicPermissionReady()
             finish()
             return
         }
@@ -26,31 +26,25 @@ class RecordingPermissionActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_RECORD_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             (application as DroidLMApp).actionLogRepository.log(ActionLogType.ACTION_RESULT, "Microphone permission granted")
-            startPushToTalkIfRequested()
+            notifyMicPermissionReady()
         } else {
             (application as DroidLMApp).actionLogRepository.log(ActionLogType.ERROR, "Microphone permission denied", "RECORD_AUDIO_PERMISSION_DENIED")
         }
         finish()
     }
 
-    private fun startPushToTalkIfRequested() {
-        if (!intent.getBooleanExtra(EXTRA_START_PUSH_TO_TALK_AFTER_GRANT, false)) return
-        ContextCompat.startForegroundService(
-            this,
-            WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
-        )
+    private fun notifyMicPermissionReady() {
+        startService(FloatingControlOverlayService.intent(this, FloatingControlOverlayService.ACTION_MIC_PERMISSION_READY))
     }
 
     private fun hasMicPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     companion object {
-        const val EXTRA_START_PUSH_TO_TALK_AFTER_GRANT = "ai.droidlm.extra.START_PUSH_TO_TALK_AFTER_GRANT"
         private const val REQUEST_RECORD_AUDIO = 1001
 
-        fun intent(context: Context, startPushToTalkAfterGrant: Boolean): Intent =
+        fun intent(context: Context): Intent =
             Intent(context, RecordingPermissionActivity::class.java)
-                .putExtra(EXTRA_START_PUSH_TO_TALK_AFTER_GRANT, startPushToTalkAfterGrant)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 }

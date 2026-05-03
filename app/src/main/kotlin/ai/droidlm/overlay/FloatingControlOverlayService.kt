@@ -71,6 +71,7 @@ class FloatingControlOverlayService : Service() {
     private var accessibilityEnabled: Boolean = false
     private var accessibilitySettingsOpened: Boolean = false
     private var accessibilityPollingJob: Job? = null
+    private var transientStatusMessage: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -85,6 +86,7 @@ class FloatingControlOverlayService : Service() {
             ACTION_OPEN_APP -> openFullApp()
             ACTION_OPEN_ACCESSIBILITY_SETTINGS -> openAccessibilitySettings()
             ACTION_CHECK_ACCESSIBILITY -> refreshAccessibilityStatus()
+            ACTION_MIC_PERMISSION_READY -> showMicPermissionReady()
             ACTION_SHOW, null -> showOverlay()
             else -> showOverlay()
         }
@@ -368,6 +370,10 @@ class FloatingControlOverlayService : Service() {
         rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
         recordButton?.text = OverlayStatusFormatter.recordButton(speech.isListening, execution.status)
+        transientStatusMessage?.let { message ->
+            statusText?.text = message
+            return
+        }
         statusText?.text = pendingPlan?.let { OverlayStatusFormatter.compactPlan(it.plan) } ?: OverlayStatusFormatter.label(
             isListening = speech.isListening,
             partialTranscript = speech.partialTranscript,
@@ -378,6 +384,7 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun toggleRecord() {
+        transientStatusMessage = null
         scope.launch {
             if (!app.portalController.isAccessibilityEnabled()) {
                 accessibilityEnabled = false
@@ -395,7 +402,7 @@ class FloatingControlOverlayService : Service() {
             } else if (!hasMicPermission()) {
                 statusText?.text = OverlayStatusFormatter.microphonePermissionLabel()
                 app.actionLogRepository.log(ActionLogType.ERROR, "Microphone permission is required for push-to-talk", "RECORD_AUDIO_PERMISSION_MISSING")
-                startActivity(RecordingPermissionActivity.intent(this@FloatingControlOverlayService, startPushToTalkAfterGrant = true))
+                startActivity(RecordingPermissionActivity.intent(this@FloatingControlOverlayService))
             } else {
                 ContextCompat.startForegroundService(
                     this@FloatingControlOverlayService,
@@ -411,6 +418,13 @@ class FloatingControlOverlayService : Service() {
 
     private fun rejectPendingPlan() {
         app.executor.rejectPendingPlan()
+    }
+
+
+    private fun showMicPermissionReady() {
+        showOverlay()
+        transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
+        updateOverlayText()
     }
 
 
@@ -494,6 +508,7 @@ class FloatingControlOverlayService : Service() {
         const val ACTION_OPEN_APP = "ai.droidlm.action.OVERLAY_OPEN_APP"
         const val ACTION_OPEN_ACCESSIBILITY_SETTINGS = "ai.droidlm.action.OVERLAY_OPEN_ACCESSIBILITY_SETTINGS"
         const val ACTION_CHECK_ACCESSIBILITY = "ai.droidlm.action.OVERLAY_CHECK_ACCESSIBILITY"
+        const val ACTION_MIC_PERMISSION_READY = "ai.droidlm.action.MIC_PERMISSION_READY"
         const val RECORD_BUTTON_CONTENT_DESCRIPTION = "DroidLM record command"
         const val MORE_BUTTON_CONTENT_DESCRIPTION = "DroidLM open full app"
         const val ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM accept plan"

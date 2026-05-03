@@ -43,7 +43,7 @@ class SpeechRecognitionController(
 
     suspend fun recognizeCommand(
         preferOffline: Boolean,
-        maxDurationMs: Long = 12_000L,
+        maxDurationMs: Long = 20_000L,
         languageTag: String = Locale.getDefault().toLanguageTag()
     ): String = withContext(Dispatchers.Main.immediate) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -82,11 +82,14 @@ class SpeechRecognitionController(
                     logs.log(ActionLogType.RECORDING_STARTED, "Android speech recognition started")
                 }
 
-                override fun onBeginningOfSpeech() = Unit
+                override fun onBeginningOfSpeech() {
+                    logs.log(ActionLogType.RECORDING_STARTED, "Speech input detected")
+                }
                 override fun onRmsChanged(rmsdB: Float) = Unit
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
                 override fun onEndOfSpeech() {
                     _state.value = _state.value.copy(isListening = false)
+                    logs.log(ActionLogType.RECORDING_STOPPED, "Speech input ended")
                 }
 
                 override fun onError(error: Int) {
@@ -137,9 +140,9 @@ class SpeechRecognitionController(
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1_200L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 700L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2_500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1_800L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_500L)
             }
             _state.value = _state.value.copy(isListening = true, partialTranscript = "", errorMessage = null)
             recognizer.startListening(intent)

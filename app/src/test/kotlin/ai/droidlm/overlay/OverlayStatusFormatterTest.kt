@@ -44,6 +44,13 @@ class OverlayStatusFormatterTest {
         )
     }
 
+    @Test fun microphoneReadyMessageIsShort() {
+        assertEquals(
+            "Mic enabled. Tap record to speak",
+            OverlayStatusFormatter.microphoneReadyLabel()
+        )
+    }
+
 
     @Test fun errorResultWinsOverFinalTranscript() {
         val label = OverlayStatusFormatter.label(
