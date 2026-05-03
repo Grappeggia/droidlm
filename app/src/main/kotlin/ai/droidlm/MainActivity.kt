@@ -81,15 +81,27 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun DroidLMTheme(content: @Composable () -> Unit) {
     val colors = androidx.compose.material3.lightColorScheme(
-        primary = Color(0xFF153D3B),
-        onPrimary = Color(0xFFFDF8EC),
-        secondary = Color(0xFFE7B75F),
-        tertiary = Color(0xFFB95F43),
-        background = Color(0xFFF5EFE2),
-        surface = Color(0xFFFFFBF2),
-        onSurface = Color(0xFF17211F)
+        primary = DroidLmColors.Accent,
+        onPrimary = Color.White,
+        secondary = DroidLmColors.TextMuted,
+        tertiary = DroidLmColors.Danger,
+        background = DroidLmColors.Background,
+        surface = DroidLmColors.Surface,
+        onSurface = DroidLmColors.Text
     )
     MaterialTheme(colorScheme = colors, typography = MaterialTheme.typography, content = content)
+}
+
+private object DroidLmColors {
+    val Background = Color(0xFFF6F7F9)
+    val Surface = Color(0xFFFFFFFF)
+    val SurfaceAlt = Color(0xFFEFF2F6)
+    val Text = Color(0xFF121417)
+    val TextMuted = Color(0xFF667085)
+    val Accent = Color(0xFF2563EB)
+    val Danger = Color(0xFFDC2626)
+    val SuccessSurface = Color(0xFFEFF8F2)
+    val WarningSurface = Color(0xFFFFF7E8)
 }
 
 @Composable
@@ -150,14 +162,14 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Color(0xFFF5EFE2), Color(0xFFE9D9B9), Color(0xFFD7E2D2))
+                    listOf(DroidLmColors.Background, DroidLmColors.SurfaceAlt)
                 )
             )
     ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 110.dp),
+                .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item { Header() }
@@ -190,7 +202,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onExecuteTextCommand = viewModel::executeTextCommand
                     )
                 }
-                item { Text("Action log", fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.Serif) }
+                item { Text("Action log", fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.SansSerif) }
                 items(logs) { LogRow(it) }
             } else {
                 plannerKeySetup?.let { setup ->
@@ -227,35 +239,34 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     }
                 }
                 item { ExecutionCard(execution.lastTranscript, execution.parsedAction, execution.status, execution.lastResult) }
+                item {
+                    MainControlRow(
+                        listening = listening,
+                        showingSettings = showSettings,
+                        overlayRunning = overlayRunning,
+                        onListeningToggle = { if (listening) viewModel.stopListening() else startListeningWithPermission() },
+                        onPushToTalk = ::pushToTalkWithPermission,
+                        onCancel = viewModel::cancelCurrentTask,
+                        onSettings = { showSettings = !showSettings },
+                        onOverlayToggle = { if (overlayRunning) viewModel.stopOverlay() else startOverlayWithPermission() }
+                    )
+                }
             }
         }
 
-        HoverControlRow(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(18.dp),
-            listening = listening,
-            showingSettings = showSettings,
-            overlayRunning = overlayRunning,
-            onListeningToggle = { if (listening) viewModel.stopListening() else startListeningWithPermission() },
-            onPushToTalk = ::pushToTalkWithPermission,
-            onCancel = viewModel::cancelCurrentTask,
-            onSettings = { showSettings = !showSettings },
-            onOverlayToggle = { if (overlayRunning) viewModel.stopOverlay() else startOverlayWithPermission() }
-        )
+
     }
 }
 
 @Composable
 private fun Header() {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("DroidLM", fontSize = 38.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Serif, color = Color(0xFF153D3B))
+        Text("DroidLM", fontSize = 38.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.SansSerif, color = DroidLmColors.Text)
     }
 }
 
 @Composable
-private fun HoverControlRow(
-    modifier: Modifier,
+private fun MainControlRow(
     listening: Boolean,
     showingSettings: Boolean,
     overlayRunning: Boolean,
@@ -265,30 +276,20 @@ private fun HoverControlRow(
     onSettings: () -> Unit,
     onOverlayToggle: () -> Unit
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(30.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xEE153D3B)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        itemVerticalAlignment = Alignment.CenterVertically
     ) {
-        FlowRow(
-            modifier = Modifier.padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            itemVerticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(onClick = onListeningToggle) { Text(if (listening) "Stop Listening" else "Start Listening") }
-            Button(
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE7B75F), contentColor = Color(0xFF17211F)),
-                onClick = onPushToTalk
-            ) { Text("Push to Talk") }
-            Button(
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB95F43)),
-                onClick = onCancel
-            ) { Text("Cancel") }
-            Button(onClick = onOverlayToggle) { Text(if (overlayRunning) "Stop Floating Controls" else "Start Floating Controls") }
-            OutlinedButton(onClick = onSettings) { Text(if (showingSettings) "Close" else "⚙") }
-        }
+        Button(onClick = onListeningToggle) { Text(if (listening) "Stop Listening" else "Start Listening") }
+        Button(onClick = onPushToTalk) { Text("Push to Talk") }
+        Button(
+            colors = ButtonDefaults.buttonColors(containerColor = DroidLmColors.Danger, contentColor = Color.White),
+            onClick = onCancel
+        ) { Text("Cancel") }
+        Button(onClick = onOverlayToggle) { Text(if (overlayRunning) "Stop Floating Controls" else "Start Floating Controls") }
+        OutlinedButton(onClick = onSettings) { Text(if (showingSettings) "Close Settings" else "Settings") }
     }
 }
 
@@ -311,7 +312,7 @@ private fun SettingsPage(
     onDismissPlannerKeySetup: () -> Unit,
     onExecuteTextCommand: (String) -> Unit
 ) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-    Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 24.sp)
+    Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
     SetupStatusCard(
         accessibilityEnabled = accessibilityEnabled,
         micGranted = micGranted,
@@ -348,7 +349,7 @@ private fun SetupStatusCard(
     overlayGranted: Boolean,
     settings: DroidLmSettings
 ) = DroidCard {
-    Text("Setup status", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Setup status", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Spacer(Modifier.height(10.dp))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         StatusChip("Accessibility", accessibilityEnabled)
@@ -377,7 +378,7 @@ private fun AdvancedControlsCard(
     onTestOcr: () -> Unit,
     onOpenOverlayPermission: () -> Unit
 ) = DroidCard {
-    Text("Advanced controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Advanced controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onOpenAccessibility) { Text("Open Accessibility Settings") }
         OutlinedButton(onClick = onOpenAppSettings) { Text("Open App Settings") }
@@ -394,8 +395,8 @@ private fun ConfirmationCard(
     prompt: String,
     onConfirm: () -> Unit,
     onCancel: () -> Unit
-) = DroidCard(container = Color(0xFFFFF1D6)) {
-    Text("Confirmation required", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+) = DroidCard(container = DroidLmColors.WarningSurface) {
+    Text("Confirmation required", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Transcript: $transcript")
     Text("Action: $action")
     Text("Reason: $reason")
@@ -413,11 +414,11 @@ private fun PlannerSettingsCard(
     onSave: (String) -> Unit,
     onClear: () -> Unit,
     onCancel: () -> Unit
-) = DroidCard(container = Color(0xFFFFF1D6)) {
+) = DroidCard(container = DroidLmColors.WarningSurface) {
     var apiKey by remember { mutableStateOf("") }
-    Text("OpenAI API key", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("OpenAI API key", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Status: ${if (settings.openAiApiKeyConfigured) "Configured" else "Not configured"}")
-    plannerKeySetup?.let { Text(it.message, color = Color(0xFF6A4C35)) }
+    plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
     if (!settings.openAiApiKeyConfigured) {
         OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI API key") })
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -435,9 +436,9 @@ private fun PlanPreviewCard(
     onAcceptOnce: () -> Unit,
     onAlwaysAcceptSafe: () -> Unit,
     onReject: () -> Unit
-) = DroidCard(container = Color(0xFFEAF4EA)) {
+) = DroidCard(container = DroidLmColors.SuccessSurface) {
     val plan = pendingPlan.plan
-    Text("GPT plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("GPT plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Transcript: ${pendingPlan.transcript}")
     Text("Model: ${plan.model}")
     Text("Risk: ${plan.riskLevel}")
@@ -454,7 +455,7 @@ private fun PlanPreviewCard(
 
 @Composable
 private fun ExecutionCard(transcript: String, action: String, status: String, result: String) = DroidCard {
-    Text("Execution", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Execution", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Status: $status")
     transcript.takeIf { it.isNotBlank() }?.let { Text("Last transcript: $it") }
     action.takeIf { it.isNotBlank() }?.let { Text("Parsed action: $it") }
@@ -464,7 +465,7 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 @Composable
 private fun CommandTestCard(onExecute: (String) -> Unit) = DroidCard {
     var command by remember { mutableStateOf("DroidLM open my Drive app") }
-    Text("Text command test", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Text command test", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     OutlinedTextField(value = command, onValueChange = { command = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Command") })
     Button(onClick = { onExecute(command) }) { Text("Execute Text Command") }
 }
@@ -477,7 +478,7 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     var mobilerunDeviceId by remember(settings.mobilerunDeviceId) { mutableStateOf(settings.mobilerunDeviceId) }
     var picovoiceKey by remember { mutableStateOf("") }
 
-    Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     OutlinedTextField(value = openAiModel, onValueChange = { openAiModel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI model") })
     Button(onClick = { viewModel.updateOpenAiModel(openAiModel) }) { Text("Save OpenAI Model") }
 
@@ -528,19 +529,19 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 }
 
 @Composable
-private fun LogRow(entry: ActionLogEntry) = DroidCard(container = Color(0xF5FFFFF8)) {
-    Text(entry.type.name, fontWeight = FontWeight.Bold, color = Color(0xFF153D3B))
+private fun LogRow(entry: ActionLogEntry) = DroidCard(container = DroidLmColors.Surface) {
+    Text(entry.type.name, fontWeight = FontWeight.Bold, color = DroidLmColors.Accent)
     Text(entry.message)
-    entry.details?.let { Text(it, color = Color(0xFF6A4C35)) }
+    entry.details?.let { Text(it, color = DroidLmColors.TextMuted) }
 }
 
 @Composable
-private fun DroidCard(container: Color = Color(0xF4FFFFF8), content: @Composable ColumnScope.() -> Unit) {
+private fun DroidCard(container: Color = DroidLmColors.Surface, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = container),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
