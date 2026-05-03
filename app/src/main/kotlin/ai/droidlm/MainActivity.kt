@@ -1,8 +1,9 @@
 package ai.droidlm
+
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
-
 import ai.droidlm.logs.ActionLogEntry
+import ai.droidlm.relay.PlannerStatus
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.WakeWordProvider
@@ -44,7 +45,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -99,15 +99,16 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val settings by viewModel.settings.collectAsState(initial = DroidLmSettings())
     val logs by viewModel.logs.collectAsState()
     val relayStatus by viewModel.relayStatus.collectAsState()
+    val plannerStatus by viewModel.plannerStatus.collectAsState()
     val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsState()
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
-    val speechRecognition by viewModel.speechRecognitionState.collectAsState()
     val overlayRunning by viewModel.overlayState.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
 
+    var showSettings by remember { mutableStateOf(false) }
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> micGranted = granted }
@@ -118,7 +119,35 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
         if (overlayGranted) viewModel.startOverlay()
     }
 
-    LaunchedEffect(Unit) { viewModel.refreshAccessibility() }
+    fun startListeningWithPermission() {
+        when {
+            !micGranted -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            !notificationGranted && Build.VERSION.SDK_INT >= 33 -> notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else -> viewModel.startListening()
+        }
+    }
+
+    fun pushToTalkWithPermission() {
+        when {
+            !micGranted -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            !notificationGranted && Build.VERSION.SDK_INT >= 33 -> notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else -> viewModel.pushToTalk()
+        }
+    }
+
+    fun startOverlayWithPermission() {
+        overlayGranted = Settings.canDrawOverlays(context)
+        if (overlayGranted) {
+            viewModel.startOverlay()
+        } else {
+            overlayLauncher.launch(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshAccessibility()
+        viewModel.checkPlannerStatus()
+    }
 
     Box(
         modifier = Modifier
@@ -132,111 +161,82 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(18.dp),
+                .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item { Header() }
-            item { DisclosureCard() }
-            item {
-                StatusCard(
-                    accessibilityEnabled = accessibilityEnabled,
-                    micGranted = micGranted,
-                    notificationGranted = notificationGranted,
-                    listening = listening,
-                    relayStatus = relayStatus,
-                    overlayRunning = overlayRunning,
-                    overlayGranted = overlayGranted,
-                    settings = settings
-                )
-            }
-            item {
-                ControlsCard(
-                    onStart = {
-                        when {
-                            !micGranted -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            !notificationGranted && Build.VERSION.SDK_INT >= 33 -> notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            else -> viewModel.startListening()
-                        }
-                    },
-                    onStop = viewModel::stopListening,
-                    onPushToTalk = {
-                        when {
-                            !micGranted -> micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            !notificationGranted && Build.VERSION.SDK_INT >= 33 -> notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            else -> viewModel.pushToTalk()
-                        }
-                    },
-                    onCancel = viewModel::cancelCurrentTask,
-                    onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                    onOpenAppSettings = {
-                        context.startActivity(
-                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-                        )
-                    },
-                    onTestRelay = viewModel::testRelay,
-                    onTestOcr = viewModel::testOcr,
-                    onStartOverlay = {
-                        overlayGranted = Settings.canDrawOverlays(context)
-                        if (overlayGranted) {
-                            viewModel.startOverlay()
-                        } else {
+            if (showSettings) {
+                item {
+                    SettingsPage(
+                        settings = settings,
+                        viewModel = viewModel,
+                        relayStatus = relayStatus,
+                        plannerStatus = plannerStatus,
+                        plannerKeySetup = plannerKeySetup,
+                        accessibilityEnabled = accessibilityEnabled,
+                        micGranted = micGranted,
+                        notificationGranted = notificationGranted,
+                        listening = listening,
+                        overlayRunning = overlayRunning,
+                        overlayGranted = overlayGranted,
+                        onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                        onOpenAppSettings = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                            )
+                        },
+                        onStartOverlay = ::startOverlayWithPermission,
+                        onStopOverlay = viewModel::stopOverlay,
+                        onOpenOverlayPermission = {
                             overlayLauncher.launch(
                                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
                             )
-                        }
-                    },
-                    onStopOverlay = viewModel::stopOverlay,
-                    onOpenOverlayPermission = {
-                        overlayLauncher.launch(
-                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        },
+                        onSaveOpenAiKey = viewModel::saveOpenAiKeyToRelay,
+                        onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
+                        onExecuteTextCommand = viewModel::executeTextCommand
+                    )
+                }
+                item { Text("Action log", fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.Serif) }
+                items(logs) { LogRow(it) }
+            } else {
+                pendingPlan?.let { plan ->
+                    item {
+                        PlanPreviewCard(
+                            pendingPlan = plan,
+                            onAcceptOnce = { viewModel.acceptPendingPlan(false) },
+                            onAlwaysAcceptSafe = { viewModel.acceptPendingPlan(true) },
+                            onReject = viewModel::rejectPendingPlan
                         )
                     }
-                )
-            }
-            item {
-                VoiceRecognitionCard(
-                    isListening = speechRecognition.isListening,
-                    finalTranscript = speechRecognition.finalTranscript.ifBlank { execution.lastTranscript },
-                    errorMessage = speechRecognition.errorMessage
-                )
-            }
-            plannerKeySetup?.let { setup ->
-                item {
-                    PlannerKeySetupCard(
-                        request = setup,
-                        onSave = viewModel::saveOpenAiKeyToRelay,
-                        onCancel = viewModel::dismissPlannerKeySetup
-                    )
                 }
-            }
-            pendingPlan?.let { plan ->
-                item {
-                    PlanPreviewCard(
-                        pendingPlan = plan,
-                        onAcceptOnce = { viewModel.acceptPendingPlan(false) },
-                        onAlwaysAcceptSafe = { viewModel.acceptPendingPlan(true) },
-                        onReject = viewModel::rejectPendingPlan
-                    )
+                pendingConfirmation?.let { pending ->
+                    item {
+                        ConfirmationCard(
+                            transcript = pending.transcript,
+                            action = pending.actionLabel,
+                            reason = pending.reason,
+                            prompt = pending.prompt,
+                            onConfirm = viewModel::confirmPending,
+                            onCancel = viewModel::rejectPending
+                        )
+                    }
                 }
+                item { ExecutionCard(execution.lastTranscript, execution.parsedAction, execution.status, execution.lastResult) }
             }
-            pendingConfirmation?.let { pending ->
-                item {
-                    ConfirmationCard(
-                        transcript = pending.transcript,
-                        action = pending.actionLabel,
-                        reason = pending.reason,
-                        prompt = pending.prompt,
-                        onConfirm = viewModel::confirmPending,
-                        onCancel = viewModel::rejectPending
-                    )
-                }
-            }
-            item { ExecutionCard(execution.lastTranscript, execution.parsedAction, execution.status, execution.lastResult) }
-            item { CommandTestCard(onExecute = viewModel::executeTextCommand) }
-            item { SettingsCard(settings, viewModel) }
-            item { Text("Action log", fontWeight = FontWeight.Bold, fontSize = 20.sp, fontFamily = FontFamily.Serif) }
-            items(logs) { LogRow(it) }
         }
+
+        HoverControlRow(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(18.dp),
+            listening = listening,
+            showingSettings = showSettings,
+            onListeningToggle = { if (listening) viewModel.stopListening() else startListeningWithPermission() },
+            onPushToTalk = ::pushToTalkWithPermission,
+            onCancel = viewModel::cancelCurrentTask,
+            onSettings = { showSettings = !showSettings }
+        )
     }
 }
 
@@ -244,19 +244,100 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
 private fun Header() {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("DroidLM", fontSize = 38.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Serif, color = Color(0xFF153D3B))
-        Text("A local-first Android assistant for user-owned devices", color = Color(0xFF42504D))
     }
 }
 
 @Composable
-private fun DisclosureCard() = DroidCard {
-    Text("First-run disclosure", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Spacer(Modifier.height(8.dp))
-    Text("DroidLM uses Android's built-in speech recognition for push-to-talk, so basic voice commands do not require a paid external API. Optional floating controls can appear over other apps only after you grant Android overlay permission. Depending on your device, speech recognition may run on-device or through your configured Android speech service. OpenAI-backed planning and cloud screenshot analysis remain optional through the relay. Accessibility lets DroidLM observe and control this device UI.")
+private fun HoverControlRow(
+    modifier: Modifier,
+    listening: Boolean,
+    showingSettings: Boolean,
+    onListeningToggle: () -> Unit,
+    onPushToTalk: () -> Unit,
+    onCancel: () -> Unit,
+    onSettings: () -> Unit
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xEE153D3B)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        FlowRow(
+            modifier = Modifier.padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            itemVerticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(onClick = onListeningToggle) { Text(if (listening) "Stop Listening" else "Start Listening") }
+            Button(
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE7B75F), contentColor = Color(0xFF17211F)),
+                onClick = onPushToTalk
+            ) { Text("Push to Talk") }
+            Button(
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB95F43)),
+                onClick = onCancel
+            ) { Text("Cancel") }
+            OutlinedButton(onClick = onSettings) { Text(if (showingSettings) "Close" else "⚙") }
+        }
+    }
 }
 
 @Composable
-private fun StatusCard(
+private fun SettingsPage(
+    settings: DroidLmSettings,
+    viewModel: DroidLmViewModel,
+    relayStatus: String,
+    plannerStatus: PlannerStatus?,
+    plannerKeySetup: PlannerKeySetupRequest?,
+    accessibilityEnabled: Boolean,
+    micGranted: Boolean,
+    notificationGranted: Boolean,
+    listening: Boolean,
+    overlayRunning: Boolean,
+    overlayGranted: Boolean,
+    onOpenAccessibility: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit,
+    onOpenOverlayPermission: () -> Unit,
+    onSaveOpenAiKey: (String, String) -> Unit,
+    onDismissPlannerKeySetup: () -> Unit,
+    onExecuteTextCommand: (String) -> Unit
+) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 24.sp)
+    SetupStatusCard(
+        accessibilityEnabled = accessibilityEnabled,
+        micGranted = micGranted,
+        notificationGranted = notificationGranted,
+        listening = listening,
+        relayStatus = relayStatus,
+        overlayRunning = overlayRunning,
+        overlayGranted = overlayGranted,
+        settings = settings
+    )
+    PlannerSettingsCard(
+        plannerStatus = plannerStatus,
+        plannerKeySetup = plannerKeySetup,
+        onSave = onSaveOpenAiKey,
+        onCancel = onDismissPlannerKeySetup,
+        onRefresh = viewModel::checkPlannerStatus
+    )
+    SettingsCard(settings, viewModel)
+    AdvancedControlsCard(
+        onOpenAccessibility = onOpenAccessibility,
+        onOpenAppSettings = onOpenAppSettings,
+        onTestRelay = viewModel::testRelay,
+        onTestOcr = viewModel::testOcr,
+        onStartOverlay = onStartOverlay,
+        onStopOverlay = onStopOverlay,
+        onOpenOverlayPermission = onOpenOverlayPermission
+    )
+    CommandTestCard(onExecute = onExecuteTextCommand)
+}
+
+@Composable
+private fun SetupStatusCard(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
@@ -289,11 +370,7 @@ private fun StatusChip(label: String, ok: Boolean) {
 }
 
 @Composable
-private fun ControlsCard(
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onPushToTalk: () -> Unit,
-    onCancel: () -> Unit,
+private fun AdvancedControlsCard(
     onOpenAccessibility: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onTestRelay: () -> Unit,
@@ -302,13 +379,8 @@ private fun ControlsCard(
     onStopOverlay: () -> Unit,
     onOpenOverlayPermission: () -> Unit
 ) = DroidCard {
-    Text("Controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Spacer(Modifier.height(10.dp))
+    Text("Advanced controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = onStart) { Text("Start Listening") }
-        OutlinedButton(onClick = onStop) { Text("Stop Listening") }
-        Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE7B75F), contentColor = Color(0xFF17211F)), onClick = onPushToTalk) { Text("Push to Talk") }
-        Button(colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB95F43)), onClick = onCancel) { Text("Cancel Current Task") }
         OutlinedButton(onClick = onOpenAccessibility) { Text("Open Accessibility Settings") }
         OutlinedButton(onClick = onOpenAppSettings) { Text("Open App Settings") }
         OutlinedButton(onClick = onTestRelay) { Text("Test Relay") }
@@ -340,22 +412,28 @@ private fun ConfirmationCard(
 }
 
 @Composable
-private fun PlannerKeySetupCard(
-    request: PlannerKeySetupRequest,
+private fun PlannerSettingsCard(
+    plannerStatus: PlannerStatus?,
+    plannerKeySetup: PlannerKeySetupRequest?,
     onSave: (String, String) -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onRefresh: () -> Unit
 ) = DroidCard(container = Color(0xFFFFF1D6)) {
     var apiKey by remember { mutableStateOf("") }
     var setupToken by remember { mutableStateOf("") }
-    Text("OpenAI API key required", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Text(request.message)
-    Text("The key is sent once to your configured relay and stored locally on that relay. DroidLM does not keep it in the APK or app settings.")
-    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI API key") })
-    OutlinedTextField(value = setupToken, onValueChange = { setupToken = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay setup token") })
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Button(onClick = { onSave(setupToken, apiKey); apiKey = "" }) { Text("Save to Relay") }
-        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+    val configured = plannerStatus?.openAiKeyConfigured == true
+    Text("OpenAI relay key", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Status: ${if (configured) "Configured" else "Not configured"}")
+    plannerKeySetup?.let { Text(it.message, color = Color(0xFF6A4C35)) }
+    if (!configured) {
+        OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI API key") })
+        OutlinedTextField(value = setupToken, onValueChange = { setupToken = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay setup token") })
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { onSave(setupToken, apiKey); apiKey = "" }) { Text("Save to Relay") }
+            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        }
     }
+    OutlinedButton(onClick = onRefresh) { Text("Refresh Key Status") }
 }
 
 @Composable
@@ -382,25 +460,12 @@ private fun PlanPreviewCard(
 }
 
 @Composable
-private fun VoiceRecognitionCard(
-    isListening: Boolean,
-    finalTranscript: String,
-    errorMessage: String?
-) = DroidCard(container = if (isListening) Color(0xFFFFF5DF) else Color(0xF4FFFFF8)) {
-    Text("Recognized voice", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Text("Provider: Android SpeechRecognizer")
-    Text("State: ${if (isListening) "Listening..." else "Idle"}")
-    Text("Final transcript: ${finalTranscript.ifBlank { "None yet" }}", fontWeight = FontWeight.SemiBold)
-    errorMessage?.takeIf { it.isNotBlank() }?.let { Text("Voice error: $it", color = Color(0xFFB95F43)) }
-}
-
-@Composable
 private fun ExecutionCard(transcript: String, action: String, status: String, result: String) = DroidCard {
     Text("Execution", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
-    Text("Last transcript: ${transcript.ifBlank { "None" }}")
-    Text("Parsed action: ${action.ifBlank { "None" }}")
     Text("Status: $status")
-    Text("Result: ${result.ifBlank { "None" }}")
+    transcript.takeIf { it.isNotBlank() }?.let { Text("Last transcript: $it") }
+    action.takeIf { it.isNotBlank() }?.let { Text("Parsed action: $it") }
+    result.takeIf { it.isNotBlank() }?.let { Text("Result: $it") }
 }
 
 @Composable
@@ -419,16 +484,14 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     var mobilerunDeviceId by remember(settings.mobilerunDeviceId) { mutableStateOf(settings.mobilerunDeviceId) }
     var picovoiceKey by remember { mutableStateOf("") }
 
-    Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
+    Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
     OutlinedTextField(value = relayUrl, onValueChange = { relayUrl = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Relay base URL") })
     Button(onClick = { viewModel.updateRelayBaseUrl(relayUrl) }) { Text("Save Relay URL") }
 
     Text("Voice recognition", fontWeight = FontWeight.SemiBold)
-    Text("Voice commands always use Android SpeechRecognizer. Interim transcript text stays hidden until recording stops.", color = Color(0xFF42504D))
     ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
-    Text("Shows a small overlay with a record circle and ... button so you can issue commands from other apps.", color = Color(0xFF42504D))
     ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
     ToggleRow("Auto-accept safe GPT-5.4 nano plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
 

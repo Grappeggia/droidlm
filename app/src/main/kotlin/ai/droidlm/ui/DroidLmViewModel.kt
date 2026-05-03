@@ -4,6 +4,7 @@ import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
+import ai.droidlm.relay.PlannerStatus
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
@@ -33,6 +34,9 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     private val _relayStatus = MutableStateFlow("Unknown")
     val relayStatus: StateFlow<String> = _relayStatus.asStateFlow()
+
+    private val _plannerStatus = MutableStateFlow<PlannerStatus?>(null)
+    val plannerStatus: StateFlow<PlannerStatus?> = _plannerStatus.asStateFlow()
 
     private val _accessibilityEnabled = MutableStateFlow(false)
     val accessibilityEnabled: StateFlow<Boolean> = _accessibilityEnabled.asStateFlow()
@@ -85,6 +89,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             when (val result = app.relayClient.saveOpenAiKey(relayUrl, setupToken, apiKey)) {
                 is RelayCallResult.Success -> {
                     app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI key saved on relay")
+                    checkPlannerStatus()
                     app.executor.retryPlannerKeySetupRequest()
                 }
                 is RelayCallResult.Failure -> {
@@ -110,6 +115,22 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             when (val result = app.relayClient.health(relayUrl)) {
                 is RelayCallResult.Success -> _relayStatus.value = if (result.value) "Reachable" else "Unhealthy"
                 is RelayCallResult.Failure -> _relayStatus.value = "Unreachable: ${result.message}"
+            }
+        }
+    }
+
+    fun checkPlannerStatus() {
+        viewModelScope.launch {
+            val relayUrl = settings.first().relayBaseUrl
+            when (val result = app.relayClient.plannerStatus(relayUrl)) {
+                is RelayCallResult.Success -> {
+                    _plannerStatus.value = result.value
+                    _relayStatus.value = if (result.value.relayReady) "Reachable" else "Unhealthy"
+                }
+                is RelayCallResult.Failure -> {
+                    _plannerStatus.value = null
+                    _relayStatus.value = "Unreachable: ${result.message}"
+                }
             }
         }
     }
