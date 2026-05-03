@@ -13,6 +13,8 @@ interface PortalController {
     suspend fun openSettings(): ActionResult
 
     suspend fun tap(x: Int, y: Int): ActionResult
+    suspend fun tapNode(nodeId: String): ActionResult
+    suspend fun focusNode(nodeId: String): ActionResult
     suspend fun longPress(x: Int, y: Int, durationMs: Int = 600): ActionResult
     suspend fun swipe(
         startX: Int,

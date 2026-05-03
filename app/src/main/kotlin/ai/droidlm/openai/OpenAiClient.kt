@@ -1,8 +1,8 @@
 package ai.droidlm.openai
 
+import ai.droidlm.context.UiContextJson
 import ai.droidlm.intent.DroidLmAction
-import ai.droidlm.ocr.OcrElement
-import ai.droidlm.ocr.OcrLine
+
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.PlanPreview
@@ -80,8 +80,8 @@ class OpenAiClient(
           ]
         }
         Each step object must include an action field and all required fields for that action.
-        Prefer OPEN_APP for requests to open installed apps. Use package names from the package list when possible.
-        Supported actions: OPEN_APP, OPEN_SETTINGS, TAP, LONG_PRESS, SWIPE, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
+        Supported actions: OPEN_APP, OPEN_SETTINGS, TAP_NODE, FOCUS_NODE, TAP, LONG_PRESS, SWIPE, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
+        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
         Keep plans to the minimum safe number of steps.
 
         Goal: ${request.goal}
@@ -95,6 +95,7 @@ class OpenAiClient(
         Choose exactly one next Android automation action for this user goal.
         Return only one JSON action object. Do not wrap it in markdown.
         Supported actions and fields are the same as the plan preview prompt.
+        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
         If the task is complete, return {"action":"DONE","reason":"Task complete"}.
         If no useful action is possible, return {"action":"NO_OP","message":"brief reason"}.
 
@@ -163,22 +164,7 @@ class OpenAiClient(
         .put("history", JSONArray(history))
         .put("maxSteps", maxSteps)
 
-    private fun PortalState.toJson(): JSONObject = JSONObject()
-        .put("packageName", packageName)
-        .put("activityName", activityName)
-        .put("screenWidth", screenWidth)
-        .put("screenHeight", screenHeight)
-        .put("nodes", JSONArray(nodes.take(80).map { node ->
-            JSONObject()
-                .put("text", node.text)
-                .put("contentDescription", node.contentDescription)
-                .put("className", node.className)
-                .put("packageName", node.packageName)
-                .put("clickable", node.clickable)
-                .put("editable", node.editable)
-                .put("focused", node.focused)
-                .put("enabled", node.enabled)
-        }))
+    private fun PortalState.toJson(): JSONObject = UiContextJson.portalStateToJson(this)
 
     private fun AppPackage.toJson(): JSONObject = JSONObject()
         .put("packageName", packageName)

@@ -48,5 +48,16 @@ data class UiNode(
     val editable: Boolean,
     val focused: Boolean,
     val enabled: Boolean,
-    val selected: Boolean
+    val selected: Boolean,
+    val viewIdResourceName: String? = null,
+    val visible: Boolean = true,
+    val focusable: Boolean = false,
+    val scrollable: Boolean = false,
+    val checked: Boolean = false,
+    val checkable: Boolean = false,
+    val longClickable: Boolean = false,
+    val password: Boolean = false,
+    val textSelectionStart: Int? = null,
+    val textSelectionEnd: Int? = null,
+    val actions: List<String> = emptyList()
 )

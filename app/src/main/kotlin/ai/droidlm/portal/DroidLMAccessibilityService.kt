@@ -57,6 +57,28 @@ class DroidLMAccessibilityService : AccessibilityService() {
         message = "Tapped $x,$y"
     )
 
+    suspend fun tapNode(nodeId: String): ActionResult {
+        refreshNodeCache()
+        val node = nodeCache[nodeId] ?: return ActionResult.fail("Node is no longer available: $nodeId", "NODE_NOT_FOUND")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_CLICK) && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return ActionResult.ok("Clicked node $nodeId")
+        }
+        val rect = Rect().also { node.getBoundsInScreen(it) }
+        if (rect.isEmpty) return ActionResult.fail("Node has no tappable bounds: $nodeId", "NODE_BOUNDS_MISSING")
+        return tap(rect.centerX(), rect.centerY())
+    }
+
+    fun focusNode(nodeId: String): ActionResult {
+        refreshNodeCache()
+        val node = nodeCache[nodeId] ?: return ActionResult.fail("Node is no longer available: $nodeId", "NODE_NOT_FOUND")
+        return if (node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)) {
+            ActionResult.ok("Focused node $nodeId")
+        } else {
+            ActionResult.fail("Node did not accept focus: $nodeId", "FOCUS_NODE_FAILED")
+        }
+    }
+
+
     suspend fun longPress(x: Int, y: Int, durationMs: Int): ActionResult = dispatchPathGesture(
         path = Path().apply { moveTo(x.toFloat(), y.toFloat()) },
         durationMs = durationMs.toLong(),
@@ -246,7 +268,18 @@ class DroidLMAccessibilityService : AccessibilityService() {
             editable = isEditableNode(node),
             focused = node.isFocused,
             enabled = node.isEnabled,
-            selected = node.isSelected
+            selected = node.isSelected,
+            viewIdResourceName = node.viewIdResourceName,
+            visible = node.isVisibleToUser,
+            focusable = node.isFocusable,
+            scrollable = node.isScrollable,
+            checked = node.isChecked,
+            checkable = node.isCheckable,
+            longClickable = node.isLongClickable,
+            password = node.isPassword,
+            textSelectionStart = node.textSelectionStart.takeIf { it >= 0 },
+            textSelectionEnd = node.textSelectionEnd.takeIf { it >= 0 },
+            actions = actionLabels(node)
         )
         val children = buildList {
             for (index in 0 until node.childCount) {
@@ -280,6 +313,17 @@ class DroidLMAccessibilityService : AccessibilityService() {
         val className = node.className?.toString().orEmpty()
         return node.isEditable || className.contains("EditText", ignoreCase = true) || hasAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)
     }
+
+    private fun actionLabels(node: AccessibilityNodeInfo): List<String> = buildList {
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_CLICK)) add("CLICK")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_FOCUS)) add("FOCUS")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)) add("SET_TEXT")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_SET_SELECTION)) add("SET_SELECTION")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) add("SCROLL_FORWARD")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) add("SCROLL_BACKWARD")
+        if (hasAction(node, AccessibilityNodeInfo.ACTION_LONG_CLICK)) add("LONG_CLICK")
+    }
+
 
     private fun hasAction(node: AccessibilityNodeInfo, actionId: Int): Boolean {
         return node.actionList.any { it.id == actionId } || (node.actions and actionId) == actionId

@@ -68,6 +68,8 @@ class TextEditingControllerTest {
         override suspend fun openApp(packageName: String) = ActionResult.ok()
         override suspend fun openSettings() = ActionResult.ok()
         override suspend fun tap(x: Int, y: Int) = ActionResult.ok()
+        override suspend fun tapNode(nodeId: String) = ActionResult.ok()
+        override suspend fun focusNode(nodeId: String) = ActionResult.ok()
         override suspend fun longPress(x: Int, y: Int, durationMs: Int) = ActionResult.ok()
         override suspend fun swipe(startX: Int, startY: Int, endX: Int, endY: Int, durationMs: Int) = ActionResult.ok()
         override suspend fun typeText(text: String, clear: Boolean) = inputTextAtCurrentCursor(text)

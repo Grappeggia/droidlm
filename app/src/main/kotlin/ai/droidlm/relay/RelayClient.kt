@@ -1,5 +1,6 @@
 package ai.droidlm.relay
 
+import ai.droidlm.context.UiContextJson
 import ai.droidlm.intent.AnchorPosition
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.ocr.OcrElement
@@ -247,10 +248,12 @@ class RelayClient(
                 reason = obj.optString("reason", "Open app")
             )
             "OPEN_SETTINGS" -> DroidLmAction.OpenSettings(obj.optString("reason", "Open settings"))
-            "TAP" -> DroidLmAction.Tap(obj.getInt("x"), obj.getInt("y"), obj.optString("reason", "Tap"))
-            "LONG_PRESS" -> DroidLmAction.LongPress(obj.getInt("x"), obj.getInt("y"), obj.optInt("durationMs", 600), obj.optString("reason", "Long press"))
+            "TAP" -> DroidLmAction.Tap(obj.requireInt("x", "TAP"), obj.requireInt("y", "TAP"), obj.optString("reason", "Tap"))
+            "TAP_NODE" -> DroidLmAction.TapNode(obj.requireString("nodeId", "TAP_NODE"), obj.optString("reason", "Tap node"))
+            "FOCUS_NODE" -> DroidLmAction.FocusNode(obj.requireString("nodeId", "FOCUS_NODE"), obj.optString("reason", "Focus node"))
+            "LONG_PRESS" -> DroidLmAction.LongPress(obj.requireInt("x", "LONG_PRESS"), obj.requireInt("y", "LONG_PRESS"), obj.optInt("durationMs", 600), obj.optString("reason", "Long press"))
             "SWIPE" -> DroidLmAction.Swipe(
-                obj.getInt("startX"), obj.getInt("startY"), obj.getInt("endX"), obj.getInt("endY"), obj.optInt("durationMs", 400), obj.optString("reason", "Swipe")
+                obj.requireInt("startX", "SWIPE"), obj.requireInt("startY", "SWIPE"), obj.requireInt("endX", "SWIPE"), obj.requireInt("endY", "SWIPE"), obj.optInt("durationMs", 400), obj.optString("reason", "Swipe")
             )
             "TYPE_TEXT" -> DroidLmAction.TypeText(obj.optString("text"), clear = obj.optBoolean("clear", false), reason = obj.optString("reason", "Type text"))
             "GLOBAL_BACK" -> DroidLmAction.PressBack
@@ -394,22 +397,7 @@ class RelayClient(
         .put("history", JSONArray(history))
         .put("maxSteps", maxSteps)
 
-    private fun PortalState.toJson(): JSONObject = JSONObject()
-        .put("packageName", packageName)
-        .put("activityName", activityName)
-        .put("screenWidth", screenWidth)
-        .put("screenHeight", screenHeight)
-        .put("nodes", JSONArray(nodes.take(80).map { node ->
-            JSONObject()
-                .put("text", node.text)
-                .put("contentDescription", node.contentDescription)
-                .put("className", node.className)
-                .put("packageName", node.packageName)
-                .put("clickable", node.clickable)
-                .put("editable", node.editable)
-                .put("focused", node.focused)
-                .put("enabled", node.enabled)
-        }))
+    private fun PortalState.toJson(): JSONObject = UiContextJson.portalStateToJson(this)
 
     private fun AppPackage.toJson(): JSONObject = JSONObject()
         .put("packageName", packageName)
@@ -445,6 +433,17 @@ class RelayClient(
     private fun JSONObject.optFileUri(): String? =
         listOf("fileUri", "filePath", "documentUri", "uri")
             .firstNotNullOfOrNull { key -> optString(key).takeIf { it.isNotBlank() } }
+
+    private fun JSONObject.requireString(name: String, action: String): String {
+        return optString(name).takeIf { it.isNotBlank() }
+            ?: throw org.json.JSONException("$action requires $name")
+    }
+
+    private fun JSONObject.requireInt(name: String, action: String): Int {
+        if (!has(name) || isNull(name)) throw org.json.JSONException("$action requires $name")
+        return getInt(name)
+    }
+
 
     private fun JSONObject.optStringArray(name: String): List<String> {
         val array = optJSONArray(name) ?: return emptyList()

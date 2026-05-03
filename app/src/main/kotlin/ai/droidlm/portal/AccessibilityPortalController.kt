@@ -69,6 +69,10 @@ class AccessibilityPortalController(
     }
 
     override suspend fun tap(x: Int, y: Int): ActionResult = withService { it.tap(x, y) }
+    override suspend fun tapNode(nodeId: String): ActionResult = withService { it.tapNode(nodeId) }
+
+    override suspend fun focusNode(nodeId: String): ActionResult = withService { it.focusNode(nodeId) }
+
 
     override suspend fun longPress(x: Int, y: Int, durationMs: Int): ActionResult = withService {
         it.longPress(x, y, durationMs)

@@ -14,6 +14,8 @@ sealed class DroidLmAction {
     data object PressHome : DroidLmAction()
     data object PressBack : DroidLmAction()
     data class Tap(val x: Int, val y: Int, val reason: String) : DroidLmAction()
+    data class TapNode(val nodeId: String, val reason: String) : DroidLmAction()
+    data class FocusNode(val nodeId: String, val reason: String) : DroidLmAction()
     data class LongPress(val x: Int, val y: Int, val durationMs: Int = 600, val reason: String) : DroidLmAction()
     data class Swipe(val startX: Int, val startY: Int, val endX: Int, val endY: Int, val durationMs: Int, val reason: String) : DroidLmAction()
     data class TypeText(val text: String, val clear: Boolean = false, val reason: String) : DroidLmAction()
@@ -87,6 +89,8 @@ fun DroidLmAction.displayName(): String = when (this) {
     DroidLmAction.PressHome -> "GLOBAL_HOME"
     DroidLmAction.PressBack -> "GLOBAL_BACK"
     is DroidLmAction.Tap -> "TAP $x,$y"
+    is DroidLmAction.TapNode -> "TAP_NODE $nodeId"
+    is DroidLmAction.FocusNode -> "FOCUS_NODE $nodeId"
     is DroidLmAction.LongPress -> "LONG_PRESS $x,$y"
     is DroidLmAction.Swipe -> "SWIPE"
     is DroidLmAction.TypeText -> "TYPE_TEXT"

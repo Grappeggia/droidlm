@@ -292,6 +292,8 @@ class DroidLmExecutor(
             DroidLmAction.PressHome -> portalController.pressHome()
             DroidLmAction.PressBack -> portalController.pressBack()
             is DroidLmAction.Tap -> portalController.tap(action.x, action.y)
+            is DroidLmAction.TapNode -> portalController.tapNode(action.nodeId)
+            is DroidLmAction.FocusNode -> portalController.focusNode(action.nodeId)
             is DroidLmAction.LongPress -> portalController.longPress(action.x, action.y, action.durationMs)
             is DroidLmAction.Swipe -> portalController.swipe(action.startX, action.startY, action.endX, action.endY, action.durationMs)
             is DroidLmAction.TypeText -> textEditingController.insertTextAtSelection(action.text)

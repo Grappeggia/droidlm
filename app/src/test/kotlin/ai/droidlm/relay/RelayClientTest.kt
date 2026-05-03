@@ -1,6 +1,7 @@
 package ai.droidlm.relay
 
 import ai.droidlm.intent.DroidLmAction
+
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -75,6 +76,27 @@ class RelayClientTest {
         action as DroidLmAction.AddSpreadsheetRow
         assertEquals(listOf("April", "120", "approved"), action.values)
         assertEquals("file:///tmp/sheet.csv", action.fileUri)
+    }
+
+    @Test fun planActionJsonParsesNodeTargetActions() {
+        val tap = RelayClient().parsePlanActionJson(
+            "{\"action\":\"TAP_NODE\",\"nodeId\":\"search_bar\",\"reason\":\"open search\"}"
+        )
+        assertTrue(tap is DroidLmAction.TapNode)
+        tap as DroidLmAction.TapNode
+        assertEquals("search_bar", tap.nodeId)
+
+        val focus = RelayClient().parsePlanActionJson(
+            "{\"action\":\"FOCUS_NODE\",\"nodeId\":\"search_input\",\"reason\":\"focus search\"}"
+        )
+        assertTrue(focus is DroidLmAction.FocusNode)
+    }
+
+    @Test fun malformedTapReportsMissingCoordinate() {
+        val error = runCatching {
+            RelayClient().parsePlanActionJson("{\"action\":\"TAP\",\"reason\":\"missing x\"}")
+        }.exceptionOrNull()
+        assertEquals("TAP requires x", error?.message)
     }
 
     @Test fun planPreviewJsonParse() {
