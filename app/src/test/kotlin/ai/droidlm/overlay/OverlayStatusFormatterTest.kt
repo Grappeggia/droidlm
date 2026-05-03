@@ -20,6 +20,18 @@ class OverlayStatusFormatterTest {
     }
 
 
+    @Test fun errorResultWinsOverFinalTranscript() {
+        val label = OverlayStatusFormatter.label(
+            isListening = false,
+            partialTranscript = "",
+            finalTranscript = "open drive",
+            executionStatus = "Error",
+            lastResult = "OpenAI API key is required for GPT planning"
+        )
+        assertEquals("OpenAI key needed", label)
+    }
+
+
     @Test fun overlayYStaysAboveBottomGestureArea() {
         val safeY = FloatingOverlayBounds.safeY(
             requestedY = 920,

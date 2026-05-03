@@ -10,8 +10,9 @@ object OverlayStatusFormatter {
     ): String = when {
         isListening -> "Listening..."
         executionStatus !in IDLE_STATUSES -> executionStatus.take(40)
+        executionStatus == "Error" && lastResult.isNotBlank() -> compactResult(lastResult)
         finalTranscript.isNotBlank() -> "Heard: ${finalTranscript.take(40)}"
-        lastResult.isNotBlank() -> lastResult.take(40)
+        lastResult.isNotBlank() -> compactResult(lastResult)
         else -> "Tap circle to speak"
     }
 
@@ -20,6 +21,12 @@ object OverlayStatusFormatter {
         executionStatus !in IDLE_STATUSES -> "×"
         else -> "●"
     }
+
+    private fun compactResult(result: String): String = when {
+        result.contains("OpenAI API key", ignoreCase = true) -> "OpenAI key needed"
+        else -> result.take(40)
+    }
+
 
     private val IDLE_STATUSES = setOf("Idle", "Error", "Cancelled")
 }

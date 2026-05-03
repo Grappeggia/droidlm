@@ -140,7 +140,7 @@ class FloatingControlOverlayService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
             background = GradientDrawable().apply {
-                cornerRadius = 28 * density
+                cornerRadius = 8 * density
                 setColor(Color.argb(232, 21, 61, 59))
                 setStroke((1 * density).toInt(), Color.argb(200, 231, 183, 95))
             }
@@ -150,8 +150,10 @@ class FloatingControlOverlayService : Service() {
             text = OverlayStatusFormatter.recordButton(false, "Idle")
             contentDescription = RECORD_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
-            minWidth = (48 * density).toInt()
+            minWidth = (24 * density).toInt()
+            minimumWidth = (24 * density).toInt()
             minHeight = (48 * density).toInt()
+            setPadding(0, 0, 0, 0)
             setTextColor(Color.WHITE)
             setOnClickListener { toggleRecord() }
         }
@@ -166,8 +168,10 @@ class FloatingControlOverlayService : Service() {
             text = "..."
             contentDescription = MORE_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
-            minWidth = (48 * density).toInt()
+            minWidth = (24 * density).toInt()
+            minimumWidth = (24 * density).toInt()
             minHeight = (48 * density).toInt()
+            setPadding(0, 0, 0, 0)
             setTextColor(Color.WHITE)
             setOnClickListener { openFullApp() }
         }
