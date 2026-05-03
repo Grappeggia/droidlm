@@ -113,7 +113,7 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
                 args += listOf("-e", key, value)
             }
             args += listOf("-e", "class", selector)
-            args += "ai.droidlm.test/androidx.test.runner.AndroidJUnitRunner"
+            args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
 
             val result = exec {
                 commandLine(adb, *args.toTypedArray())
