@@ -254,7 +254,7 @@ tasks.register("connectedWorkspaceFileOpsE2e") {
         }
         val text = output.toString()
         print(text)
-        if (result.exitValue != 0 || text.contains("FAILURES!!!") || text.contains("INSTRUMENTATION_CODE: -1")) {
+        if (result.exitValue != 0 || text.contains("FAILURES!!!")) {
             throw org.gradle.api.GradleException("Workspace file operation E2E tests failed")
         }
     }

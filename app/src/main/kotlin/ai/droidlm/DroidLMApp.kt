@@ -2,6 +2,7 @@ package ai.droidlm
 
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.execution.DroidLmExecutor
+import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.ocr.MlKitOcrEngine
 import ai.droidlm.ocr.OcrEngine
@@ -40,6 +41,8 @@ class DroidLMApp : Application() {
         private set
     lateinit var speechRecognitionController: SpeechRecognitionController
         private set
+    lateinit var workspaceFileOperationController: WorkspaceFileOperationController
+        private set
     lateinit var manualWakeWordEngine: ManualWakeWordEngine
         private set
 
@@ -51,6 +54,7 @@ class DroidLMApp : Application() {
         portalController = AccessibilityPortalController(this, actionLogRepository)
         ocrEngine = MlKitOcrEngine()
         textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
+        workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
         safetyClassifier = SafetyClassifier()
         mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository)
         executor = DroidLmExecutor(
@@ -58,6 +62,7 @@ class DroidLMApp : Application() {
             relayClient = relayClient,
             portalController = portalController,
             textEditingController = textEditingController,
+            workspaceFileOperationController = workspaceFileOperationController,
             ocrEngine = ocrEngine,
             logs = actionLogRepository,
             safetyClassifier = safetyClassifier,

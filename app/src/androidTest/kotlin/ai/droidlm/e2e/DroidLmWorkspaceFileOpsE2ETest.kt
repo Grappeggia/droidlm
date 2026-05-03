@@ -10,7 +10,6 @@ import android.os.Build
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -240,7 +239,8 @@ class DroidLmWorkspaceFileOpsE2ETest {
             {
               "index":1,
               "action":"${operation.unsupportedAction}",
-              "reason":"Future file-operation behavior is not implemented yet",
+              ${operation.planFieldsJson()}
+              "reason":"Execute a generic Workspace file operation",
               "requiresConfirmation":false
             }
           ]
@@ -261,9 +261,11 @@ class DroidLmWorkspaceFileOpsE2ETest {
     }
 
     private fun seedDeviceFile(devicePath: String, content: String) {
-        val directory = devicePath.substringBeforeLast('/')
-        val encoded = Base64.encodeToString(content.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        executeShell("mkdir -p $directory && printf '$encoded' | base64 -d > $devicePath")
+        val file = File(devicePath)
+        val directory = file.parentFile ?: throw AssertionError("Expected parent directory for $devicePath")
+        assertTrue("Expected to create ${directory.absolutePath}", directory.exists() || directory.mkdirs())
+        FileOutputStream(file).bufferedWriter(Charsets.UTF_8).use { it.write(content) }
+        assertTrue("Expected seeded file to exist at $devicePath", file.isFile)
         executeShell("am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://$devicePath")
     }
 
@@ -315,16 +317,30 @@ class DroidLmWorkspaceFileOpsE2ETest {
     }
 
     private fun assertExpectedTextsVisible(operation: WorkspaceOperation) {
+        val visible = waitUntil(10_000) {
+            val fileText = readDeviceFile(operation.devicePath)
+            operation.expectedTexts.all { expected ->
+                device.hasObject(By.textContains(expected)) ||
+                    device.hasObject(By.descContains(expected)) ||
+                    fileText.contains(expected)
+            }
+        }
+        val fileText = readDeviceFile(operation.devicePath)
         val missing = operation.expectedTexts.filterNot { expected ->
-            device.hasObject(By.textContains(expected)) || device.hasObject(By.descContains(expected))
+            device.hasObject(By.textContains(expected)) ||
+                device.hasObject(By.descContains(expected)) ||
+                fileText.contains(expected)
         }
         val state = app.executor.uiState.value
         assertTrue(
             "Expected ${operation.expectedTexts} after '${operation.transcript}', but missing $missing. " +
-                "Last status=${state.status}; last result=${state.lastResult}; parsed=${state.parsedAction}",
-            missing.isEmpty()
+                "Last status=${state.status}; last result=${state.lastResult}; parsed=${state.parsedAction}; " +
+                "device file=${fileText.take(200)}",
+            visible
         )
     }
+
+    private fun readDeviceFile(devicePath: String): String = executeShell("cat \"$devicePath\"")
 
     private fun grantRuntimePermissions() {
         executeShell("pm grant ${targetContext.packageName} ${Manifest.permission.RECORD_AUDIO}")
@@ -336,6 +352,8 @@ class DroidLmWorkspaceFileOpsE2ETest {
     private fun grantOverlayPermissionForEmulator() {
         executeShell("appops set ${targetContext.packageName} SYSTEM_ALERT_WINDOW allow")
         executeShell("cmd appops set ${targetContext.packageName} SYSTEM_ALERT_WINDOW allow")
+        executeShell("appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
+        executeShell("cmd appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
     }
 
     private fun enableAccessibilityServiceForEmulator() {
@@ -409,7 +427,16 @@ class DroidLmWorkspaceFileOpsE2ETest {
         val seedText: String,
         val expectedTexts: List<String>,
         val unsupportedAction: String
-    )
+    ) {
+        fun planFieldsJson(): String = when (unsupportedAction) {
+            "FORMAT_CURRENT_LINE_AS_BULLET" -> "\"fileUri\":\"file://$devicePath\",\"bulletPrefix\":\"- \","
+            "REPLACE_CURRENT_DOCUMENT_TEXT" -> "\"fileUri\":\"file://$devicePath\",\"targetText\":\"draft\",\"replacementText\":\"final\","
+            "APPEND_DOCUMENT_NOTE" -> "\"fileUri\":\"file://$devicePath\",\"note\":\"reviewed by DroidLM\","
+            "SET_CURRENT_SHEET_CELL" -> "\"fileUri\":\"file://$devicePath\",\"value\":\"2026\","
+            "ADD_SPREADSHEET_ROW" -> "\"fileUri\":\"file://$devicePath\",\"values\":[\"April\",\"120\",\"approved\"],"
+            else -> "\"fileUri\":\"file://$devicePath\","
+        }
+    }
 
     companion object {
         private const val DEVICE_RUN_ROOT = "/sdcard/Documents/DroidLMTestRuns/file-ops"

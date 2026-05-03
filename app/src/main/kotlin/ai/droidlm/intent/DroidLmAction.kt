@@ -45,6 +45,36 @@ sealed class DroidLmAction {
     data class PrependText(val text: String, val reason: String = "User asked to prepend text") : DroidLmAction()
     data object SelectAll : DroidLmAction()
     data object DeleteSelectedText : DroidLmAction()
+    data class FormatCurrentLineAsBullet(
+        val fileUri: String? = null,
+        val bulletPrefix: String = "- ",
+        val reason: String = "User asked to add a bullet point on the current line"
+    ) : DroidLmAction()
+
+    data class ReplaceDocumentText(
+        val targetText: String = "",
+        val replacementText: String = "",
+        val fileUri: String? = null,
+        val reason: String = "User asked to replace document text"
+    ) : DroidLmAction()
+
+    data class AppendDocumentNote(
+        val note: String = "",
+        val fileUri: String? = null,
+        val reason: String = "User asked to append a document note"
+    ) : DroidLmAction()
+
+    data class SetCurrentSheetCell(
+        val value: String = "",
+        val fileUri: String? = null,
+        val reason: String = "User asked to set the current spreadsheet cell"
+    ) : DroidLmAction()
+
+    data class AddSpreadsheetRow(
+        val values: List<String> = emptyList(),
+        val fileUri: String? = null,
+        val reason: String = "User asked to add a spreadsheet row"
+    ) : DroidLmAction()
     data object Done : DroidLmAction()
 }
 
@@ -77,5 +107,10 @@ fun DroidLmAction.displayName(): String = when (this) {
     is DroidLmAction.PrependText -> "PREPEND_TEXT"
     DroidLmAction.SelectAll -> "SELECT_ALL"
     DroidLmAction.DeleteSelectedText -> "DELETE_SELECTED_TEXT"
+    is DroidLmAction.FormatCurrentLineAsBullet -> "FORMAT_CURRENT_LINE_AS_BULLET"
+    is DroidLmAction.ReplaceDocumentText -> "REPLACE_CURRENT_DOCUMENT_TEXT"
+    is DroidLmAction.AppendDocumentNote -> "APPEND_DOCUMENT_NOTE"
+    is DroidLmAction.SetCurrentSheetCell -> "SET_CURRENT_SHEET_CELL"
+    is DroidLmAction.AddSpreadsheetRow -> "ADD_SPREADSHEET_ROW"
     DroidLmAction.Done -> "DONE"
 }

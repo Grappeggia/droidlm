@@ -71,6 +71,29 @@ class IntentParserTest {
         assertEquals("\nsigned, alex", (action as DroidLmAction.AppendText).text)
     }
 
+    @Test fun bulletPointParsesWorkspaceAction() {
+        val action = parser.parse("Add a bullet point on the current line")
+        assertTrue(action is DroidLmAction.FormatCurrentLineAsBullet)
+    }
+
+    @Test fun appendNoteParsesWorkspaceAction() {
+        val action = parser.parse("Append a note saying reviewed by DroidLM")
+        assertTrue(action is DroidLmAction.AppendDocumentNote)
+        assertEquals("reviewed by droidlm", (action as DroidLmAction.AppendDocumentNote).note)
+    }
+
+    @Test fun setCurrentCellParsesWorkspaceAction() {
+        val action = parser.parse("Put 2026 in the current cell")
+        assertTrue(action is DroidLmAction.SetCurrentSheetCell)
+        assertEquals("2026", (action as DroidLmAction.SetCurrentSheetCell).value)
+    }
+
+    @Test fun addSpreadsheetRowParsesWorkspaceAction() {
+        val action = parser.parse("Add a row with April, 120, approved")
+        assertTrue(action is DroidLmAction.AddSpreadsheetRow)
+        assertEquals(listOf("april", "120", "approved"), (action as DroidLmAction.AddSpreadsheetRow).values)
+    }
+
     @Test fun fuzzyInstalledPackageMatch() {
         val action = parser.parse("open calculator", listOf(AppPackage("com.example.calc", "Calculator")))
         assertTrue(action is DroidLmAction.OpenApp)

@@ -55,6 +55,36 @@ class IntentParser {
     }
 
     private fun parseTextEditing(original: String, normalized: String): DroidLmAction? {
+        if (normalized in setOf(
+                "add a bullet point on the current line",
+                "add bullet point on current line",
+                "bullet point current line",
+                "make the current line a bullet point"
+            )
+        ) {
+            return DroidLmAction.FormatCurrentLineAsBullet()
+        }
+
+        Regex("^append (?:a )?note saying (.+)", RegexOption.IGNORE_CASE).find(original)?.let { match ->
+            return DroidLmAction.AppendDocumentNote(
+                note = SpeechTextNormalizer.normalizeDictatedText(match.groupValues[1]),
+                reason = "User asked to append a document note"
+            )
+        }
+
+        Regex("^put (.+) in (?:the )?current cell", RegexOption.IGNORE_CASE).find(original)?.let { match ->
+            return DroidLmAction.SetCurrentSheetCell(
+                value = SpeechTextNormalizer.normalizeDictatedText(match.groupValues[1]),
+                reason = "User asked to set the current spreadsheet cell"
+            )
+        }
+
+        Regex("^add (?:a )?row with (.+)", RegexOption.IGNORE_CASE).find(original)?.let { match ->
+            return DroidLmAction.AddSpreadsheetRow(
+                values = parseDictatedList(match.groupValues[1]),
+                reason = "User asked to add a spreadsheet row"
+            )
+        }
         Regex("put the cursor (after|before)(?: the word)? (.+?) and type (.+)", RegexOption.IGNORE_CASE)
             .find(original)?.let { match ->
                 val position = if (match.groupValues[1].equals("after", true)) AnchorPosition.AFTER else AnchorPosition.BEFORE
@@ -116,6 +146,11 @@ class IntentParser {
             .maxByOrNull { it.second }
             ?.first
     }
+
+    private fun parseDictatedList(value: String): List<String> = value
+        .split(",", " and ")
+        .map { SpeechTextNormalizer.normalizeDictatedText(it).trim() }
+        .filter { it.isNotBlank() }
 
     private fun cleanupAnchor(value: String): String = value
         .trim()

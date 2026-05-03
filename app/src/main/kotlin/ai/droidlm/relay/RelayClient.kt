@@ -274,6 +274,34 @@ class RelayClient(
             "SELECT_ALL" -> DroidLmAction.SelectAll
             "DELETE_SELECTED_TEXT" -> DroidLmAction.DeleteSelectedText
             "VERIFY_TEXT_CHANGE" -> DroidLmAction.VerifyTextChange(obj.optString("expectedText"), obj.optString("reason", "Verify text change"))
+            "FORMAT_CURRENT_LINE_AS_BULLET" -> DroidLmAction.FormatCurrentLineAsBullet(
+                fileUri = obj.optFileUri(),
+                bulletPrefix = obj.optString("bulletPrefix", "- "),
+                reason = obj.optString("reason", "Add bullet point to current line")
+            )
+            "REPLACE_CURRENT_DOCUMENT_TEXT" -> DroidLmAction.ReplaceDocumentText(
+                targetText = obj.optString("targetText"),
+                replacementText = obj.optString("replacementText"),
+                fileUri = obj.optFileUri(),
+                reason = obj.optString("reason", "Replace document text")
+            )
+            "APPEND_DOCUMENT_NOTE" -> DroidLmAction.AppendDocumentNote(
+                note = obj.optString("note", obj.optString("text")),
+                fileUri = obj.optFileUri(),
+                reason = obj.optString("reason", "Append document note")
+            )
+            "SET_CURRENT_SHEET_CELL" -> DroidLmAction.SetCurrentSheetCell(
+                value = obj.optString("value", obj.optString("text")),
+                fileUri = obj.optFileUri(),
+                reason = obj.optString("reason", "Set current sheet cell")
+            )
+            "ADD_SPREADSHEET_ROW" -> DroidLmAction.AddSpreadsheetRow(
+                values = obj.optStringArray("values").ifEmpty {
+                    obj.optString("row").split(',').map { value -> value.trim() }.filter { value -> value.isNotBlank() }
+                },
+                fileUri = obj.optFileUri(),
+                reason = obj.optString("reason", "Add spreadsheet row")
+            )
             "ASK_CONFIRMATION" -> DroidLmAction.AskConfirmation(
                 reason = obj.optString("reason", "Confirmation required"),
                 confirmationPrompt = obj.optString("confirmationPrompt", "Confirm this action?")
@@ -414,6 +442,15 @@ class RelayClient(
 
     private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
     private fun JSONObject.optDoubleOrNull(name: String): Double? = if (has(name) && !isNull(name)) optDouble(name) else null
+    private fun JSONObject.optFileUri(): String? =
+        listOf("fileUri", "filePath", "documentUri", "uri")
+            .firstNotNullOfOrNull { key -> optString(key).takeIf { it.isNotBlank() } }
+
+    private fun JSONObject.optStringArray(name: String): List<String> {
+        val array = optJSONArray(name) ?: return emptyList()
+        return (0 until array.length())
+            .mapNotNull { index -> array.optString(index).takeIf { it.isNotBlank() } }
+    }
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

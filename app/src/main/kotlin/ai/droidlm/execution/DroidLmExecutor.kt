@@ -2,6 +2,7 @@ package ai.droidlm.execution
 
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.intent.IntentParser
 import ai.droidlm.intent.SpeechTextNormalizer
 import ai.droidlm.intent.displayName
@@ -57,6 +58,7 @@ class DroidLmExecutor(
     private val relayClient: RelayClient,
     private val portalController: PortalController,
     private val textEditingController: TextEditingController,
+    private val workspaceFileOperationController: WorkspaceFileOperationController,
     @Suppress("unused") private val ocrEngine: OcrEngine,
     private val logs: ActionLogRepository,
     private val safetyClassifier: SafetyClassifier,
@@ -120,7 +122,13 @@ class DroidLmExecutor(
                         retryTranscript = stripped
                     )
                     logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing", result.errorCode)
-                    finish(ActionResult.fail("OpenAI API key is required for GPT-5.4 nano planning", result.errorCode))
+                    val localAction = parser.parse(stripped, packages)
+                    if (localAction !is DroidLmAction.NeedLlmPlanning && localAction !is DroidLmAction.NoOp) {
+                        logs.log(ActionLogType.PARSED_ACTION, localAction.displayName(), "local fallback after missing planner key")
+                        executeAction(localAction, stripped)
+                    } else {
+                        finish(ActionResult.fail("OpenAI API key is required for GPT-5.4 nano planning", result.errorCode))
+                    }
                 } else {
                     logs.log(ActionLogType.ERROR, result.message, result.errorCode)
                     finish(ActionResult.fail(result.message, result.errorCode))
@@ -316,6 +324,11 @@ class DroidLmExecutor(
             is DroidLmAction.PrependText -> textEditingController.prependText(action.text)
             DroidLmAction.SelectAll -> selectAllText()
             DroidLmAction.DeleteSelectedText -> textEditingController.replaceSelection("")
+            is DroidLmAction.FormatCurrentLineAsBullet -> workspaceFileOperationController.formatCurrentLineAsBullet(transcript, action)
+            is DroidLmAction.ReplaceDocumentText -> workspaceFileOperationController.replaceDocumentText(transcript, action)
+            is DroidLmAction.AppendDocumentNote -> workspaceFileOperationController.appendDocumentNote(transcript, action)
+            is DroidLmAction.SetCurrentSheetCell -> workspaceFileOperationController.setCurrentSheetCell(transcript, action)
+            is DroidLmAction.AddSpreadsheetRow -> workspaceFileOperationController.addSpreadsheetRow(transcript, action)
             DroidLmAction.Done -> ActionResult.ok("Done")
         }
         logs.log(if (result.success) ActionLogType.ACTION_RESULT else ActionLogType.ERROR, result.message, result.errorCode)

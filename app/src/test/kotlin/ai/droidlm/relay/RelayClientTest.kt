@@ -56,6 +56,27 @@ class RelayClientTest {
         assertTrue(action is DroidLmAction.OpenApp)
     }
 
+    @Test fun planActionJsonParsesDocumentReplacement() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"REPLACE_CURRENT_DOCUMENT_TEXT\",\"fileUri\":\"file:///tmp/doc.txt\",\"targetText\":\"draft\",\"replacementText\":\"final\",\"reason\":\"test\"}"
+        )
+        assertTrue(action is DroidLmAction.ReplaceDocumentText)
+        action as DroidLmAction.ReplaceDocumentText
+        assertEquals("draft", action.targetText)
+        assertEquals("final", action.replacementText)
+        assertEquals("file:///tmp/doc.txt", action.fileUri)
+    }
+
+    @Test fun planActionJsonParsesSpreadsheetRow() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"ADD_SPREADSHEET_ROW\",\"fileUri\":\"file:///tmp/sheet.csv\",\"values\":[\"April\",\"120\",\"approved\"],\"reason\":\"test\"}"
+        )
+        assertTrue(action is DroidLmAction.AddSpreadsheetRow)
+        action as DroidLmAction.AddSpreadsheetRow
+        assertEquals(listOf("April", "120", "approved"), action.values)
+        assertEquals("file:///tmp/sheet.csv", action.fileUri)
+    }
+
     @Test fun planPreviewJsonParse() {
         val plan = RelayClient().parsePlanPreviewJson("""{
             "model":"gpt-5.4-nano",
