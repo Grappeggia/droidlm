@@ -138,14 +138,26 @@ class FloatingControlOverlayService : Service() {
 
     private fun createOverlayView(layoutParams: WindowManager.LayoutParams): View {
         val density = resources.displayMetrics.density
+        val edgePadding = (1.6f * density).toInt().coerceAtLeast(1)
+        val verticalPadding = (1.2f * density).toInt().coerceAtLeast(1)
+        val buttonSize = (48 * density).toInt()
+        fun Button.applySquareButton(size: Int) {
+            minWidth = size
+            minimumWidth = size
+            minHeight = size
+            minimumHeight = size
+            this.layoutParams = LinearLayout.LayoutParams(size, size)
+            setPadding(0, 0, 0, 0)
+            setTextColor(Color.WHITE)
+        }
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
+            setPadding(edgePadding, verticalPadding, edgePadding, verticalPadding)
             background = GradientDrawable().apply {
                 cornerRadius = 8 * density
                 setColor(Color.argb(232, 21, 61, 59))
-                setStroke((1 * density).toInt(), Color.argb(200, 231, 183, 95))
+                setStroke((1 * density).toInt(), Color.TRANSPARENT)
             }
         }
 
@@ -153,11 +165,7 @@ class FloatingControlOverlayService : Service() {
             text = OverlayStatusFormatter.recordButton(false, "Idle")
             contentDescription = RECORD_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
-            minWidth = (24 * density).toInt()
-            minimumWidth = (24 * density).toInt()
-            minHeight = (48 * density).toInt()
-            setPadding(0, 0, 0, 0)
-            setTextColor(Color.WHITE)
+            applySquareButton(buttonSize)
             setOnClickListener { toggleRecord() }
         }
         statusText = TextView(this).apply {
@@ -165,17 +173,13 @@ class FloatingControlOverlayService : Service() {
             textSize = 13f
             setTextColor(Color.WHITE)
             maxWidth = (220 * density).toInt()
-            setPadding((8 * density).toInt(), 0, (8 * density).toInt(), 0)
+            setPadding(edgePadding, 0, edgePadding, 0)
         }
         acceptPlanButton = Button(this).apply {
             text = "Y"
             contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
             textSize = 16f
-            minWidth = (24 * density).toInt()
-            minimumWidth = (24 * density).toInt()
-            minHeight = (48 * density).toInt()
-            setPadding(0, 0, 0, 0)
-            setTextColor(Color.WHITE)
+            applySquareButton(buttonSize)
             visibility = View.GONE
             setOnClickListener { acceptPendingPlan() }
         }
@@ -183,11 +187,7 @@ class FloatingControlOverlayService : Service() {
             text = "N"
             contentDescription = REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION
             textSize = 16f
-            minWidth = (24 * density).toInt()
-            minimumWidth = (24 * density).toInt()
-            minHeight = (48 * density).toInt()
-            setPadding(0, 0, 0, 0)
-            setTextColor(Color.WHITE)
+            applySquareButton(buttonSize)
             visibility = View.GONE
             setOnClickListener { rejectPendingPlan() }
         }
@@ -195,11 +195,7 @@ class FloatingControlOverlayService : Service() {
             text = "..."
             contentDescription = MORE_BUTTON_CONTENT_DESCRIPTION
             textSize = 18f
-            minWidth = (24 * density).toInt()
-            minimumWidth = (24 * density).toInt()
-            minHeight = (48 * density).toInt()
-            setPadding(0, 0, 0, 0)
-            setTextColor(Color.WHITE)
+            applySquareButton(buttonSize)
             setOnClickListener { openFullApp() }
         }
 
