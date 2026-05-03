@@ -185,8 +185,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
                             )
                         },
-                        onStartOverlay = ::startOverlayWithPermission,
-                        onStopOverlay = viewModel::stopOverlay,
                         onOpenOverlayPermission = {
                             overlayLauncher.launch(
                                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
@@ -232,10 +230,12 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 .padding(18.dp),
             listening = listening,
             showingSettings = showSettings,
+            overlayRunning = overlayRunning,
             onListeningToggle = { if (listening) viewModel.stopListening() else startListeningWithPermission() },
             onPushToTalk = ::pushToTalkWithPermission,
             onCancel = viewModel::cancelCurrentTask,
-            onSettings = { showSettings = !showSettings }
+            onSettings = { showSettings = !showSettings },
+            onOverlayToggle = { if (overlayRunning) viewModel.stopOverlay() else startOverlayWithPermission() }
         )
     }
 }
@@ -252,10 +252,12 @@ private fun HoverControlRow(
     modifier: Modifier,
     listening: Boolean,
     showingSettings: Boolean,
+    overlayRunning: Boolean,
     onListeningToggle: () -> Unit,
     onPushToTalk: () -> Unit,
     onCancel: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onOverlayToggle: () -> Unit
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -278,6 +280,7 @@ private fun HoverControlRow(
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB95F43)),
                 onClick = onCancel
             ) { Text("Cancel") }
+            Button(onClick = onOverlayToggle) { Text(if (overlayRunning) "Stop Floating Controls" else "Start Floating Controls") }
             OutlinedButton(onClick = onSettings) { Text(if (showingSettings) "Close" else "⚙") }
         }
     }
@@ -298,8 +301,6 @@ private fun SettingsPage(
     overlayGranted: Boolean,
     onOpenAccessibility: () -> Unit,
     onOpenAppSettings: () -> Unit,
-    onStartOverlay: () -> Unit,
-    onStopOverlay: () -> Unit,
     onOpenOverlayPermission: () -> Unit,
     onSaveOpenAiKey: (String, String) -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
@@ -329,8 +330,6 @@ private fun SettingsPage(
         onOpenAppSettings = onOpenAppSettings,
         onTestRelay = viewModel::testRelay,
         onTestOcr = viewModel::testOcr,
-        onStartOverlay = onStartOverlay,
-        onStopOverlay = onStopOverlay,
         onOpenOverlayPermission = onOpenOverlayPermission
     )
     CommandTestCard(onExecute = onExecuteTextCommand)
@@ -375,8 +374,6 @@ private fun AdvancedControlsCard(
     onOpenAppSettings: () -> Unit,
     onTestRelay: () -> Unit,
     onTestOcr: () -> Unit,
-    onStartOverlay: () -> Unit,
-    onStopOverlay: () -> Unit,
     onOpenOverlayPermission: () -> Unit
 ) = DroidCard {
     Text("Advanced controls", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Serif, fontSize = 20.sp)
@@ -385,8 +382,6 @@ private fun AdvancedControlsCard(
         OutlinedButton(onClick = onOpenAppSettings) { Text("Open App Settings") }
         OutlinedButton(onClick = onTestRelay) { Text("Test Relay") }
         OutlinedButton(onClick = onTestOcr) { Text("Test OCR") }
-        Button(onClick = onStartOverlay) { Text("Start Floating Controls") }
-        OutlinedButton(onClick = onStopOverlay) { Text("Stop Floating Controls") }
         OutlinedButton(onClick = onOpenOverlayPermission) { Text("Open Overlay Permission") }
     }
 }
