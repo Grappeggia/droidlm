@@ -1,0 +1,14 @@
+.git
+.gradle
+.kotlin
+.idea
+build
+**/build
+test-artifacts
+node_modules
+cli/node_modules
+.env
+.env.*
+local.properties
+*.iml
+*.tgz

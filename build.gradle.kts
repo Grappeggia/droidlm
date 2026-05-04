@@ -138,6 +138,319 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
     }
 }
 
+fun org.gradle.api.Project.hostOutput(vararg arguments: String): String {
+    val output = providers.exec {
+        commandLine(*arguments)
+        isIgnoreExitValue = true
+    }
+    val stdout = output.standardOutput.asText.get().trim()
+    val stderr = output.standardError.asText.get().trim()
+    return listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n")
+}
+
+fun org.gradle.api.Project.e2ePython(requireGrpc: Boolean = false): String {
+    System.getenv("DROIDLM_E2E_PYTHON")?.takeIf { it.isNotBlank() }?.let { return it }
+    if (requireGrpc) {
+        fun grpcImportWorks(python: String): Boolean {
+            val stdout = java.io.ByteArrayOutputStream()
+            val stderr = java.io.ByteArrayOutputStream()
+            return exec {
+                commandLine(python, "-c", "import grpc, grpc_tools")
+                isIgnoreExitValue = true
+                standardOutput = stdout
+                errorOutput = stderr
+            }.exitValue == 0
+        }
+
+        if (grpcImportWorks("python3")) return "python3"
+
+        val venvDir = java.io.File("/tmp/droidlm-e2e-python")
+        val venvPython = java.io.File(venvDir, "bin/python")
+        if (!venvPython.isFile) {
+            println("Creating temporary DroidLM E2E Python environment at ${venvDir.absolutePath}")
+            exec {
+                commandLine("python3", "-m", "venv", venvDir.absolutePath)
+            }
+        }
+        val grpcReady = grpcImportWorks(venvPython.absolutePath)
+        if (!grpcReady) {
+            println("Installing grpcio dependencies into ${venvDir.absolutePath}")
+            exec {
+                commandLine(
+                    java.io.File(venvDir, "bin/pip").absolutePath,
+                    "install",
+                    "grpcio",
+                    "grpcio-tools"
+                )
+            }
+        }
+        return venvPython.absolutePath
+    }
+    return "python3"
+}
+
+fun org.gradle.api.Project.ensureVirtualMicForE2e() {
+    val pactl = providers.exec {
+        commandLine("bash", "-lc", "command -v pactl")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+    if (pactl.isBlank()) error("pactl is required for mic-injection E2E tests")
+    val sinkName = System.getenv("DROIDLM_E2E_PULSE_SINK") ?: "droidlm_e2e_mic"
+    val sourceName = System.getenv("DROIDLM_E2E_PULSE_SOURCE") ?: "droidlm_e2e_mic_source"
+    hostOutput("bash", "-lc", "pactl list short modules | awk '/droidlm_e2e_mic/ {print \$1}' | xargs -r -n1 pactl unload-module")
+
+    hostOutput("pactl", "load-module", "module-null-sink", "sink_name=$sinkName", "sink_properties=device.description=DroidLM_E2E_Mic_Sink")
+    hostOutput("pactl", "load-module", "module-remap-source", "master=$sinkName.monitor", "source_name=$sourceName", "source_properties=device.description=DroidLM_E2E_Mic_Source")
+    hostOutput("pactl", "set-default-source", sourceName)
+    hostOutput("bash", "-lc", "pactl list short modules | awk '/module-native-protocol-tcp/ {print \$1}' | xargs -r -n1 pactl unload-module")
+    hostOutput("pactl", "load-module", "module-native-protocol-tcp", "auth-anonymous=1", "port=4713")
+    val sources = hostOutput("pactl", "list", "short", "sources")
+    if (!sources.contains(sourceName)) {
+        error("Could not create $sourceName. pactl sources:\n$sources")
+    }
+}
+
+fun org.gradle.api.Project.micInjectionMode(): String =
+    (System.getenv("DROIDLM_E2E_MIC_INJECTION_MODE") ?: "grpc").lowercase()
+
+fun org.gradle.api.Project.ensureEmulatorHostAudioForE2e(adb: String) {
+    val mode = micInjectionMode()
+    val useHostAudio = mode == "pulse"
+    val ps = hostOutput("bash", "-lc", "ps -ef | grep '[e]mulator' || true")
+    val connected = adbOutput(adb, "devices").lineSequence().any { it.endsWith("\tdevice") }
+    if (ps.isBlank() && connected && useHostAudio) {
+        adbOutput(adb, "emu", "avd", "hostmicoff")
+    }
+
+    val avdName = if (connected) {
+        adbOutput(adb, "emu", "avd", "name")
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() && !it.startsWith("OK") }
+            ?: System.getenv("DROIDLM_E2E_AVD") ?: "pixel_6"
+    } else {
+        System.getenv("DROIDLM_E2E_AVD") ?: "pixel_6"
+    }
+    println("Starting emulator '$avdName' for $mode mic-injection E2E")
+    adbOutput(adb, "emu", "kill")
+    val stopDeadline = System.currentTimeMillis() + 30_000L
+    while (System.currentTimeMillis() < stopDeadline) {
+        val running = hostOutput("bash", "-lc", "ps -ef | grep '[e]mulator' || true")
+        if (running.isBlank()) break
+        Thread.sleep(1_000)
+    }
+
+    val androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        ?: error("ANDROID_HOME or ANDROID_SDK_ROOT must point to the Android SDK")
+    val logFile = file("test-artifacts/e2e-videos/hover-mic-audio/emulator-host-audio.log").apply { parentFile.mkdirs() }
+    val runtimeDir = System.getenv("XDG_RUNTIME_DIR") ?: "/run/user/${hostOutput("id", "-u").trim()}"
+    val pulseServer = System.getenv("DROIDLM_E2E_PULSE_SERVER") ?: "tcp:127.0.0.1:4713"
+    val pulseSource = System.getenv("DROIDLM_E2E_PULSE_SOURCE") ?: "droidlm_e2e_mic_source"
+    val pulseSink = System.getenv("DROIDLM_E2E_PULSE_SINK") ?: "droidlm_e2e_mic"
+    val qemuPulseServer = System.getenv("DROIDLM_E2E_QEMU_PA_SERVER") ?: pulseServer.removePrefix("tcp:")
+    val defaultAudioDriver = if (useHostAudio) "pa" else ""
+    val audioDriver = System.getenv("DROIDLM_E2E_AUDIO_DRIVER") ?: defaultAudioDriver
+    val grpcPort = System.getenv("DROIDLM_E2E_GRPC_PORT") ?: "8554"
+    val command = mutableListOf(
+        "$androidHome/emulator/emulator",
+        "-avd", avdName,
+        "-no-window",
+        "-no-snapshot",
+        "-gpu", "swiftshader_indirect"
+    )
+    if (audioDriver.isNotBlank()) command += listOf("-audio", audioDriver)
+    command += listOf("-grpc", grpcPort)
+    if (useHostAudio) command += "-allow-host-audio"
+    val emulatorProcess = ProcessBuilder(command)
+    val emulatorEnvironment = emulatorProcess.environment()
+    emulatorEnvironment["XDG_RUNTIME_DIR"] = runtimeDir
+    emulatorEnvironment["PULSE_SERVER"] = pulseServer
+    if (audioDriver.isNotBlank()) {
+        emulatorEnvironment["QEMU_AUDIO_DRV"] = audioDriver
+        emulatorEnvironment["QEMU_AUDIO_IN_DRV"] = audioDriver
+        emulatorEnvironment["QEMU_AUDIO_OUT_DRV"] = audioDriver
+    } else {
+        emulatorEnvironment.remove("QEMU_AUDIO_DRV")
+        emulatorEnvironment.remove("QEMU_AUDIO_IN_DRV")
+        emulatorEnvironment.remove("QEMU_AUDIO_OUT_DRV")
+    }
+    if (useHostAudio) {
+        emulatorEnvironment["QEMU_PA_SERVER"] = qemuPulseServer
+        emulatorEnvironment["QEMU_PA_SOURCE"] = pulseSource
+        emulatorEnvironment["QEMU_PA_SINK"] = pulseSink
+    } else {
+        emulatorEnvironment.remove("QEMU_PA_SERVER")
+        emulatorEnvironment.remove("QEMU_PA_SOURCE")
+        emulatorEnvironment.remove("QEMU_PA_SINK")
+    }
+    emulatorProcess
+        .redirectErrorStream(true)
+        .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        .start()
+
+    exec { commandLine(adb, "wait-for-device") }
+    val deadline = System.currentTimeMillis() + 180_000L
+    while (System.currentTimeMillis() < deadline) {
+        val booted = adbOutput(adb, "shell", "getprop", "sys.boot_completed")
+        if (booted.trim() == "1") {
+            if (useHostAudio) adbOutput(adb, "emu", "avd", "hostmicon")
+            Thread.sleep(3_000)
+            return
+        }
+        Thread.sleep(2_000)
+    }
+    error("Timed out waiting for emulator to boot for $mode mic injection. See ${logFile.relativeTo(projectDir)}")
+}
+
+fun org.gradle.api.Project.generateOpenAiTts(text: String, outputFile: java.io.File) {
+    exec {
+        commandLine(e2ePython(), "scripts/generate-openai-tts.py", "--text", text, "--output", outputFile.absolutePath)
+    }
+}
+
+fun org.gradle.api.Project.convertAudioToPcm(inputFile: java.io.File, outputFile: java.io.File) {
+    outputFile.parentFile.mkdirs()
+    exec {
+        commandLine(
+            "ffmpeg",
+            "-y",
+            "-i", inputFile.absolutePath,
+            "-ac", "1",
+            "-ar", "16000",
+            "-f", "s16le",
+            outputFile.absolutePath
+        )
+    }
+}
+
+fun org.gradle.api.Project.convertAudioToWav(inputFile: java.io.File, outputFile: java.io.File) {
+    outputFile.parentFile.mkdirs()
+    exec {
+        commandLine(
+            "ffmpeg",
+            "-y",
+            "-i", inputFile.absolutePath,
+            "-ac", "1",
+            "-ar", "16000",
+            "-sample_fmt", "s16",
+            outputFile.absolutePath
+        )
+    }
+}
+
+fun org.gradle.api.Project.convertAudioToDelayedWav(inputFile: java.io.File, outputFile: java.io.File, delayMs: Long) {
+    outputFile.parentFile.mkdirs()
+    exec {
+        commandLine(
+            "ffmpeg",
+            "-y",
+            "-i", inputFile.absolutePath,
+            "-ac", "1",
+            "-ar", "16000",
+            "-sample_fmt", "s16",
+            "-af", "adelay=${delayMs}:all=1",
+            outputFile.absolutePath
+        )
+    }
+}
+
+fun org.gradle.api.Project.injectAudioIntoEmulatorMic(audioFile: java.io.File) {
+    val grpcHost = System.getenv("DROIDLM_E2E_GRPC_HOST") ?: "127.0.0.1"
+    val grpcPort = System.getenv("DROIDLM_E2E_GRPC_PORT") ?: "8554"
+    val grpcChunkMs = System.getenv("DROIDLM_E2E_GRPC_CHUNK_MS") ?: "20"
+    val command = mutableListOf(
+        e2ePython(requireGrpc = true),
+        "scripts/inject-emulator-audio.py",
+        "--wav", audioFile.absolutePath,
+        "--host", grpcHost,
+        "--port", grpcPort,
+        "--generated-dir", file("build/emulator-grpc-python").absolutePath,
+        "--chunk-ms", grpcChunkMs
+    )
+    if (System.getenv("DROIDLM_E2E_GRPC_NO_REALTIME") == "true") command += "--no-realtime"
+    val result = exec {
+        commandLine(command)
+        isIgnoreExitValue = true
+    }
+    if (result.exitValue != 0) error("Emulator gRPC audio injection failed for ${audioFile.absolutePath}")
+}
+
+fun org.gradle.api.Project.checkEmulatorGrpcStatus(audioFile: java.io.File) {
+    val grpcHost = System.getenv("DROIDLM_E2E_GRPC_HOST") ?: "127.0.0.1"
+    val grpcPort = System.getenv("DROIDLM_E2E_GRPC_PORT") ?: "8554"
+    val result = exec {
+        commandLine(
+            e2ePython(requireGrpc = true),
+            "scripts/inject-emulator-audio.py",
+            "--wav", audioFile.absolutePath,
+            "--host", grpcHost,
+            "--port", grpcPort,
+            "--generated-dir", file("build/emulator-grpc-python").absolutePath,
+            "--status-only"
+        )
+        isIgnoreExitValue = true
+    }
+    if (result.exitValue != 0) error("Emulator gRPC status smoke check failed")
+}
+
+fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
+    adb: String,
+    suite: AndroidE2eSuite,
+    methodName: String,
+    audioFile: java.io.File,
+    speechDelayMs: Long
+) {
+    val artifactDir = file("test-artifacts/e2e-videos/${suite.artifactSubdirectory}").apply { mkdirs() }
+    val deviceVideoDir = "/sdcard/Documents/DroidLMTestRuns/videos"
+    val markerPath = "/sdcard/Documents/DroidLMTestRuns/mic-audio-ready-${System.currentTimeMillis()}.marker"
+    adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
+    adbOutput(adb, "shell", "rm", "-f", markerPath)
+
+    val selector = "${suite.className}#$methodName"
+    val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
+    val hostVideo = artifactDir.resolve(videoFileName)
+    val deviceVideoPath = "$deviceVideoDir/$videoFileName"
+    println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
+    val recorder = startScreenRecording(adb, deviceVideoPath)
+    Thread.sleep(1000)
+
+    val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
+    suite.instrumentationArgs.forEach { (key, value) -> args += listOf("-e", key, value) }
+    args += listOf("-e", "micAudioMarkerPath", markerPath)
+    args += listOf("-e", "class", selector)
+    args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
+
+    val instrumentation = ProcessBuilder(adb, *args.toTypedArray()).redirectErrorStream(true).start()
+    val output = java.io.ByteArrayOutputStream()
+    val reader = Thread {
+        instrumentation.inputStream.use { input -> input.copyTo(output) }
+    }.apply { start() }
+
+    var played = false
+    val deadline = System.currentTimeMillis() + 60_000L
+    while (instrumentation.isAlive && System.currentTimeMillis() < deadline) {
+        val marker = adbOutput(adb, "shell", "if", "[", "-f", markerPath, "];", "then", "echo", "ready;", "fi")
+        if (!played && marker.contains("ready")) {
+            Thread.sleep(speechDelayMs)
+            injectAudioIntoEmulatorMic(audioFile)
+            played = true
+        }
+        Thread.sleep(100)
+    }
+    if (instrumentation.isAlive) instrumentation.destroyForcibly()
+    reader.join(5000)
+    val text = output.toString()
+    print(text)
+
+    runCatching { stopScreenRecording(adb, recorder) }
+    runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+    adbOutput(adb, "shell", "rm", "-f", markerPath)
+
+    if (!played) error("Mic audio was never injected because marker was not created by $selector")
+    if (instrumentation.exitValue() != 0 || text.contains("FAILURES!!!")) {
+        error("Android mic-injection E2E failure: $selector")
+    }
+}
+
 tasks.register("ensureDriveForE2e") {
     group = "verification"
     description = "Ensures com.google.android.apps.docs exists on the connected emulator, installing the test stub only when real Drive is missing."
@@ -270,6 +583,7 @@ tasks.register("openWorkspaceInstallPages") {
                 println("No Play Store or browser handler resolved. Use a Google Play emulator image or sideload ${app.label} manually.")
                 return@doLast
             }
+
         }
 
         println("Finish installation in the emulator UI, then rerun `./gradlew workspaceEmulatorReport`.")
@@ -346,13 +660,13 @@ tasks.register("connectedVoiceE2e") {
     dependsOn("ensureDriveForE2e", ":app:installDebug", ":app:installDebugAndroidTest")
 
     doLast {
-        val adb = project.androidAdbPath()
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
-        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        val adbPath = project.androidAdbPath()
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
-            adb,
+            adbPath,
             AndroidE2eSuite(
                 className = "ai.droidlm.e2e.DroidLmOverlayRecordPermissionE2ETest",
                 sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmOverlayRecordPermissionE2ETest.kt",
@@ -360,7 +674,7 @@ tasks.register("connectedVoiceE2e") {
             )
         )
         runInstrumentedSuiteWithVideos(
-            adb,
+            adbPath,
             AndroidE2eSuite(
                 className = "ai.droidlm.e2e.DroidLmDriveVoiceInvocationE2ETest",
                 sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmDriveVoiceInvocationE2ETest.kt",
@@ -368,4 +682,117 @@ tasks.register("connectedVoiceE2e") {
             )
         )
     }
+}
+
+tasks.register("connectedHoverMicAudioE2e") {
+    group = "verification"
+    description = "Runs hover-widget E2E with OpenAI-generated speech injected through the emulator microphone."
+    dependsOn(":driveStub:assembleDebug", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        if (project.micInjectionMode() == "pulse") project.ensureVirtualMicForE2e()
+        project.ensureEmulatorHostAudioForE2e(adbPath)
+        if (!project.isPackageInstalled(adbPath, "com.google.android.apps.docs")) {
+            val stubApk = project(":driveStub").layout.buildDirectory.file("outputs/apk/debug/driveStub-debug.apk").get().asFile.absolutePath
+            project.adbOutput(adbPath, "install", "-r", stubApk)
+        }
+        val sourceAudioFile = file("build/e2e-audio/open-google-drive.wav")
+        val audioFile = file("build/e2e-audio/open-google-drive-hover-16k-mono.wav")
+        project.generateOpenAiTts("Open Google Drive", sourceAudioFile)
+        project.convertAudioToWav(sourceAudioFile, audioFile)
+        project.checkEmulatorGrpcStatus(audioFile)
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        val instrumentationArgs = mutableMapOf<String, String>()
+        project.localEnvValue("OPENAI_API_KEY")?.let { key ->
+            instrumentationArgs["openAiApiKey"] = key
+        }
+        project.runMicInjectedInstrumentedTest(
+            adb = adbPath,
+            suite = AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmHoverMicAudioE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmHoverMicAudioE2ETest.kt",
+                artifactSubdirectory = "hover-mic-audio",
+                instrumentationArgs = instrumentationArgs
+            ),
+            methodName = "hoverRecordCapturesInjectedOpenGoogleDriveAudio",
+            audioFile = audioFile,
+            speechDelayMs = 250L
+        )
+    }
+}
+
+tasks.register("connectedEmulatorMicProbeE2e") {
+    group = "verification"
+    description = "Runs an AudioRecord probe to verify injected audio reaches the emulator guest microphone."
+    dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        val sourceAudioFile = file("build/e2e-audio/open-google-drive.wav")
+        val audioFile = file("build/e2e-audio/open-google-drive-16k-mono.wav")
+        project.generateOpenAiTts("Open Google Drive", sourceAudioFile)
+        project.convertAudioToWav(sourceAudioFile, audioFile)
+        project.ensureEmulatorHostAudioForE2e(adbPath)
+        project.checkEmulatorGrpcStatus(audioFile)
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.runMicInjectedInstrumentedTest(
+            adb = adbPath,
+            suite = AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmEmulatorMicProbeE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmEmulatorMicProbeE2ETest.kt",
+                artifactSubdirectory = "emulator-mic-probe"
+            ),
+            methodName = "injectedAudioProducesGuestMicEnergy",
+            audioFile = audioFile,
+            speechDelayMs = 250L
+        )
+    }
+}
+
+tasks.register("connectedOnDeviceAudioSourceE2e") {
+    group = "verification"
+    description = "Runs on-device SpeechRecognizer E2E using RecognizerIntent.EXTRA_AUDIO_SOURCE with generated audio. This validates Android STT without using the live emulator microphone."
+    dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        val wavFile = file("build/e2e-audio/open-google-drive.wav")
+        val pcmFile = file("build/e2e-audio/open-google-drive-16k-mono.pcm")
+        val tmpAudioPath = "/data/local/tmp/droidlm-open-google-drive-16k-mono.pcm"
+        val deviceAudioPath = "/data/data/ai.droidlm.debug/files/droidlm-open-google-drive-16k-mono.pcm"
+        project.generateOpenAiTts("Open Google Drive", wavFile)
+        project.convertAudioToPcm(wavFile, pcmFile)
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.adbOutput(adbPath, "push", pcmFile.absolutePath, tmpAudioPath)
+        project.adbOutput(adbPath, "shell", "run-as", "ai.droidlm.debug", "mkdir", "-p", "files")
+        project.adbOutput(adbPath, "shell", "run-as", "ai.droidlm.debug", "cp", tmpAudioPath, "files/droidlm-open-google-drive-16k-mono.pcm")
+        runInstrumentedSuiteWithVideos(
+            adbPath,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmOnDeviceAudioSourceE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmOnDeviceAudioSourceE2ETest.kt",
+                artifactSubdirectory = "on-device-audio-source",
+                instrumentationArgs = mapOf(
+                    "audioSourcePath" to deviceAudioPath,
+                    "preferOfflineSpeechRecognition" to "false"
+                )
+            )
+        )
+    }
+}
+
+tasks.register("containerizedHoverMicAudioE2e", org.gradle.api.tasks.Exec::class) {
+    group = "verification"
+    description = "Builds a single Docker container with Android Emulator + gRPC mic injection and runs connectedHoverMicAudioE2e."
+    commandLine("bash", "scripts/run-containerized-virtual-mic-e2e.sh")
 }
