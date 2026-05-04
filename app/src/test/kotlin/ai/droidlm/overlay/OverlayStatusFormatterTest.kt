@@ -71,7 +71,7 @@ class OverlayStatusFormatterTest {
 
     @Test fun compactPlanUsesSingleLineActionChain() {
         val plan = PlanPreview(
-            model = "gpt-4.1-mini",
+            model = "gpt-5.4-nano",
             summary = "Open Sheets and type a value",
             riskLevel = "LOW",
             requiresConfirmation = false,
@@ -87,7 +87,7 @@ class OverlayStatusFormatterTest {
 
     @Test fun compactPlanShowsRiskAndRemainingSteps() {
         val plan = PlanPreview(
-            model = "gpt-4.1-mini",
+            model = "gpt-5.4-nano",
             summary = "Risky task",
             riskLevel = "HIGH",
             requiresConfirmation = true,

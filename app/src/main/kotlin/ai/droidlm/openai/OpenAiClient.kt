@@ -207,7 +207,7 @@ class OpenAiClient(
     }
 
     companion object {
-        const val DEFAULT_MODEL = "gpt-4.1-mini"
+        const val DEFAULT_MODEL = "gpt-5.4-nano"
         private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions."
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }

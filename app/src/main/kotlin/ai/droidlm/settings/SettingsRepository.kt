@@ -59,7 +59,7 @@ class SettingsRepository(private val context: Context) {
         DroidLmSettings(
             relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
             openAiApiKeyConfigured = preferences[Keys.openAiApiKeyConfigured] ?: hasOpenAiApiKey(),
-            openAiModel = preferences[Keys.openAiModel] ?: "gpt-4.1-mini",
+            openAiModel = preferences[Keys.openAiModel] ?: "gpt-5.4-nano",
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
             transcriptionProvider = androidSpeechTranscriptionProvider(preferences[Keys.transcriptionProvider]),
             preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
@@ -97,7 +97,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun updateRelayBaseUrl(value: String) = editString(Keys.relayBaseUrl, value.trim())
-    suspend fun updateOpenAiModel(value: String) = editString(Keys.openAiModel, value.trim().ifBlank { "gpt-4.1-mini" })
+    suspend fun updateOpenAiModel(value: String) = editString(Keys.openAiModel, value.trim().ifBlank { "gpt-5.4-nano" })
     suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
     suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)
     suspend fun updatePreferOfflineSpeechRecognition(value: Boolean) = editBoolean(Keys.preferOfflineSpeechRecognition, value)

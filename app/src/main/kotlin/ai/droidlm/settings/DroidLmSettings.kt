@@ -19,7 +19,7 @@ enum class TranscriptionProvider {
 data class DroidLmSettings(
     val relayBaseUrl: String = "",
     val openAiApiKeyConfigured: Boolean = false,
-    val openAiModel: String = "gpt-4.1-mini",
+    val openAiModel: String = "gpt-5.4-nano",
     val wakePhrase: String = "DroidLM",
     val transcriptionProvider: TranscriptionProvider = TranscriptionProvider.ANDROID_SPEECH_RECOGNIZER,
     val preferOfflineSpeechRecognition: Boolean = true,
