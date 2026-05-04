@@ -204,6 +204,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Onboarding completed")
     }
 
+    fun checkSpeechSetup(preferOffline: Boolean) {
+        app.speechRecognitionController.checkSpeechSetup(preferOffline)
+    }
+
     fun openSpeechRecognitionSettings() {
         val options = listOf(
             "voice_input_settings" to Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),

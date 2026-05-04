@@ -7,12 +7,15 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.SystemClock
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.SpeechRecognizer
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +37,10 @@ data class SpeechRecognitionUiState(
     val missingLanguageTag: String? = null,
     val missingLanguageMessage: String? = null,
     val recognizerService: String? = null,
+    val speechSetupChecking: Boolean = false,
+    val speechSetupChecked: Boolean = false,
+    val speechSetupAvailable: Boolean? = null,
+    val speechSetupMessage: String? = null,
     val providerLabel: String = "Android SpeechRecognizer"
 ) {
     val isActive: Boolean
@@ -346,6 +353,46 @@ class SpeechRecognitionController(
         }
     }
 
+    fun checkSpeechSetup(
+        preferOffline: Boolean,
+        languageTag: String = Locale.getDefault().toLanguageTag()
+    ) {
+        mainHandler.post {
+            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+                val message = "No Android speech recognizer is available on this device. Install or enable a speech recognition service."
+                updateSpeechSetupResult(languageTag, false, message, preferOffline)
+                logs.log(ActionLogType.ERROR, message, "SPEECH_SETUP_RECOGNIZER_UNAVAILABLE")
+                return@post
+            }
+            val recognizerService = voiceRecognitionService()
+            _state.value = _state.value.copy(
+                speechSetupChecking = true,
+                speechSetupChecked = false,
+                speechSetupMessage = "Checking Android speech setup for ${languageDisplayName(languageTag)}...",
+                recognizerService = recognizerService
+            )
+            diagnostics.record(
+                null,
+                "speech_setup_check_started",
+                mapOf(
+                    "preferOffline" to preferOffline,
+                    "language" to languageTag,
+                    "defaultLocale" to Locale.getDefault().toLanguageTag(),
+                    "voiceRecognitionService" to recognizerService,
+                    "voiceRecognitionPackage" to voiceRecognitionPackage()
+                )
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                checkSpeechSetupOnApi33(preferOffline, languageTag)
+            } else {
+                val message = "Android ${Build.VERSION.RELEASE} cannot verify offline speech languages before recording. Install or check offline Android speech recognition for ${languageDisplayName(languageTag)} in Android voice input settings, then try recording again."
+                updateSpeechSetupResult(languageTag, false, message, preferOffline)
+                logs.log(ActionLogType.ERROR, message, "SPEECH_SETUP_MANUAL_OFFLINE_LANGUAGE_CHECK")
+            }
+        }
+    }
+
+
     fun stopCurrent(): Boolean {
         val recognizer = activeRecognizer ?: return false
         mainHandler.post {
@@ -447,6 +494,117 @@ class SpeechRecognitionController(
             ?: service.substringBefore('/').takeIf { it.isNotBlank() }
     }
 
+    private fun checkSpeechSetupOnApi33(preferOffline: Boolean, languageTag: String) {
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
+        val intent = recognitionIntent(preferOffline, languageTag)
+        recognizer.checkRecognitionSupport(
+            intent,
+            ContextCompat.getMainExecutor(context),
+            object : RecognitionSupportCallback {
+                override fun onSupportResult(recognitionSupport: RecognitionSupport) {
+                    runCatching { recognizer.destroy() }
+                    val installed = recognitionSupport.installedOnDeviceLanguages
+                    val pending = recognitionSupport.pendingOnDeviceLanguages
+                    val supported = recognitionSupport.supportedOnDeviceLanguages
+                    val online = recognitionSupport.onlineLanguages
+                    val installedMatch = installed.any { languageMatches(languageTag, it) }
+                    val pendingMatch = pending.any { languageMatches(languageTag, it) }
+                    val supportedMatch = supported.any { languageMatches(languageTag, it) }
+                    val onlineMatch = online.any { languageMatches(languageTag, it) }
+                    diagnostics.record(
+                        null,
+                        "speech_setup_check_result",
+                        mapOf(
+                            "language" to languageTag,
+                            "preferOffline" to preferOffline,
+                            "installedOnDeviceLanguages" to installed,
+                            "pendingOnDeviceLanguages" to pending,
+                            "supportedOnDeviceLanguages" to supported,
+                            "onlineLanguages" to online,
+                            "installedMatch" to installedMatch,
+                            "pendingMatch" to pendingMatch,
+                            "supportedMatch" to supportedMatch,
+                            "onlineMatch" to onlineMatch
+                        )
+                    )
+                    val languageName = languageDisplayName(languageTag)
+                    val available = if (preferOffline) installedMatch else installedMatch || onlineMatch
+                    val message = when {
+                        preferOffline && installedMatch -> "Offline Android speech recognition for $languageName is installed."
+                        preferOffline && pendingMatch -> "Offline Android speech recognition for $languageName is pending download. Open Android speech settings to finish installing it."
+                        preferOffline && supportedMatch -> "Offline Android speech recognition for $languageName is supported but not installed. Open Android speech settings and download it."
+                        preferOffline -> "Offline Android speech recognition for $languageName is not installed or not reported by this device. Open Android speech settings and download it if available."
+                        available -> "Android speech recognition for $languageName is available."
+                        else -> "Android speech recognition for $languageName is not available on this device. Open Android speech settings or choose another language."
+                    }
+                    updateSpeechSetupResult(languageTag, available, message, preferOffline)
+                    logs.log(
+                        if (available) ActionLogType.ACTION_RESULT else ActionLogType.ERROR,
+                        message,
+                        "SPEECH_SETUP_CHECK"
+                    )
+                }
+
+                override fun onError(error: Int) {
+                    runCatching { recognizer.destroy() }
+                    val message = SpeechRecognitionErrorMapper.messageFor(error, preferOffline, languageTag)
+                    diagnostics.record(
+                        null,
+                        "speech_setup_check_error",
+                        mapOf("code" to error, "message" to message, "language" to languageTag, "preferOffline" to preferOffline)
+                    )
+                    updateSpeechSetupResult(languageTag, false, message, preferOffline)
+                    logs.log(ActionLogType.ERROR, message, "SPEECH_SETUP_CHECK_$error")
+                }
+            }
+        )
+    }
+
+    private fun updateSpeechSetupResult(
+        languageTag: String,
+        available: Boolean,
+        message: String,
+        preferOffline: Boolean
+    ) {
+        val missingLanguageTag = if (preferOffline && !available) languageTag else null
+        _state.value = _state.value.copy(
+            speechSetupChecking = false,
+            speechSetupChecked = true,
+            speechSetupAvailable = available,
+            speechSetupMessage = message,
+            missingLanguageTag = missingLanguageTag,
+            missingLanguageMessage = if (missingLanguageTag != null) message else null,
+            recognizerService = voiceRecognitionService()
+        )
+    }
+
+    private fun recognitionIntent(preferOffline: Boolean, languageTag: String): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, COMPLETE_SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, POSSIBLY_COMPLETE_SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MINIMUM_INPUT_MS)
+        }
+
+    private fun languageMatches(requested: String, candidate: String): Boolean {
+        val requestedLocale = Locale.forLanguageTag(requested)
+        val candidateLocale = Locale.forLanguageTag(candidate)
+        val requestedLanguage = requestedLocale.language.ifBlank { requested.substringBefore('-') }
+        val candidateLanguage = candidateLocale.language.ifBlank { candidate.substringBefore('-') }
+        if (!requestedLanguage.equals(candidateLanguage, ignoreCase = true)) return false
+        val requestedCountry = requestedLocale.country
+        val candidateCountry = candidateLocale.country
+        return requestedCountry.isBlank() || candidateCountry.isBlank() || requestedCountry.equals(candidateCountry, ignoreCase = true)
+    }
+
+    private fun languageDisplayName(languageTag: String): String {
+        val locale = Locale.forLanguageTag(languageTag)
+        return locale.getDisplayName(locale).takeIf { it.isNotBlank() } ?: languageTag
+    }
 
     private fun isInitialSilenceError(error: Int): Boolean =
         error == SpeechRecognizer.ERROR_NO_MATCH ||

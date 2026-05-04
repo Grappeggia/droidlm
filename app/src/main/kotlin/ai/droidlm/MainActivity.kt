@@ -158,6 +158,21 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     LaunchedEffect(Unit) {
         viewModel.refreshAccessibility()
     }
+    LaunchedEffect(
+        needsOnboarding,
+        settings.preferOfflineSpeechRecognition,
+        speechRecognition.speechSetupChecked,
+        speechRecognition.speechSetupChecking
+    ) {
+        if (
+            needsOnboarding &&
+            settings.preferOfflineSpeechRecognition &&
+            !speechRecognition.speechSetupChecked &&
+            !speechRecognition.speechSetupChecking
+        ) {
+            viewModel.checkSpeechSetup(settings.preferOfflineSpeechRecognition)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -271,6 +286,13 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                             onConfirm = viewModel::confirmPending,
                             onCancel = viewModel::rejectPending
                         )
+                    }
+                }
+                speechRecognition.missingLanguageMessage?.let {
+                    item {
+                        DroidCard(container = DroidLmColors.WarningSurface) {
+                            SpeechSetupCard(settings, speechRecognition, viewModel)
+                        }
                     }
                 }
                 item { ExecutionCard(execution.lastTranscript, execution.parsedAction, execution.status, execution.lastResult) }
@@ -468,8 +490,23 @@ private fun SetupStatusCard(
         SetupStatusItem("Floating controls", overlayRunning, onStartOverlay),
         SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr)
     )
-    val languageItem = speechRecognition.missingLanguageTag?.let { tag ->
-        SetupStatusItem("Offline ${displayLanguage(tag)} speech", false, onOpenSpeechSettings)
+    val languageItem = when {
+        settings.preferOfflineSpeechRecognition -> {
+            val tag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
+            val available = speechRecognition.speechSetupChecked && speechRecognition.speechSetupAvailable == true
+            val label = if (available) {
+                "Offline ${displayLanguage(tag)} speech"
+            } else {
+                "Install/check offline ${displayLanguage(tag)} speech"
+            }
+            SetupStatusItem(label, available, onOpenSpeechSettings)
+        }
+        speechRecognition.missingLanguageTag != null -> SetupStatusItem(
+            "Offline ${displayLanguage(speechRecognition.missingLanguageTag)} speech",
+            false,
+            onOpenSpeechSettings
+        )
+        else -> null
     }
     val items = baseItems + listOfNotNull(languageItem)
     val enabledItems = items.filter { it.enabled }
@@ -648,16 +685,24 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
 
 @Composable
 private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) {
+    val languageTag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
+    val languageName = displayLanguage(languageTag)
     Text("Voice recognition", fontWeight = FontWeight.SemiBold)
     ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
-    speechRecognition.missingLanguageMessage?.let { message ->
-        Text(message, color = DroidLmColors.Danger)
+    speechRecognition.speechSetupMessage?.let { message ->
+        Text(message, color = if (speechRecognition.speechSetupAvailable == true) DroidLmColors.TextMuted else DroidLmColors.Danger)
+    }
+    if (settings.preferOfflineSpeechRecognition && speechRecognition.speechSetupAvailable != true) {
         Text(
-            "To fix it, open Android speech settings, then download ${speechRecognition.missingLanguageTag?.let(::displayLanguage) ?: "the missing language"} for offline speech recognition.",
+            "Install $languageName for offline speech recognition: open Android speech settings, then find Voice input or Offline speech recognition and download $languageName.",
             color = DroidLmColors.TextMuted
         )
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            enabled = !speechRecognition.speechSetupChecking,
+            onClick = { viewModel.checkSpeechSetup(settings.preferOfflineSpeechRecognition) }
+        ) { Text(if (speechRecognition.speechSetupChecking) "Checking..." else "Check Speech Setup") }
         OutlinedButton(onClick = viewModel::openSpeechRecognitionSettings) { Text("Open Speech Settings") }
         OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
     }
