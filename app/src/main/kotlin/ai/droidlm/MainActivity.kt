@@ -514,6 +514,17 @@ private fun SettingsCard(settings: DroidLmSettings, viewModel: DroidLmViewModel)
     ToggleRow("Debug audio retention", settings.debugAudioRetention, viewModel::updateDebugAudio)
     ToggleRow("Debug screenshot retention", settings.debugScreenshotRetention, viewModel::updateDebugScreenshots)
 
+    Text("Diagnostics", fontWeight = FontWeight.SemiBold)
+    ToggleRow("Speech diagnostics logging", settings.speechDiagnosticsEnabled, viewModel::updateSpeechDiagnostics)
+    Text(
+        "When enabled, DroidLM stores recent speech-recognition events for sharing. Logs may include spoken text and device/app state, but not audio, screenshots, or API keys.",
+        color = DroidLmColors.TextMuted
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = viewModel::shareSpeechDiagnostics) { Text("Share Speech Diagnostics") }
+        OutlinedButton(onClick = viewModel::clearSpeechDiagnostics) { Text("Clear Speech Diagnostics") }
+    }
+
     OutlinedTextField(value = mobilerunDeviceId, onValueChange = { mobilerunDeviceId = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Mobilerun device ID (optional)") })
     OutlinedButton(onClick = { viewModel.updateMobilerunDeviceId(mobilerunDeviceId) }) { Text("Save Device ID") }
     OutlinedTextField(value = mobilerunKey, onValueChange = { mobilerunKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Mobilerun API key (optional)") })

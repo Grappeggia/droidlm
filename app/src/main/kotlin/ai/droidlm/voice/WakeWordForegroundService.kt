@@ -36,11 +36,18 @@ class WakeWordForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        val action = intent?.action
+        val diagnosticSessionId = intent?.getStringExtra(EXTRA_DIAGNOSTIC_SESSION_ID)
+        app.speechDiagnosticsLogger.record(
+            diagnosticSessionId,
+            "foreground_onStartCommand",
+            mapOf("action" to (action ?: "default"), "startId" to startId, "flags" to flags)
+        )
+        when (action) {
             ACTION_START_LISTENING -> startListeningForeground()
             ACTION_STOP_LISTENING -> stopListening()
             ACTION_CANCEL -> cancelCurrent()
-            ACTION_PUSH_TO_TALK -> startPushToTalk()
+            ACTION_PUSH_TO_TALK -> startPushToTalk(diagnosticSessionId)
             else -> startListeningForeground()
         }
         return START_STICKY
@@ -58,10 +65,12 @@ class WakeWordForegroundService : Service() {
     private fun startListeningForeground() {
         isRunningState.value = true
         startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.")
+        app.speechDiagnosticsLogger.record(null, "foreground_listening_started")
         app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Foreground listening service running")
     }
 
     private fun stopListening() {
+        app.speechDiagnosticsLogger.record(null, "foreground_stop_listening_requested")
         if (app.speechRecognitionController.stopCurrent()) return
         isRunningState.value = false
         commandJob?.cancel()
@@ -71,6 +80,7 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun cancelCurrent() {
+        app.speechDiagnosticsLogger.record(null, "foreground_cancel_requested")
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
         app.speechRecognitionController.cancelCurrent()
@@ -82,19 +92,38 @@ class WakeWordForegroundService : Service() {
         }
     }
 
-    private fun startPushToTalk() {
+    private fun startPushToTalk(diagnosticSessionId: String?) {
+        val sessionId = diagnosticSessionId ?: app.speechDiagnosticsLogger.startSession("foreground_push_to_talk")
         startForegroundSafely("DroidLM is listening for your push-to-talk command.")
         app.actionLogRepository.log(ActionLogType.WAKE_DETECTED, "Push-to-talk started")
+        app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_started", mapOf("hadPreviousJob" to (commandJob != null)))
         commandJob?.cancel()
         commandJob = scope.launch {
             runCatching {
                 val settings = app.settingsRepository.settings.first()
+                app.speechDiagnosticsLogger.record(
+                    sessionId,
+                    "push_to_talk_settings_loaded",
+                    mapOf("preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition)
+                )
                 app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Using Android SpeechRecognizer")
                 val transcript = app.speechRecognitionController.recognizeCommand(
-                    preferOffline = settings.preferOfflineSpeechRecognition
+                    preferOffline = settings.preferOfflineSpeechRecognition,
+                    diagnosticSessionId = sessionId
+                )
+                app.speechDiagnosticsLogger.record(
+                    sessionId,
+                    "push_to_talk_transcript_ready",
+                    mapOf("transcriptLength" to transcript.length, "transcript" to transcript.take(160))
                 )
                 app.executor.planTranscript(transcript)
+                app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_plan_requested")
             }.onFailure { error ->
+                app.speechDiagnosticsLogger.record(
+                    sessionId,
+                    "push_to_talk_failed",
+                    mapOf("errorClass" to error::class.java.name, "message" to error.message)
+                )
                 app.actionLogRepository.log(ActionLogType.ERROR, error.message ?: "Push-to-talk failed")
             }
             if (!isRunningState.value) {
@@ -169,6 +198,11 @@ class WakeWordForegroundService : Service() {
         private const val NOTIFICATION_ID = 4201
         val isRunningState = MutableStateFlow(false)
 
-        fun intent(context: Context, action: String): Intent = Intent(context, WakeWordForegroundService::class.java).setAction(action)
+        const val EXTRA_DIAGNOSTIC_SESSION_ID = "ai.droidlm.extra.DIAGNOSTIC_SESSION_ID"
+
+        fun intent(context: Context, action: String, diagnosticSessionId: String? = null): Intent =
+            Intent(context, WakeWordForegroundService::class.java).setAction(action).apply {
+                if (diagnosticSessionId != null) putExtra(EXTRA_DIAGNOSTIC_SESSION_ID, diagnosticSessionId)
+            }
     }
 }

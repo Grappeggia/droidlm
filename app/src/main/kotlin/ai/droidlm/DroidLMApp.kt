@@ -6,6 +6,7 @@ import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.context.GoogleDriveContextProvider
 import ai.droidlm.context.GoogleSheetsContextProvider
+import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
@@ -28,6 +29,8 @@ class DroidLMApp : Application() {
     lateinit var settingsRepository: SettingsRepository
         private set
     lateinit var actionLogRepository: ActionLogRepository
+        private set
+    lateinit var speechDiagnosticsLogger: SpeechDiagnosticsLogger
         private set
     lateinit var relayClient: RelayClient
         private set
@@ -62,6 +65,7 @@ class DroidLMApp : Application() {
         super.onCreate()
         settingsRepository = SettingsRepository(this)
         actionLogRepository = ActionLogRepository()
+        speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
         relayClient = RelayClient()
         openAiClient = OpenAiClient()
         portalController = AccessibilityPortalController(this, actionLogRepository)
@@ -93,7 +97,7 @@ class DroidLMApp : Application() {
             mobilerunCloudClient = mobilerunCloudClient
         )
         commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository)
-        speechRecognitionController = SpeechRecognitionController(this, actionLogRepository)
+        speechRecognitionController = SpeechRecognitionController(this, actionLogRepository, speechDiagnosticsLogger)
         manualWakeWordEngine = ManualWakeWordEngine()
     }
 

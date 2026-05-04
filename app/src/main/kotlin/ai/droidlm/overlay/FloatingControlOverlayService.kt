@@ -577,11 +577,26 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun toggleRecord() {
+        val diagnosticSessionId = app.speechDiagnosticsLogger.startSession(
+            "overlay_record_tap",
+            mapOf(
+                "hasMicPermission" to hasMicPermission(),
+                "accessibilityEnabledCached" to accessibilityEnabled,
+                "overlayVisible" to (overlayView != null)
+            )
+        )
         transientStatusMessage = null
         scope.launch {
-            if (!app.portalController.isAccessibilityEnabled()) {
+            val currentAccessibilityEnabled = app.portalController.isAccessibilityEnabled()
+            app.speechDiagnosticsLogger.record(
+                diagnosticSessionId,
+                "overlay_record_accessibility_checked",
+                mapOf("enabled" to currentAccessibilityEnabled)
+            )
+            if (!currentAccessibilityEnabled) {
                 accessibilityEnabled = false
                 updateOverlayText()
+                app.speechDiagnosticsLogger.endSession(diagnosticSessionId, "accessibility_missing")
                 return@launch
             }
             accessibilityEnabled = true
@@ -589,15 +604,19 @@ class FloatingControlOverlayService : Service() {
             val speech = app.speechRecognitionController.state.value
             val execution = app.executor.uiState.value
             if (speech.isActive) {
-                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING))
+                app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_stopping_active_speech")
+                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING, diagnosticSessionId))
             } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
-                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL))
+                app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_cancelling_execution", mapOf("executionStatus" to execution.status))
+                startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL, diagnosticSessionId))
             } else if (!hasMicPermission()) {
+                app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_missing_mic_permission")
+                app.speechDiagnosticsLogger.endSession(diagnosticSessionId, "mic_permission_missing")
                 statusText?.text = OverlayStatusFormatter.microphonePermissionLabel()
                 app.actionLogRepository.log(ActionLogType.ERROR, "Microphone permission is required for push-to-talk", "RECORD_AUDIO_PERMISSION_MISSING")
                 startActivity(RecordingPermissionActivity.intent(this@FloatingControlOverlayService))
             } else {
-                startPushToTalkService()
+                startPushToTalkService(diagnosticSessionId)
             }
         }
     }
@@ -615,10 +634,11 @@ class FloatingControlOverlayService : Service() {
         showOverlay()
         scope.launch {
             accessibilityEnabled = true
+            val diagnosticSessionId = app.speechDiagnosticsLogger.startSession("overlay_mic_permission_ready")
             transientStatusMessage = OverlayStatusFormatter.microphoneStartingLabel()
             updateOverlayText()
             delay(600)
-            startPushToTalkService()
+            startPushToTalkService(diagnosticSessionId)
             repeat(100) {
                 val speech = app.speechRecognitionController.state.value
                 if (speech.isListening) {
@@ -637,10 +657,11 @@ class FloatingControlOverlayService : Service() {
         }
     }
 
-    private fun startPushToTalkService() {
+    private fun startPushToTalkService(diagnosticSessionId: String? = null) {
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_start_push_to_talk_service")
         ContextCompat.startForegroundService(
             this,
-            WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
+            WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK, diagnosticSessionId)
         )
     }
 

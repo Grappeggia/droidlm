@@ -1,5 +1,6 @@
 package ai.droidlm.voice
 
+import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import android.Manifest
@@ -8,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
+import android.os.SystemClock
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -37,36 +39,59 @@ data class SpeechRecognitionUiState(
 
 class SpeechRecognitionController(
     private val context: Context,
-    private val logs: ActionLogRepository
+    private val logs: ActionLogRepository,
+    private val diagnostics: SpeechDiagnosticsLogger
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val _state = MutableStateFlow(SpeechRecognitionUiState())
     val state: StateFlow<SpeechRecognitionUiState> = _state.asStateFlow()
 
     @Volatile private var activeRecognizer: SpeechRecognizer? = null
+    @Volatile private var activeDiagnosticSessionId: String? = null
 
     suspend fun recognizeCommand(
         preferOffline: Boolean,
         maxDurationMs: Long = 20_000L,
-        languageTag: String = Locale.getDefault().toLanguageTag()
+        languageTag: String = Locale.getDefault().toLanguageTag(),
+        diagnosticSessionId: String? = null
     ): String = withContext(Dispatchers.Main.immediate) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             val message = "Microphone permission is required for Android speech recognition."
+            diagnostics.record(diagnosticSessionId, "permission_missing", mapOf("permission" to Manifest.permission.RECORD_AUDIO))
             _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
             throw IllegalStateException(message)
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             val message = "No Android speech recognizer is available on this device. Install or enable a speech recognition service."
+            diagnostics.record(diagnosticSessionId, "recognizer_unavailable")
             _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
             throw IllegalStateException(message)
         }
 
+        val sessionId = diagnosticSessionId ?: diagnostics.startSession("speech_recognizer_direct")
+        diagnostics.record(
+            sessionId,
+            "recognize_command_start",
+            mapOf(
+                "preferOffline" to preferOffline,
+                "language" to languageTag,
+                "maxDurationMs" to maxDurationMs,
+                "completeSilenceMs" to COMPLETE_SILENCE_MS,
+                "possiblyCompleteSilenceMs" to POSSIBLY_COMPLETE_SILENCE_MS,
+                "minimumInputMs" to MINIMUM_INPUT_MS
+            )
+        )
+
         suspendCancellableCoroutine { continuation ->
             val recognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
             activeRecognizer = recognizer
+            activeDiagnosticSessionId = sessionId
             var readyForSpeech = false
             var speechStarted = false
             var retryCount = 0
+            var diagnosticsEnded = false
+            var peakRmsDb = Float.NEGATIVE_INFINITY
+            var lastRmsLogAtMs = 0L
             val startedAtMs = System.currentTimeMillis()
             lateinit var intent: Intent
 
@@ -79,7 +104,19 @@ class SpeechRecognitionController(
                 )
             }
 
+            fun finishDiagnostics(reason: String, fields: Map<String, Any?> = emptyMap()) {
+                if (diagnosticsEnded) return
+                diagnosticsEnded = true
+                diagnostics.endSession(sessionId, reason, fields)
+            }
+
             val timeout = Runnable {
+                diagnostics.record(
+                    sessionId,
+                    "max_duration_timeout",
+                    mapOf("readyForSpeech" to readyForSpeech, "speechStarted" to speechStarted, "retryCount" to retryCount)
+                )
+                finishDiagnostics("timeout", mapOf("timeoutMs" to maxDurationMs))
                 runCatching { recognizer.cancel() }
                 cleanupRecognizer(recognizer)
                 val message = "Speech recognition timed out after ${maxDurationMs / 1000}s."
@@ -88,6 +125,8 @@ class SpeechRecognitionController(
             }
             val readyTimeout = Runnable {
                 if (!readyForSpeech && continuation.isActive) {
+                    diagnostics.record(sessionId, "ready_timeout", mapOf("timeoutMs" to READY_TIMEOUT_MS, "retryCount" to retryCount))
+                    finishDiagnostics("ready_timeout", mapOf("timeoutMs" to READY_TIMEOUT_MS))
                     runCatching { recognizer.cancel() }
                     cleanupRecognizer(recognizer)
                     val message = "Android speech recognition did not become ready."
@@ -109,6 +148,7 @@ class SpeechRecognitionController(
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     readyForSpeech = true
+                    diagnostics.record(sessionId, "onReadyForSpeech")
                     _state.value = _state.value.copy(
                         isStarting = false,
                         isListening = true,
@@ -120,13 +160,33 @@ class SpeechRecognitionController(
 
                 override fun onBeginningOfSpeech() {
                     speechStarted = true
+                    diagnostics.record(sessionId, "onBeginningOfSpeech", mapOf("retryCount" to retryCount))
                     logs.log(ActionLogType.RECORDING_STARTED, "Speech input detected")
                 }
 
-                override fun onRmsChanged(rmsdB: Float) = Unit
-                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onRmsChanged(rmsdB: Float) {
+                    if (rmsdB > peakRmsDb) peakRmsDb = rmsdB
+                    val nowMs = SystemClock.elapsedRealtime()
+                    if (nowMs - lastRmsLogAtMs >= RMS_LOG_INTERVAL_MS) {
+                        lastRmsLogAtMs = nowMs
+                        diagnostics.record(
+                            sessionId,
+                            "onRmsChanged",
+                            mapOf("rmsDb" to rounded(rmsdB), "peakRmsDb" to rounded(peakRmsDb))
+                        )
+                    }
+                }
+
+                override fun onBufferReceived(buffer: ByteArray?) {
+                    diagnostics.record(sessionId, "onBufferReceived", mapOf("bytes" to (buffer?.size ?: 0)))
+                }
 
                 override fun onEndOfSpeech() {
+                    diagnostics.record(
+                        sessionId,
+                        "onEndOfSpeech",
+                        mapOf("speechStarted" to speechStarted, "peakRmsDb" to rounded(peakRmsDb))
+                    )
                     if (speechStarted) {
                         _state.value = _state.value.copy(isStarting = false, isListening = false)
                     }
@@ -136,6 +196,19 @@ class SpeechRecognitionController(
                 override fun onError(error: Int) {
                     val message = SpeechRecognitionErrorMapper.messageFor(error)
                     val elapsedMs = System.currentTimeMillis() - startedAtMs
+                    diagnostics.record(
+                        sessionId,
+                        "onError",
+                        mapOf(
+                            "code" to error,
+                            "message" to message,
+                            "elapsedMs" to elapsedMs,
+                            "retryCount" to retryCount,
+                            "readyForSpeech" to readyForSpeech,
+                            "speechStarted" to speechStarted,
+                            "peakRmsDb" to rounded(peakRmsDb)
+                        )
+                    )
                     if (
                         continuation.isActive &&
                         !speechStarted &&
@@ -150,15 +223,23 @@ class SpeechRecognitionController(
                             "$message; retrying during initial speech grace window",
                             "SPEECH_RECOGNIZER_${error}_RETRY"
                         )
+                        diagnostics.record(
+                            sessionId,
+                            "retry_scheduled",
+                            mapOf("code" to error, "retryCount" to retryCount, "delayMs" to RECOGNIZER_RESTART_DELAY_MS)
+                        )
                         updateStartingState()
                         mainHandler.postDelayed({
                             if (continuation.isActive && activeRecognizer === recognizer) {
+                                diagnostics.record(sessionId, "retry_startListening", mapOf("retryCount" to retryCount))
                                 runCatching { recognizer.startListening(intent) }
+                                    .onFailure { failure -> diagnostics.record(sessionId, "retry_startListening_failed", mapOf("message" to failure.message)) }
                             }
                         }, RECOGNIZER_RESTART_DELAY_MS)
                         return
                     }
 
+                    finishDiagnostics("error", mapOf("code" to error, "message" to message))
                     cleanup()
                     _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
                     logs.log(ActionLogType.ERROR, message, "SPEECH_RECOGNIZER_$error")
@@ -166,10 +247,17 @@ class SpeechRecognitionController(
                 }
 
                 override fun onResults(results: Bundle?) {
-                    val transcript = bestTranscript(results)
+                    val candidates = transcriptCandidates(results)
+                    val transcript = candidates.firstOrNull().orEmpty()
+                    diagnostics.record(
+                        sessionId,
+                        "onResults",
+                        transcriptFields(transcript, candidates.size) + mapOf("peakRmsDb" to rounded(peakRmsDb))
+                    )
                     cleanup()
                     if (transcript.isBlank()) {
                         val message = "Android speech recognition returned an empty transcript."
+                        finishDiagnostics("empty_results", mapOf("resultCount" to candidates.size))
                         _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
                         if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
                         return
@@ -184,21 +272,28 @@ class SpeechRecognitionController(
                     )
                     logs.log(ActionLogType.RECORDING_STOPPED, "Android speech recognition stopped")
                     logs.log(ActionLogType.TRANSCRIPTION_RESULT, transcript)
+                    finishDiagnostics("results", transcriptFields(transcript, candidates.size))
                     if (continuation.isActive) continuation.resume(transcript)
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
-                    val partial = bestTranscript(partialResults)
+                    val candidates = transcriptCandidates(partialResults)
+                    val partial = candidates.firstOrNull().orEmpty()
+                    diagnostics.record(sessionId, "onPartialResults", transcriptFields(partial, candidates.size))
                     if (partial.isNotBlank()) {
                         _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null)
                     }
                 }
 
-                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                override fun onEvent(eventType: Int, params: Bundle?) {
+                    diagnostics.record(sessionId, "onEvent", mapOf("eventType" to eventType))
+                }
             })
 
             continuation.invokeOnCancellation {
                 mainHandler.post {
+                    diagnostics.record(sessionId, "continuation_cancelled")
+                    finishDiagnostics("cancelled")
                     runCatching { recognizer.cancel() }
                     cleanup()
                     _state.value = _state.value.copy(
@@ -220,13 +315,22 @@ class SpeechRecognitionController(
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MINIMUM_INPUT_MS)
             }
             updateStartingState()
-            recognizer.startListening(intent)
+            diagnostics.record(sessionId, "startListening")
+            runCatching { recognizer.startListening(intent) }
+                .onFailure { failure ->
+                    val message = failure.message ?: failure::class.java.simpleName
+                    finishDiagnostics("startListening_failed", mapOf("message" to message))
+                    cleanup()
+                    _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                    if (continuation.isActive) continuation.resumeWithException(failure)
+                }
         }
     }
 
     fun stopCurrent(): Boolean {
         val recognizer = activeRecognizer ?: return false
         mainHandler.post {
+            diagnostics.record(activeDiagnosticSessionId, "stop_current_requested")
             runCatching { recognizer.stopListening() }
             _state.value = _state.value.copy(
                 isStarting = false,
@@ -241,11 +345,15 @@ class SpeechRecognitionController(
 
     fun cancelCurrent() {
         mainHandler.post {
+            val sessionId = activeDiagnosticSessionId
+            diagnostics.record(sessionId, "cancel_current_requested")
             activeRecognizer?.let { recognizer ->
                 runCatching { recognizer.cancel() }
                 runCatching { recognizer.destroy() }
             }
             activeRecognizer = null
+            activeDiagnosticSessionId = null
+            diagnostics.endSession(sessionId, "cancelled_by_user")
             _state.value = _state.value.copy(
                 isStarting = false,
                 isListening = false,
@@ -260,7 +368,10 @@ class SpeechRecognitionController(
     }
 
     private fun cleanupRecognizer(recognizer: SpeechRecognizer) {
-        if (activeRecognizer === recognizer) activeRecognizer = null
+        if (activeRecognizer === recognizer) {
+            activeRecognizer = null
+            activeDiagnosticSessionId = null
+        }
         runCatching { recognizer.destroy() }
     }
 
@@ -270,12 +381,25 @@ class SpeechRecognitionController(
         else -> "$current\n$transcript"
     }
 
-    private fun bestTranscript(results: Bundle?): String {
+    private fun bestTranscript(results: Bundle?): String = transcriptCandidates(results).firstOrNull().orEmpty()
+
+    private fun transcriptCandidates(results: Bundle?): List<String> {
         return results
             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull { it.isNotBlank() }
-            ?.trim()
             .orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+    }
+
+    private fun transcriptFields(transcript: String, resultCount: Int): Map<String, Any?> = mapOf(
+        "resultCount" to resultCount,
+        "transcriptLength" to transcript.length,
+        "transcript" to transcript.take(MAX_TRANSCRIPT_DIAGNOSTIC_CHARS)
+    )
+
+    private fun rounded(value: Float): Float {
+        if (!value.isFinite()) return value
+        return kotlin.math.round(value * 10f) / 10f
     }
 
     private fun isInitialSilenceError(error: Int): Boolean =
@@ -291,6 +415,8 @@ class SpeechRecognitionController(
         const val INITIAL_SILENCE_RETRY_LIMIT = 2
         const val READY_TIMEOUT_MS = 10_000L
         const val RECOGNIZER_RESTART_DELAY_MS = 250L
+        const val RMS_LOG_INTERVAL_MS = 500L
+        const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
     }
 }
 

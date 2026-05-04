@@ -9,14 +9,17 @@ import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
 import android.app.Application
 import android.content.Intent
+import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class DroidLmViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as DroidLMApp
@@ -50,9 +53,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun pushToTalk() {
+        val sessionId = app.speechDiagnosticsLogger.startSession("main_push_to_talk")
         ContextCompat.startForegroundService(
             app,
-            WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_PUSH_TO_TALK)
+            WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_PUSH_TO_TALK, sessionId)
         )
     }
 
@@ -132,6 +136,44 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateConfirmScreenshots(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateConfirmBeforeSendingScreenshots(value) }
     fun updateDebugAudio(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateDebugAudioRetention(value) }
     fun updateDebugScreenshots(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateDebugScreenshotRetention(value) }
+    fun updateSpeechDiagnostics(value: Boolean) = viewModelScope.launch {
+        app.settingsRepository.updateSpeechDiagnosticsEnabled(value)
+        app.speechDiagnosticsLogger.setEnabled(value)
+        if (value) {
+            app.actionLogRepository.log(
+                ActionLogType.ACTION_RESULT,
+                "Speech diagnostics enabled",
+                "Logs may include spoken text and speech-recognition state."
+            )
+        } else {
+            app.speechDiagnosticsLogger.clear()
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Speech diagnostics disabled and cleared")
+        }
+    }
+
+    fun shareSpeechDiagnostics() = viewModelScope.launch {
+        val file = withContext(Dispatchers.IO) { app.speechDiagnosticsLogger.shareFile() }
+        if (file == null) {
+            app.actionLogRepository.log(ActionLogType.ERROR, "No speech diagnostics to share")
+            return@launch
+        }
+        val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "DroidLM speech diagnostics")
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, "DroidLM speech diagnostics attached.")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(sendIntent, "Share speech diagnostics").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { app.startActivity(chooser) }
+            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened speech diagnostics share sheet") }
+            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not share speech diagnostics: ${error.message}") }
+    }
+
+    fun clearSpeechDiagnostics() {
+        app.speechDiagnosticsLogger.clear()
+    }
     fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { app.settingsRepository.updateMobilerunDeviceId(value) }
     fun saveMobilerunApiKey(value: String) = viewModelScope.launch { app.settingsRepository.saveMobilerunApiKey(value) }
     fun savePicovoiceAccessKey(value: String) = viewModelScope.launch { app.settingsRepository.savePicovoiceAccessKey(value) }
