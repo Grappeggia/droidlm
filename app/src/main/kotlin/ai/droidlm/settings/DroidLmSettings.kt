@@ -45,6 +45,7 @@ data class DroidLmSettings(
     val debugScreenshotRetention: Boolean = false,
     val debugAudioRetention: Boolean = false,
     val speechDiagnosticsEnabled: Boolean = false,
+    val onboardingCompletedVersion: Int = 0,
     val sensitiveAppScreenshotDenylist: String = DEFAULT_SENSITIVE_DENYLIST,
     val packageAllowlist: String = "",
     val packageDenylist: String = ""

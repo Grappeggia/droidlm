@@ -23,8 +23,8 @@ android {
         applicationId = "ai.droidlm"
         minSdk = 29
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.1.21"
+        versionCode = 23
+        versionName = "0.1.22"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

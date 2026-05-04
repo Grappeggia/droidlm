@@ -199,6 +199,11 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         app.speechDiagnosticsLogger.clear()
     }
 
+    fun completeOnboarding() = viewModelScope.launch {
+        app.settingsRepository.updateOnboardingCompletedVersion(ONBOARDING_VERSION)
+        app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Onboarding completed")
+    }
+
     fun openSpeechRecognitionSettings() {
         val options = listOf(
             "voice_input_settings" to Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
@@ -251,4 +256,9 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { app.settingsRepository.updateMobilerunDeviceId(value) }
     fun saveMobilerunApiKey(value: String) = viewModelScope.launch { app.settingsRepository.saveMobilerunApiKey(value) }
     fun savePicovoiceAccessKey(value: String) = viewModelScope.launch { app.settingsRepository.savePicovoiceAccessKey(value) }
+
+    companion object {
+        const val ONBOARDING_VERSION = 1
+    }
+
 }

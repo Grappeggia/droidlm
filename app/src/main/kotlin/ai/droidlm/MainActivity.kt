@@ -117,6 +117,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val overlayRunning by viewModel.overlayState.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
+    val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION
 
     var showSettings by remember { mutableStateOf(false) }
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
@@ -174,7 +175,40 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item { Header() }
-            if (showSettings) {
+            if (needsOnboarding) {
+                item {
+                    OnboardingPage(
+                        settings = settings,
+                        viewModel = viewModel,
+                        plannerKeySetup = plannerKeySetup,
+                        accessibilityEnabled = accessibilityEnabled,
+                        micGranted = micGranted,
+                        notificationGranted = notificationGranted,
+                        overlayRunning = overlayRunning,
+                        overlayGranted = overlayGranted,
+                        speechRecognition = speechRecognition,
+                        onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                        onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        },
+                        onOpenOverlayPermission = {
+                            overlayLauncher.launch(
+                                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                            )
+                        },
+                        onStartOverlay = ::startOverlayWithPermission,
+                        onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
+                        onClearOpenAiKey = viewModel::clearOpenAiApiKey,
+                        onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
+                        onDone = viewModel::completeOnboarding,
+                        onOpenSettings = {
+                            viewModel.completeOnboarding()
+                            showSettings = true
+                        }
+                    )
+                }
+            } else if (showSettings) {
                 item {
                     SettingsPage(
                         settings = settings,
@@ -194,7 +228,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onStartOverlay = ::startOverlayWithPermission,
                         onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
                         onOpenRecognizerAppSettings = viewModel::openRecognizerAppSettings,
-
                         onOpenOverlayPermission = {
                             overlayLauncher.launch(
                                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
@@ -206,7 +239,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         speechRecognition = speechRecognition,
                     )
                 }
-
             } else {
                 plannerKeySetup?.let { setup ->
                     item {
@@ -295,6 +327,71 @@ private fun MainControlRow(
         OutlinedButton(onClick = onSettings) { Text(if (showingSettings) "Close Settings" else "Settings") }
     }
 }
+
+@Composable
+private fun OnboardingPage(
+    settings: DroidLmSettings,
+    viewModel: DroidLmViewModel,
+    plannerKeySetup: PlannerKeySetupRequest?,
+    accessibilityEnabled: Boolean,
+    micGranted: Boolean,
+    notificationGranted: Boolean,
+    overlayRunning: Boolean,
+    overlayGranted: Boolean,
+    speechRecognition: SpeechRecognitionUiState,
+    onOpenAccessibility: () -> Unit,
+    onRequestMicPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenOverlayPermission: () -> Unit,
+    onStartOverlay: () -> Unit,
+    onSaveOpenAiKey: (String) -> Unit,
+    onClearOpenAiKey: () -> Unit,
+    onDismissPlannerKeySetup: () -> Unit,
+    onDone: () -> Unit,
+    onOpenSettings: () -> Unit
+) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    DroidCard {
+        Text("Let's set up DroidLM", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
+        Text(
+            "Complete the essentials once. DroidLM uses Android on-device speech recognition; OpenAI is only for planning after speech is recognized.",
+            color = DroidLmColors.TextMuted
+        )
+    }
+    SetupStatusCard(
+        accessibilityEnabled = accessibilityEnabled,
+        micGranted = micGranted,
+        notificationGranted = notificationGranted,
+        overlayRunning = overlayRunning,
+        overlayGranted = overlayGranted,
+        settings = settings,
+        onOpenAccessibility = onOpenAccessibility,
+        onRequestMicPermission = onRequestMicPermission,
+        onRequestNotificationPermission = onRequestNotificationPermission,
+        onOpenOverlayPermission = onOpenOverlayPermission,
+        onStartOverlay = onStartOverlay,
+        onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
+        speechRecognition = speechRecognition,
+        onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
+    )
+    DroidCard { SpeechSetupCard(settings, speechRecognition, viewModel) }
+    PlannerSettingsCard(
+        settings = settings,
+        plannerKeySetup = plannerKeySetup,
+        onSave = onSaveOpenAiKey,
+        onClear = onClearOpenAiKey,
+        onCancel = onDismissPlannerKeySetup
+    )
+    DroidCard {
+        Text("Diagnostics", fontWeight = FontWeight.SemiBold)
+        ToggleRow("Speech diagnostics logging", settings.speechDiagnosticsEnabled, viewModel::updateSpeechDiagnostics)
+        Text("Optional, but useful if speech setup fails.", color = DroidLmColors.TextMuted)
+    }
+    DroidCard {
+        Button(onClick = onDone) { Text("Start using DroidLM") }
+        OutlinedButton(onClick = onOpenSettings) { Text("Review all settings") }
+    }
+}
+
 
 @Composable
 private fun SettingsPage(
@@ -517,19 +614,7 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
     OutlinedTextField(value = openAiModel, onValueChange = { openAiModel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI model") })
     Button(onClick = { viewModel.updateOpenAiModel(openAiModel) }) { Text("Save OpenAI Model") }
 
-    Text("Voice recognition", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
-    speechRecognition.missingLanguageMessage?.let { message ->
-        Text(message, color = DroidLmColors.Danger)
-        Text(
-            "To fix it, open Android speech settings, then download ${speechRecognition.missingLanguageTag?.let(::displayLanguage) ?: "the missing language"} for offline speech recognition.",
-            color = DroidLmColors.TextMuted
-        )
-    }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = viewModel::openSpeechRecognitionSettings) { Text("Open Speech Settings") }
-        OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
-    }
+    SpeechSetupCard(settings, speechRecognition, viewModel)
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
     ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
@@ -560,6 +645,24 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
     OutlinedTextField(value = mobilerunKey, onValueChange = { mobilerunKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Mobilerun API key (optional)") })
     OutlinedButton(onClick = { viewModel.saveMobilerunApiKey(mobilerunKey); mobilerunKey = "" }) { Text("Save Mobilerun Key") }
 }
+
+@Composable
+private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) {
+    Text("Voice recognition", fontWeight = FontWeight.SemiBold)
+    ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
+    speechRecognition.missingLanguageMessage?.let { message ->
+        Text(message, color = DroidLmColors.Danger)
+        Text(
+            "To fix it, open Android speech settings, then download ${speechRecognition.missingLanguageTag?.let(::displayLanguage) ?: "the missing language"} for offline speech recognition.",
+            color = DroidLmColors.TextMuted
+        )
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = viewModel::openSpeechRecognitionSettings) { Text("Open Speech Settings") }
+        OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
+    }
+}
+
 
 @Composable
 private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
