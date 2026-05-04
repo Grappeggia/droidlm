@@ -22,6 +22,7 @@ import ai.droidlm.textedit.TextEditingController
 import ai.droidlm.voice.CommandRecorder
 import ai.droidlm.voice.ManualWakeWordEngine
 import ai.droidlm.voice.SpeechRecognitionController
+import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import android.app.Application
 import android.content.Context
 
@@ -55,6 +56,8 @@ class DroidLMApp : Application() {
     lateinit var commandRecorder: CommandRecorder
         private set
     lateinit var speechRecognitionController: SpeechRecognitionController
+        private set
+    lateinit var voskOfflineSpeechRecognizer: VoskOfflineSpeechRecognizer
         private set
     lateinit var workspaceFileOperationController: WorkspaceFileOperationController
         private set
@@ -97,7 +100,8 @@ class DroidLMApp : Application() {
             mobilerunCloudClient = mobilerunCloudClient
         )
         commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository)
-        speechRecognitionController = SpeechRecognitionController(this, actionLogRepository, speechDiagnosticsLogger)
+        voskOfflineSpeechRecognizer = VoskOfflineSpeechRecognizer(this, actionLogRepository, speechDiagnosticsLogger)
+        speechRecognitionController = SpeechRecognitionController(this, actionLogRepository, speechDiagnosticsLogger, voskOfflineSpeechRecognizer)
         manualWakeWordEngine = ManualWakeWordEngine()
     }
 
