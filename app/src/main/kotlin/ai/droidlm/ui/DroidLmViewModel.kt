@@ -8,7 +8,10 @@ import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
 import android.app.Application
+import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -151,6 +154,27 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun speechDiagnosticsExportFileName(): String = app.speechDiagnosticsLogger.exportFileName()
+
+    fun saveSpeechDiagnosticsToUri(uri: Uri) = viewModelScope.launch {
+        val file = withContext(Dispatchers.IO) { app.speechDiagnosticsLogger.shareFile() }
+        if (file == null) {
+            app.actionLogRepository.log(ActionLogType.ERROR, "No speech diagnostics to save")
+            return@launch
+        }
+        runCatching {
+            withContext(Dispatchers.IO) {
+                app.contentResolver.openOutputStream(uri)?.use { output ->
+                    file.inputStream().use { input -> input.copyTo(output) }
+                } ?: error("Could not open destination file")
+            }
+        }.onSuccess {
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved speech diagnostics")
+        }.onFailure { error ->
+            app.actionLogRepository.log(ActionLogType.ERROR, "Could not save speech diagnostics: ${error.message}")
+        }
+    }
+
     fun shareSpeechDiagnostics() = viewModelScope.launch {
         val file = withContext(Dispatchers.IO) { app.speechDiagnosticsLogger.shareFile() }
         if (file == null) {
@@ -173,6 +197,56 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearSpeechDiagnostics() {
         app.speechDiagnosticsLogger.clear()
+    }
+
+    fun openSpeechRecognitionSettings() {
+        val options = listOf(
+            "voice_input_settings" to Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+            "input_method_settings" to Intent(Settings.ACTION_INPUT_METHOD_SETTINGS),
+            "app_settings" to Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
+        )
+        val target = options.firstOrNull { (_, intent) -> canOpen(intent) }
+        if (target == null) {
+            app.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings on this device")
+            return
+        }
+        openSettingsIntent(target.first, target.second)
+    }
+
+    fun openRecognizerAppSettings() {
+        val packageName = voiceRecognitionServicePackageName()
+        if (packageName == null) {
+            app.actionLogRepository.log(ActionLogType.ERROR, "No Android speech recognizer app was reported by the device")
+            openSpeechRecognitionSettings()
+            return
+        }
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        if (!canOpen(intent)) {
+            app.actionLogRepository.log(ActionLogType.ERROR, "Could not open settings for speech recognizer app $packageName")
+            openSpeechRecognitionSettings()
+            return
+        }
+        openSettingsIntent("recognizer_app_settings", intent, mapOf("recognizerPackage" to packageName))
+    }
+
+    private fun openSettingsIntent(label: String, intent: Intent, fields: Map<String, Any?> = emptyMap()) {
+        val launchIntent = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.speechDiagnosticsLogger.record(
+            null,
+            "speech_settings_opened",
+            mapOf("target" to label, "action" to launchIntent.action, "data" to launchIntent.dataString) + fields
+        )
+        runCatching { app.startActivity(launchIntent) }
+            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Android speech settings") }
+            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings: ${error.message}") }
+    }
+
+    private fun canOpen(intent: Intent): Boolean = intent.resolveActivity(app.packageManager) != null
+
+    private fun voiceRecognitionServicePackageName(): String? {
+        val component = Settings.Secure.getString(app.contentResolver, "voice_recognition_service").orEmpty()
+        return ComponentName.unflattenFromString(component)?.packageName
+            ?: component.substringBefore('/').takeIf { it.isNotBlank() }
     }
     fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { app.settingsRepository.updateMobilerunDeviceId(value) }
     fun saveMobilerunApiKey(value: String) = viewModelScope.launch { app.settingsRepository.saveMobilerunApiKey(value) }

@@ -31,6 +31,9 @@ data class SpeechRecognitionUiState(
     val partialTranscript: String = "",
     val finalTranscript: String = "",
     val errorMessage: String? = null,
+    val missingLanguageTag: String? = null,
+    val missingLanguageMessage: String? = null,
+    val recognizerService: String? = null,
     val providerLabel: String = "Android SpeechRecognizer"
 ) {
     val isActive: Boolean
@@ -58,13 +61,25 @@ class SpeechRecognitionController(
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             val message = "Microphone permission is required for Android speech recognition."
             diagnostics.record(diagnosticSessionId, "permission_missing", mapOf("permission" to Manifest.permission.RECORD_AUDIO))
-            _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+            _state.value = _state.value.copy(
+                isStarting = false,
+                isListening = false,
+                errorMessage = message,
+                missingLanguageTag = null,
+                missingLanguageMessage = null
+            )
             throw IllegalStateException(message)
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             val message = "No Android speech recognizer is available on this device. Install or enable a speech recognition service."
             diagnostics.record(diagnosticSessionId, "recognizer_unavailable")
-            _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+            _state.value = _state.value.copy(
+                isStarting = false,
+                isListening = false,
+                errorMessage = message,
+                missingLanguageTag = null,
+                missingLanguageMessage = null
+            )
             throw IllegalStateException(message)
         }
 
@@ -72,14 +87,7 @@ class SpeechRecognitionController(
         diagnostics.record(
             sessionId,
             "recognize_command_start",
-            mapOf(
-                "preferOffline" to preferOffline,
-                "language" to languageTag,
-                "maxDurationMs" to maxDurationMs,
-                "completeSilenceMs" to COMPLETE_SILENCE_MS,
-                "possiblyCompleteSilenceMs" to POSSIBLY_COMPLETE_SILENCE_MS,
-                "minimumInputMs" to MINIMUM_INPUT_MS
-            )
+            recognizerStartFields(preferOffline, maxDurationMs, languageTag)
         )
 
         suspendCancellableCoroutine { continuation ->
@@ -100,7 +108,10 @@ class SpeechRecognitionController(
                     isStarting = true,
                     isListening = false,
                     partialTranscript = "",
-                    errorMessage = null
+                    errorMessage = null,
+                    missingLanguageTag = null,
+                    missingLanguageMessage = null,
+                    recognizerService = voiceRecognitionService()
                 )
             }
 
@@ -194,7 +205,7 @@ class SpeechRecognitionController(
                 }
 
                 override fun onError(error: Int) {
-                    val message = SpeechRecognitionErrorMapper.messageFor(error)
+                    val message = SpeechRecognitionErrorMapper.messageFor(error, preferOffline, languageTag)
                     val elapsedMs = System.currentTimeMillis() - startedAtMs
                     diagnostics.record(
                         sessionId,
@@ -241,7 +252,15 @@ class SpeechRecognitionController(
 
                     finishDiagnostics("error", mapOf("code" to error, "message" to message))
                     cleanup()
-                    _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                    val isLanguageError = isLanguageSupportError(error)
+                    _state.value = _state.value.copy(
+                        isStarting = false,
+                        isListening = false,
+                        errorMessage = message,
+                        missingLanguageTag = if (isLanguageError) languageTag else null,
+                        missingLanguageMessage = if (isLanguageError) message else null,
+                        recognizerService = voiceRecognitionService()
+                    )
                     logs.log(ActionLogType.ERROR, message, "SPEECH_RECOGNIZER_$error")
                     if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
                 }
@@ -402,10 +421,41 @@ class SpeechRecognitionController(
         return kotlin.math.round(value * 10f) / 10f
     }
 
+    private fun recognizerStartFields(
+        preferOffline: Boolean,
+        maxDurationMs: Long,
+        languageTag: String
+    ): Map<String, Any?> = mapOf(
+        "preferOffline" to preferOffline,
+        "language" to languageTag,
+        "defaultLocale" to Locale.getDefault().toLanguageTag(),
+        "maxDurationMs" to maxDurationMs,
+        "completeSilenceMs" to COMPLETE_SILENCE_MS,
+        "possiblyCompleteSilenceMs" to POSSIBLY_COMPLETE_SILENCE_MS,
+        "minimumInputMs" to MINIMUM_INPUT_MS,
+        "voiceRecognitionService" to voiceRecognitionService(),
+        "voiceRecognitionPackage" to voiceRecognitionPackage()
+    )
+
+    private fun voiceRecognitionService(): String? = runCatching {
+        android.provider.Settings.Secure.getString(context.contentResolver, "voice_recognition_service")
+    }.getOrNull()
+
+    private fun voiceRecognitionPackage(): String? {
+        val service = voiceRecognitionService().orEmpty()
+        return android.content.ComponentName.unflattenFromString(service)?.packageName
+            ?: service.substringBefore('/').takeIf { it.isNotBlank() }
+    }
+
+
     private fun isInitialSilenceError(error: Int): Boolean =
         error == SpeechRecognizer.ERROR_NO_MATCH ||
             error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
             error == SpeechRecognizer.ERROR_CLIENT
+
+    private fun isLanguageSupportError(error: Int): Boolean =
+        error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+            error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
 
     private companion object {
         const val COMPLETE_SILENCE_MS = 3_000L

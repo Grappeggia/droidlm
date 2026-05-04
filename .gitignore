@@ -13,3 +13,5 @@ server/.venv/
 node_modules/
 *.tgz
 .npmrc
+test-artifacts/
+__pycache__/

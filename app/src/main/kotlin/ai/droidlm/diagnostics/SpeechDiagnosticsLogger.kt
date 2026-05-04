@@ -13,6 +13,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,6 +34,7 @@ class SpeechDiagnosticsLogger(
     private val sequence = AtomicLong(0)
     private val logDirectory = File(context.cacheDir, "droidlm-diagnostics")
     private val logFile = File(logDirectory, "speech-diagnostics.jsonl")
+    private val pendingWrites = mutableListOf<Job>()
 
     @Volatile private var enabled = false
 
@@ -69,12 +73,11 @@ class SpeechDiagnosticsLogger(
         if (!enabled) return
         val line = diagnosticLine(sessionId, event, fields)
         Log.d(LOG_TAG, line)
-        scope.launch { appendLine(line) }
+        enqueueWrite(line)
     }
 
     fun endSession(sessionId: String?, reason: String, fields: Map<String, Any?> = emptyMap()) {
         record(sessionId, "session_end", mapOf("reason" to reason) + fields)
-        sessionId?.let { sessionStarts.remove(it) }
     }
 
     fun clear() {
@@ -87,11 +90,13 @@ class SpeechDiagnosticsLogger(
         }
     }
 
-    fun shareFile(): File? {
-        if (!logFile.exists() || logFile.length() == 0L) return null
+    fun exportFileName(): String = "droidlm-speech-diagnostics-${utcTimestampForFile(System.currentTimeMillis())}.jsonl"
+
+    suspend fun shareFile(): File? = withContext(Dispatchers.IO) {
+        awaitPendingWrites()
+        if (!logFile.exists() || logFile.length() == 0L) return@withContext null
         logDirectory.mkdirs()
-        val timestamp = utcTimestampForFile(System.currentTimeMillis())
-        val shareFile = File(logDirectory, "speech-diagnostics-$timestamp.jsonl")
+        val shareFile = File(logDirectory, exportFileName())
         val header = diagnosticLine(
             sessionId = null,
             event = "diagnostics_export",
@@ -103,7 +108,7 @@ class SpeechDiagnosticsLogger(
                 lines.forEach { writer.appendLine(it) }
             }
         }
-        return shareFile
+        shareFile
     }
 
     private fun diagnosticLine(sessionId: String?, event: String, fields: Map<String, Any?>): String {
@@ -122,6 +127,25 @@ class SpeechDiagnosticsLogger(
         fields.forEach { (key, value) -> values[key] = value }
         return values.entries.joinToString(prefix = "{", postfix = "}") { (key, value) ->
             "\"${escapeJson(key)}\":${jsonValue(value)}"
+        }
+    }
+
+    @Synchronized
+    private fun enqueueWrite(line: String) {
+        val job = scope.launch { appendLine(line) }
+        pendingWrites += job
+        job.invokeOnCompletion {
+            synchronized(this@SpeechDiagnosticsLogger) {
+                pendingWrites.remove(job)
+            }
+        }
+    }
+
+    private suspend fun awaitPendingWrites() {
+        while (true) {
+            val jobs = synchronized(this) { pendingWrites.toList() }
+            if (jobs.isEmpty()) return
+            jobs.joinAll()
         }
     }
 
