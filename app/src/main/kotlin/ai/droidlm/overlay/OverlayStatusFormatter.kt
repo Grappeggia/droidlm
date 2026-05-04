@@ -4,12 +4,14 @@ import ai.droidlm.relay.PlanPreview
 
 object OverlayStatusFormatter {
     fun label(
+        isStarting: Boolean,
         isListening: Boolean,
         partialTranscript: String,
         finalTranscript: String,
         executionStatus: String,
         lastResult: String
     ): String = when {
+        isStarting -> microphoneStartingLabel()
         isListening -> "Listening..."
         executionStatus !in IDLE_STATUSES -> executionStatus.take(40)
         executionStatus == "Error" && lastResult.isNotBlank() -> compactResult(lastResult)
@@ -18,8 +20,8 @@ object OverlayStatusFormatter {
         else -> "Tap circle to speak"
     }
 
-    fun recordButton(isListening: Boolean, executionStatus: String): String = when {
-        isListening -> "■"
+    fun recordButton(isActive: Boolean, executionStatus: String): String = when {
+        isActive -> "■"
         executionStatus !in IDLE_STATUSES -> "×"
         else -> "●"
     }
@@ -32,6 +34,7 @@ object OverlayStatusFormatter {
     fun microphonePermissionLabel(): String = "Enable microphone permission to record"
 
     fun microphoneReadyLabel(): String = "Mic enabled. Tap record to speak"
+    fun microphoneStartingLabel(): String = "Starting microphone..."
 
     fun compactPlan(plan: PlanPreview, maxChars: Int = 96): String {
         val prefix = if (plan.riskLevel.equals("LOW", ignoreCase = true)) "P:" else "P[${plan.riskLevel.uppercase()}]:"

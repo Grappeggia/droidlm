@@ -561,12 +561,13 @@ class FloatingControlOverlayService : Service() {
         acceptPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
-        recordButton?.text = OverlayStatusFormatter.recordButton(speech.isListening, execution.status)
+        recordButton?.text = OverlayStatusFormatter.recordButton(speech.isActive, execution.status)
         transientStatusMessage?.let { message ->
             statusText?.text = message
             return
         }
         statusText?.text = pendingPlan?.let { OverlayStatusFormatter.compactPlan(it.plan) } ?: OverlayStatusFormatter.label(
+            isStarting = speech.isStarting,
             isListening = speech.isListening,
             partialTranscript = speech.partialTranscript,
             finalTranscript = speech.finalTranscript,
@@ -587,7 +588,7 @@ class FloatingControlOverlayService : Service() {
             updateOverlayText()
             val speech = app.speechRecognitionController.state.value
             val execution = app.executor.uiState.value
-            if (speech.isListening) {
+            if (speech.isActive) {
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING))
             } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL))
@@ -614,19 +615,24 @@ class FloatingControlOverlayService : Service() {
         showOverlay()
         scope.launch {
             accessibilityEnabled = true
-            transientStatusMessage = OverlayStatusFormatter.microphonePermissionLabel()
+            transientStatusMessage = OverlayStatusFormatter.microphoneStartingLabel()
             updateOverlayText()
             delay(600)
             startPushToTalkService()
-            repeat(40) {
-                if (app.speechRecognitionController.state.value.isListening) {
+            repeat(100) {
+                val speech = app.speechRecognitionController.state.value
+                if (speech.isListening) {
                     transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
                     updateOverlayText()
                     return@launch
                 }
+                if (speech.isStarting) {
+                    transientStatusMessage = OverlayStatusFormatter.microphoneStartingLabel()
+                    updateOverlayText()
+                }
                 delay(50)
             }
-            transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
+            transientStatusMessage = null
             updateOverlayText()
         }
     }

@@ -9,12 +9,17 @@ import org.junit.Test
 
 class OverlayStatusFormatterTest {
     @Test fun idlePromptsUserToSpeak() {
-        assertEquals("Tap circle to speak", OverlayStatusFormatter.label(false, "", "", "Idle", ""))
+        assertEquals("Tap circle to speak", OverlayStatusFormatter.label(false, false, "", "", "Idle", ""))
         assertEquals("●", OverlayStatusFormatter.recordButton(false, "Idle"))
     }
 
+    @Test fun startingShowsMicrophoneStartup() {
+        assertEquals("Starting microphone...", OverlayStatusFormatter.label(true, false, "", "", "Idle", ""))
+        assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
+    }
+
     @Test fun listeningHidesPartialTranscript() {
-        val label = OverlayStatusFormatter.label(true, "open drive", "", "Idle", "")
+        val label = OverlayStatusFormatter.label(false, true, "open drive", "", "Idle", "")
         assertEquals("Listening...", label)
         assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
     }
@@ -54,6 +59,7 @@ class OverlayStatusFormatterTest {
 
     @Test fun errorResultWinsOverFinalTranscript() {
         val label = OverlayStatusFormatter.label(
+            isStarting = false,
             isListening = false,
             partialTranscript = "",
             finalTranscript = "open drive",
