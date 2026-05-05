@@ -189,7 +189,9 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 .padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            item { Header() }
+            if (!showSettings) {
+                item { Header() }
+            }
             if (needsOnboarding) {
                 item {
                     OnboardingPage(
@@ -463,6 +465,19 @@ private fun SettingsPage(
         onCancel = onDismissPlannerKeySetup
     )
     SettingsCard(settings, speechRecognition, viewModel)
+    VersionFooter()
+}
+
+@Composable
+private fun VersionFooter() {
+    val context = LocalContext.current
+    val versionName = remember(context.packageName) { appVersionName(context) }
+    Text(
+        "Version $versionName",
+        modifier = Modifier.fillMaxWidth(),
+        color = DroidLmColors.TextMuted,
+        fontSize = 13.sp
+    )
 }
 
 @Composable
@@ -641,16 +656,11 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
         uri?.let(viewModel::saveSpeechDiagnosticsToUri)
     }
 
-    var openAiModel by remember(settings.openAiModel) { mutableStateOf(settings.openAiModel) }
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
     var mobilerunKey by remember { mutableStateOf("") }
     var mobilerunDeviceId by remember(settings.mobilerunDeviceId) { mutableStateOf(settings.mobilerunDeviceId) }
 
-
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
-    OutlinedTextField(value = openAiModel, onValueChange = { openAiModel = it }, modifier = Modifier.fillMaxWidth(), label = { Text("OpenAI model") })
-    Button(onClick = { viewModel.updateOpenAiModel(openAiModel) }) { Text("Save OpenAI Model") }
-
     SpeechSetupCard(settings, speechRecognition, viewModel)
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
@@ -688,7 +698,6 @@ private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: Speech
     val languageTag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
     val languageName = displayLanguage(languageTag)
     Text("Voice recognition", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Prefer offline Android recognition", settings.preferOfflineSpeechRecognition, viewModel::updatePreferOfflineSpeech)
     speechRecognition.speechSetupMessage?.let { message ->
         Text(message, color = if (speechRecognition.speechSetupAvailable == true) DroidLmColors.TextMuted else DroidLmColors.Danger)
     }
@@ -734,6 +743,16 @@ private fun DroidCard(container: Color = DroidLmColors.Surface, content: @Compos
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
+}
+
+private fun appVersionName(context: Context): String {
+    val packageInfo = if (Build.VERSION.SDK_INT >= 33) {
+        context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+    } else {
+        @Suppress("DEPRECATION")
+        context.packageManager.getPackageInfo(context.packageName, 0)
+    }
+    return packageInfo.versionName ?: "unknown"
 }
 
 private fun displayLanguage(languageTag: String): String {
