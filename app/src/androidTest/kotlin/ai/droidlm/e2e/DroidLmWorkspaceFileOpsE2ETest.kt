@@ -69,7 +69,7 @@ class DroidLmWorkspaceFileOpsE2ETest {
         app.settingsRepository.updateTranscriptionProvider(TranscriptionProvider.OPENAI_DIRECT)
         app.settingsRepository.updateAutoAcceptSafePlans(true)
         app.settingsRepository.updateRequireRiskConfirmation(false)
-        app.settingsRepository.updateDebugAudioRetention(false)
+        app.settingsRepository.updateDebugLoggingEnabled(false)
         app.settingsRepository.updateOverlayPosition(24, 250)
     }
 
