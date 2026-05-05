@@ -657,8 +657,6 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
     }
 
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
-    var mobilerunKey by remember { mutableStateOf("") }
-    var mobilerunDeviceId by remember(settings.mobilerunDeviceId) { mutableStateOf(settings.mobilerunDeviceId) }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
@@ -682,15 +680,10 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
         color = DroidLmColors.TextMuted
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = viewModel::shareSpeechDiagnostics) { Text("Share Speech Diagnostics") }
-        OutlinedButton(onClick = { saveSpeechDiagnosticsLauncher.launch(viewModel.speechDiagnosticsExportFileName()) }) { Text("Save Speech Diagnostics") }
-        OutlinedButton(onClick = viewModel::clearSpeechDiagnostics) { Text("Clear Speech Diagnostics") }
+        OutlinedButton(onClick = viewModel::shareSpeechDiagnostics) { Text("Share") }
+        OutlinedButton(onClick = { saveSpeechDiagnosticsLauncher.launch(viewModel.speechDiagnosticsExportFileName()) }) { Text("Save") }
+        OutlinedButton(onClick = viewModel::clearSpeechDiagnostics) { Text("Clear") }
     }
-
-    OutlinedTextField(value = mobilerunDeviceId, onValueChange = { mobilerunDeviceId = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Mobilerun device ID (optional)") })
-    OutlinedButton(onClick = { viewModel.updateMobilerunDeviceId(mobilerunDeviceId) }) { Text("Save Device ID") }
-    OutlinedTextField(value = mobilerunKey, onValueChange = { mobilerunKey = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Mobilerun API key (optional)") })
-    OutlinedButton(onClick = { viewModel.saveMobilerunApiKey(mobilerunKey); mobilerunKey = "" }) { Text("Save Mobilerun Key") }
 }
 
 @Composable
