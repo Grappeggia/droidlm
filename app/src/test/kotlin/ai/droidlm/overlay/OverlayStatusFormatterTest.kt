@@ -82,7 +82,7 @@ class OverlayStatusFormatterTest {
             )
         )
 
-        assertEquals("P:O:GSheets>T:plus>Ty:hello", OverlayStatusFormatter.compactPlan(plan))
+        assertEquals("Plan: Open Sheets > Tap plus > Type", OverlayStatusFormatter.compactPlan(plan))
     }
 
     @Test fun compactPlanShowsRiskAndRemainingSteps() {
@@ -96,7 +96,21 @@ class OverlayStatusFormatterTest {
             }
         )
 
-        assertEquals("P[HIGH]:Step1>Step2>Step3>Step4+2", OverlayStatusFormatter.compactPlan(plan))
+        assertEquals("High risk: Step 1 > Step 2 > Step 3 +3", OverlayStatusFormatter.compactPlan(plan))
+    }
+
+    @Test fun compactPlanUsesStructuredActionOverRawActionCode() {
+        val plan = PlanPreview(
+            model = "gpt-5.4-nano",
+            summary = "Open Drive",
+            riskLevel = "LOW",
+            requiresConfirmation = false,
+            steps = listOf(
+                PlanPreviewStep(1, DroidLmAction.OpenApp("Google Drive", "com.google.android.apps.docs", "open app"), "OPEN_APP", "open app", false)
+            )
+        )
+
+        assertEquals("Plan: Open Drive", OverlayStatusFormatter.compactPlan(plan))
     }
 
 

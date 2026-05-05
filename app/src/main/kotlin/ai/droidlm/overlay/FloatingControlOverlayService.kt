@@ -233,7 +233,7 @@ class FloatingControlOverlayService : Service() {
             setPadding(edgePadding, 0, edgePadding, 0)
         }
         acceptPlanButton = Button(this).apply {
-            text = "Y"
+            text = "✓"
             contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
             textSize = 16f
             applySquareButton(buttonSize)

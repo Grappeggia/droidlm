@@ -1,5 +1,6 @@
 package ai.droidlm.overlay
 
+import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.relay.PlanPreview
 
 object OverlayStatusFormatter {
@@ -37,20 +38,12 @@ object OverlayStatusFormatter {
     fun microphoneStartingLabel(): String = "Starting microphone..."
 
     fun compactPlan(plan: PlanPreview, maxChars: Int = 96): String {
-        val prefix = if (plan.riskLevel.equals("LOW", ignoreCase = true)) "P:" else "P[${plan.riskLevel.uppercase()}]:"
-        val visibleSteps = plan.steps.take(4).joinToString(">") { compactStep(it.actionLabel) }
-        val suffix = if (plan.steps.size > 4) "+${plan.steps.size - 4}" else ""
+        val prefix = if (plan.riskLevel.equals("LOW", ignoreCase = true)) "Plan: " else "${plan.riskLevel.lowercase().replaceFirstChar { it.titlecase() }} risk: "
+        val visibleSteps = plan.steps.take(3).joinToString(" > ") { step ->
+            ActionUiFormatter.compact(step.action, step.actionLabel, step.reason)
+        }
+        val suffix = if (plan.steps.size > 3) " +${plan.steps.size - 3}" else ""
         return (prefix + visibleSteps + suffix).take(maxChars)
-    }
-
-    private fun compactStep(label: String): String {
-        return label
-            .replace("Google ", "G", ignoreCase = true)
-            .replace("Open ", "O:", ignoreCase = true)
-            .replace("Tap ", "T:", ignoreCase = true)
-            .replace("Type ", "Ty:", ignoreCase = true)
-            .replace(" ", "")
-            .take(18)
     }
 
     private fun compactResult(result: String): String = when {

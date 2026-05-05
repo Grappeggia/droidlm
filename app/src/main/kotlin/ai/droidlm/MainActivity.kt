@@ -2,6 +2,7 @@ package ai.droidlm
 
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
+import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.prompts.PromptHistoryEntry
 import ai.droidlm.settings.DroidLmSettings
@@ -634,7 +635,11 @@ private fun PlanPreviewCard(
     Text("Risk: ${plan.riskLevel}")
     Text(plan.summary, fontWeight = FontWeight.SemiBold)
     plan.steps.forEach { step ->
-        Text("${step.index}. ${step.actionLabel}: ${step.reason}")
+        val actionLabel = ActionUiFormatter.full(step.action, step.actionLabel, step.reason)
+        Text("${step.index}. $actionLabel")
+        if (step.reason.isNotBlank() && ActionUiFormatter.reasonAddsDetail(step.reason, actionLabel)) {
+            Text(step.reason, color = DroidLmColors.TextMuted)
+        }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = onAcceptOnce) { Text("Accept Once") }

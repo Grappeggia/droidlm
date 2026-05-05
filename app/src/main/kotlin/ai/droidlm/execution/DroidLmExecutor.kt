@@ -5,6 +5,7 @@ import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.context.DeviceContextAggregator
+import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.intent.IntentParser
@@ -103,7 +104,7 @@ class DroidLmExecutor(
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val action = parser.parse(stripped, packages)
         debugEvent(null, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
-        _uiState.value = _uiState.value.copy(parsedAction = action.displayName())
+        _uiState.value = _uiState.value.copy(parsedAction = ActionUiFormatter.full(action))
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
 
         val state = runCatching { portalController.getState() }.getOrNull()
@@ -190,7 +191,7 @@ class DroidLmExecutor(
                 val pending = PendingPlan(stripped, plan, diagnosticSessionId)
                 _pendingPlan.value = pending
                 _uiState.value = _uiState.value.copy(
-                    parsedAction = "PLAN ${plan.steps.size} steps via ${plan.model}",
+                    parsedAction = "Plan: ${plan.steps.size} steps via ${plan.model}",
                     status = "Plan ready",
                     lastResult = plan.summary
                 )
@@ -363,7 +364,7 @@ class DroidLmExecutor(
         ensureNotCancelled()?.let { return finish(it) }
         logs.log(ActionLogType.ACTION_STARTED, action.displayName())
         debugEvent(diagnosticSessionId, "action_started", mapOf("action" to action.displayName(), "finishState" to finishState, "transcriptLength" to transcript.length))
-        _uiState.value = _uiState.value.copy(status = "Executing ${action.displayName()}")
+        _uiState.value = _uiState.value.copy(status = "Executing ${ActionUiFormatter.compact(action)}")
         val result = when (action) {
             is DroidLmAction.NoOp -> ActionResult.fail(action.message, "NO_OP")
             is DroidLmAction.NeedLlmPlanning -> handlePlanning(transcript)
@@ -467,7 +468,7 @@ class DroidLmExecutor(
         val pending = PendingConfirmation(
             id = UUID.randomUUID().toString(),
             transcript = transcript,
-            actionLabel = action.displayName(),
+            actionLabel = ActionUiFormatter.full(action),
             reason = reason,
             prompt = if (action is DroidLmAction.AskConfirmation) action.confirmationPrompt else "Confirm this DroidLM action?"
         )
