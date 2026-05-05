@@ -1,5 +1,6 @@
 package ai.droidlm.voice
 
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.settings.SettingsRepository
@@ -19,7 +20,8 @@ import java.io.File
 class CommandRecorder(
     private val context: Context,
     private val settingsRepository: SettingsRepository,
-    private val logs: ActionLogRepository
+    private val logs: ActionLogRepository,
+    private val debugLogStore: DebugLogStore? = null
 ) {
     @Volatile private var activeRecorder: MediaRecorder? = null
     @Volatile private var debugRecordedCommand: RecordedCommand? = null
@@ -61,9 +63,11 @@ class CommandRecorder(
             if (durationMs < 400 || file.length() < 512) {
                 throw IllegalStateException("Audio clip was too short")
             }
+            debugLogStore?.retainFile(file, "audio", file.name)
             RecordedCommand(file, durationMs, "audio/mp4")
         } catch (error: Throwable) {
-            if (!settingsRepository.settings.first().debugAudioRetention) file.delete()
+            debugLogStore?.retainFile(file, "audio", file.name)
+            if (!settingsRepository.settings.first().debugLoggingEnabled) file.delete()
             throw error
         } finally {
             activeRecorder = null

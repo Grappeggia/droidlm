@@ -41,15 +41,16 @@ class SpeechDiagnosticsLogger(
     init {
         scope.launch {
             settingsRepository.settings
-                .map { it.speechDiagnosticsEnabled }
+                .map { it.debugLoggingEnabled }
                 .distinctUntilChanged()
                 .collect { value -> setEnabled(value) }
         }
     }
 
     fun setEnabled(value: Boolean) {
+        val changed = enabled != value
         enabled = value
-        if (value) {
+        if (value && changed) {
             record(
                 sessionId = null,
                 event = "diagnostics_enabled",
@@ -92,7 +93,7 @@ class SpeechDiagnosticsLogger(
 
     fun exportFileName(): String = "droidlm-speech-diagnostics-${utcTimestampForFile(System.currentTimeMillis())}.jsonl"
 
-    suspend fun shareFile(): File? = withContext(Dispatchers.IO) {
+    suspend fun exportSnapshot(): File? = withContext(Dispatchers.IO) {
         awaitPendingWrites()
         if (!logFile.exists() || logFile.length() == 0L) return@withContext null
         logDirectory.mkdirs()
@@ -110,6 +111,8 @@ class SpeechDiagnosticsLogger(
         }
         shareFile
     }
+
+    suspend fun shareFile(): File? = exportSnapshot()
 
     private fun diagnosticLine(sessionId: String?, event: String, fields: Map<String, Any?>): String {
         val nowMs = System.currentTimeMillis()

@@ -6,6 +6,7 @@ import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.context.GoogleDriveContextProvider
 import ai.droidlm.context.GoogleSheetsContextProvider
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
@@ -33,6 +34,8 @@ class DroidLMApp : Application() {
     lateinit var actionLogRepository: ActionLogRepository
         private set
     lateinit var speechDiagnosticsLogger: SpeechDiagnosticsLogger
+        private set
+    lateinit var debugLogStore: DebugLogStore
         private set
     lateinit var promptHistoryRepository: PromptHistoryRepository
         private set
@@ -73,12 +76,13 @@ class DroidLMApp : Application() {
         actionLogRepository = ActionLogRepository()
         promptHistoryRepository = PromptHistoryRepository(this)
         speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
+        debugLogStore = DebugLogStore(this, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
         relayClient = RelayClient()
         openAiClient = OpenAiClient()
         portalController = AccessibilityPortalController(this, actionLogRepository)
         appInventoryRepository = AppInventoryRepository(this)
         ocrEngine = MlKitOcrEngine()
-        textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository)
+        textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository, debugLogStore)
         deviceContextAggregator = DeviceContextAggregator(
             appInventoryRepository = appInventoryRepository,
             providers = listOf(
@@ -103,10 +107,11 @@ class DroidLMApp : Application() {
             safetyClassifier = safetyClassifier,
             promptHistoryRepository = promptHistoryRepository,
             diagnostics = speechDiagnosticsLogger,
+            debugLogStore = debugLogStore,
             mobilerunCloudClient = mobilerunCloudClient
         )
-        commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository)
-        voskOfflineSpeechRecognizer = VoskOfflineSpeechRecognizer(this, actionLogRepository, speechDiagnosticsLogger)
+        commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository, debugLogStore)
+        voskOfflineSpeechRecognizer = VoskOfflineSpeechRecognizer(this, actionLogRepository, speechDiagnosticsLogger, debugLogStore)
         speechRecognitionController = SpeechRecognitionController(this, actionLogRepository, speechDiagnosticsLogger, voskOfflineSpeechRecognizer)
         manualWakeWordEngine = ManualWakeWordEngine()
     }

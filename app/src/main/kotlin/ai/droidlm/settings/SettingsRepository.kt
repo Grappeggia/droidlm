@@ -43,10 +43,10 @@ class SettingsRepository(private val context: Context) {
         val requireRiskConfirmation = booleanPreferencesKey("require_risk_confirmation")
         val onDeviceOcrEnabled = booleanPreferencesKey("on_device_ocr_enabled")
         val cloudScreenshotAnalysisEnabled = booleanPreferencesKey("cloud_screenshot_analysis_enabled")
-        val confirmBeforeSendingScreenshots = booleanPreferencesKey("confirm_before_sending_screenshots")
-        val debugScreenshotRetention = booleanPreferencesKey("debug_screenshot_retention")
-        val debugAudioRetention = booleanPreferencesKey("debug_audio_retention")
-        val speechDiagnosticsEnabled = booleanPreferencesKey("speech_diagnostics_enabled")
+        val debugLoggingEnabled = booleanPreferencesKey("debug_logging_enabled")
+        val legacyDebugScreenshotRetention = booleanPreferencesKey("debug_screenshot_retention")
+        val legacyDebugAudioRetention = booleanPreferencesKey("debug_audio_retention")
+        val legacySpeechDiagnosticsEnabled = booleanPreferencesKey("speech_diagnostics_enabled")
         val onboardingCompletedVersion = intPreferencesKey("onboarding_completed_version")
         val sensitiveAppScreenshotDenylist = stringPreferencesKey("sensitive_app_screenshot_denylist")
         val packageAllowlist = stringPreferencesKey("package_allowlist")
@@ -84,10 +84,10 @@ class SettingsRepository(private val context: Context) {
             requireRiskConfirmation = preferences[Keys.requireRiskConfirmation] ?: true,
             onDeviceOcrEnabled = preferences[Keys.onDeviceOcrEnabled] ?: true,
             cloudScreenshotAnalysisEnabled = preferences[Keys.cloudScreenshotAnalysisEnabled] ?: false,
-            confirmBeforeSendingScreenshots = preferences[Keys.confirmBeforeSendingScreenshots] ?: true,
-            debugScreenshotRetention = preferences[Keys.debugScreenshotRetention] ?: false,
-            debugAudioRetention = preferences[Keys.debugAudioRetention] ?: false,
-            speechDiagnosticsEnabled = preferences[Keys.speechDiagnosticsEnabled] ?: false,
+            debugLoggingEnabled = preferences[Keys.debugLoggingEnabled]
+                ?: (preferences[Keys.legacyDebugScreenshotRetention] == true ||
+                    preferences[Keys.legacyDebugAudioRetention] == true ||
+                    preferences[Keys.legacySpeechDiagnosticsEnabled] == true),
             onboardingCompletedVersion = preferences[Keys.onboardingCompletedVersion] ?: 0,
             sensitiveAppScreenshotDenylist = preferences[Keys.sensitiveAppScreenshotDenylist]
                 ?: DroidLmSettings.DEFAULT_SENSITIVE_DENYLIST,
@@ -121,10 +121,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateRequireRiskConfirmation(value: Boolean) = editBoolean(Keys.requireRiskConfirmation, value)
     suspend fun updateOnDeviceOcrEnabled(value: Boolean) = editBoolean(Keys.onDeviceOcrEnabled, value)
     suspend fun updateCloudScreenshotAnalysisEnabled(value: Boolean) = editBoolean(Keys.cloudScreenshotAnalysisEnabled, value)
-    suspend fun updateConfirmBeforeSendingScreenshots(value: Boolean) = editBoolean(Keys.confirmBeforeSendingScreenshots, value)
-    suspend fun updateDebugScreenshotRetention(value: Boolean) = editBoolean(Keys.debugScreenshotRetention, value)
-    suspend fun updateDebugAudioRetention(value: Boolean) = editBoolean(Keys.debugAudioRetention, value)
-    suspend fun updateSpeechDiagnosticsEnabled(value: Boolean) = editBoolean(Keys.speechDiagnosticsEnabled, value)
+    suspend fun updateDebugLoggingEnabled(value: Boolean) = editBoolean(Keys.debugLoggingEnabled, value)
     suspend fun updateOnboardingCompletedVersion(value: Int) = context.settingsDataStore.edit {
         it[Keys.onboardingCompletedVersion] = value.coerceAtLeast(0)
     }

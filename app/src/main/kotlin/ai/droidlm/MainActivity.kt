@@ -412,8 +412,8 @@ private fun OnboardingPage(
     )
     DroidCard {
         Text("Diagnostics", fontWeight = FontWeight.SemiBold)
-        ToggleRow("Speech diagnostics logging", settings.speechDiagnosticsEnabled, viewModel::updateSpeechDiagnostics)
-        Text("Optional, but useful if speech setup fails.", color = DroidLmColors.TextMuted)
+        ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
+        Text("Optional, but useful if speech setup fails. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
     }
     DroidCard {
         Button(onClick = onDone) { Text("Start using DroidLM") }
@@ -661,10 +661,10 @@ private fun SettingsCard(
     promptHistory: List<PromptHistoryEntry>,
     viewModel: DroidLmViewModel
 ) = DroidCard {
-    val saveSpeechDiagnosticsLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
+    val saveDebugLogsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
-        uri?.let(viewModel::saveSpeechDiagnosticsToUri)
+        uri?.let(viewModel::saveDebugLogsToUri)
     }
 
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
@@ -691,20 +691,17 @@ private fun SettingsCard(
     ToggleRow("Require risky-action confirmation", settings.requireRiskConfirmation, viewModel::updateRiskConfirmation)
     ToggleRow("Enable on-device OCR", settings.onDeviceOcrEnabled, viewModel::updateOnDeviceOcr)
     ToggleRow("Enable cloud screenshot analysis", settings.cloudScreenshotAnalysisEnabled, viewModel::updateCloudVision)
-    ToggleRow("Confirm before sending screenshots", settings.confirmBeforeSendingScreenshots, viewModel::updateConfirmScreenshots)
-    ToggleRow("Debug audio retention", settings.debugAudioRetention, viewModel::updateDebugAudio)
-    ToggleRow("Debug screenshot retention", settings.debugScreenshotRetention, viewModel::updateDebugScreenshots)
 
     Text("Diagnostics", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Speech diagnostics logging", settings.speechDiagnosticsEnabled, viewModel::updateSpeechDiagnostics)
+    ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
     Text(
-        "When enabled, DroidLM stores recent speech-recognition events for sharing. Logs may include spoken text and device/app state, but not audio, screenshots, or API keys.",
+        "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots. Zip exports may include spoken text, screenshots, audio, and device/app state, but never API keys.",
         color = DroidLmColors.TextMuted
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = viewModel::shareSpeechDiagnostics) { Text("Share") }
-        OutlinedButton(onClick = { saveSpeechDiagnosticsLauncher.launch(viewModel.speechDiagnosticsExportFileName()) }) { Text("Save") }
-        OutlinedButton(onClick = viewModel::clearSpeechDiagnostics) { Text("Clear") }
+        OutlinedButton(onClick = viewModel::shareDebugLogs) { Text("Share") }
+        OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
+        OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }
     }
 }
 

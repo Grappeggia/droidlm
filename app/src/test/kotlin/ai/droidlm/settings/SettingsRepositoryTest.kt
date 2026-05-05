@@ -25,4 +25,14 @@ class SettingsRepositoryTest {
         assertFalse(repository.settings.first().openAiApiKeyConfigured)
         assertTrue(repository.getOpenAiApiKey().isNullOrBlank())
     }
+
+    @Test fun debugLoggingCanBeToggled() = runTest {
+        val repository = SettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+
+        repository.updateDebugLoggingEnabled(false)
+        assertFalse(repository.settings.first().debugLoggingEnabled)
+
+        repository.updateDebugLoggingEnabled(true)
+        assertTrue(repository.settings.first().debugLoggingEnabled)
+    }
 }

@@ -1,5 +1,6 @@
 package ai.droidlm.textedit
 
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.intent.AnchorPosition
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
@@ -14,6 +15,7 @@ class TextEditingController(
     private val ocrEngine: OcrEngine,
     @Suppress("unused") private val relayClient: RelayClient,
     private val actionLogRepository: ActionLogRepository,
+    private val debugLogStore: DebugLogStore? = null,
     private val coordinateMapper: TextCoordinateMapper = TextCoordinateMapper()
 ) {
     suspend fun getFocusedEditable(): EditableTarget? = portalController.findFocusedEditableNode()
@@ -136,6 +138,7 @@ class TextEditingController(
         if (!screenshot.success || screenshot.bitmap == null) {
             return ActionResult.fail("Accessibility text and OCR fallback are unavailable: ${screenshot.message}", screenshot.errorCode)
         }
+        debugLogStore?.retainScreenshot(screenshot.bitmap, "text-edit-ocr-fallback")
         actionLogRepository.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR fallback")
         actionLogRepository.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
         val ocrResult = runCatching { ocrEngine.recognize(screenshot.bitmap) }

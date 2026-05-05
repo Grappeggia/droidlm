@@ -2,6 +2,7 @@ package ai.droidlm.execution
 
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.intent.DroidLmAction
@@ -19,6 +20,7 @@ import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayPlanRequest
+import ai.droidlm.safety.SafetyDecision
 import ai.droidlm.safety.SafetyClassifier
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.SettingsRepository
@@ -70,6 +72,7 @@ class DroidLmExecutor(
     private val safetyClassifier: SafetyClassifier,
     private val promptHistoryRepository: PromptHistoryRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
+    private val debugLogStore: DebugLogStore? = null,
     private val mobilerunCloudClient: MobilerunCloudClient,
     private val parser: IntentParser = IntentParser()
 ) {
@@ -102,7 +105,7 @@ class DroidLmExecutor(
 
         val state = runCatching { portalController.getState() }.getOrNull()
         val safety = safetyClassifier.classify(stripped, action, state, settings.sensitiveAppScreenshotDenylist)
-        if (safety.requiresConfirmation && settings.requireRiskConfirmation) {
+        if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
             val confirmed = requestConfirmation(stripped, action, safety.reason ?: "This action is sensitive")
             if (!confirmed) return finish(ActionResult.fail("Command cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
         }
@@ -233,7 +236,7 @@ class DroidLmExecutor(
             ensureNotCancelled()?.let { return finish(it) }
             val state = runCatching { portalController.getState() }.getOrNull()
             val safety = safetyClassifier.classify(pending.transcript, step.action, state, settings.sensitiveAppScreenshotDenylist)
-            if ((step.requiresConfirmation || safety.requiresConfirmation) && settings.requireRiskConfirmation) {
+            if ((step.requiresConfirmation && settings.requireRiskConfirmation) || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
                 val confirmed = requestConfirmation(
                     pending.transcript,
                     step.action,
@@ -296,7 +299,7 @@ class DroidLmExecutor(
                     logs.log(ActionLogType.PARSED_ACTION, action.displayName())
                     if (action == DroidLmAction.Done) return finish(ActionResult.ok("Task complete"))
                     val safety = safetyClassifier.classify(goal, action, state, settings.sensitiveAppScreenshotDenylist)
-                    if (safety.requiresConfirmation && settings.requireRiskConfirmation) {
+                    if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
                         val confirmed = requestConfirmation(goal, action, safety.reason ?: "This action is sensitive")
                         if (!confirmed) return finish(ActionResult.fail("Planner action cancelled", "CONFIRMATION_REJECTED"))
                     }
@@ -338,6 +341,9 @@ class DroidLmExecutor(
             is DroidLmAction.TypeText -> textEditingController.insertTextAtSelection(action.text)
             DroidLmAction.TakeScreenshot -> {
                 val screenshot = portalController.takeScreenshot()
+                if (screenshot.success && screenshot.bitmap != null) {
+                    debugLogStore?.retainScreenshot(screenshot.bitmap, "take-screenshot")
+                }
                 if (screenshot.success) ActionResult.ok("Screenshot captured") else ActionResult.fail(screenshot.message, screenshot.errorCode)
             }
             is DroidLmAction.FocusEditable -> {
@@ -381,6 +387,7 @@ class DroidLmExecutor(
     private suspend fun runOcrScreen(): ActionResult {
         val screenshot = portalController.takeScreenshot()
         if (!screenshot.success || screenshot.bitmap == null) return ActionResult.fail(screenshot.message, screenshot.errorCode)
+        debugLogStore?.retainScreenshot(screenshot.bitmap, "ocr-screen")
         logs.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR")
         logs.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
         val deviceContext = runCatching { deviceContextAggregator.collect("Analyze screenshot", portalController.getState()) }.getOrNull()
@@ -426,6 +433,9 @@ class DroidLmExecutor(
 
     private fun ensureNotCancelled(): ActionResult? =
         if (cancelled) ActionResult.fail("Task was cancelled", "CANCELLED") else null
+
+    private fun SafetyDecision.needsConfirmationPrompt(requireRiskConfirmation: Boolean): Boolean =
+        requiresConfirmation && (requireRiskConfirmation || mandatoryConfirmation)
 
     private fun finish(result: ActionResult): ActionResult {
         _uiState.value = _uiState.value.copy(

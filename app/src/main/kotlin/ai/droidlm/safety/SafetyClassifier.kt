@@ -7,7 +7,8 @@ data class SafetyDecision(
     val requiresConfirmation: Boolean,
     val reason: String? = null,
     val category: String? = null,
-    val blocked: Boolean = false
+    val blocked: Boolean = false,
+    val mandatoryConfirmation: Boolean = false
 )
 
 class SafetyClassifier {
@@ -45,13 +46,17 @@ class SafetyClassifier {
 
         if (plannedAction is DroidLmAction.AnalyzeScreenshot) {
             val activePackage = currentState?.packageName.orEmpty().lowercase()
-            if (isSensitivePackage(activePackage, sensitiveDenylist)) {
-                return SafetyDecision(
-                    requiresConfirmation = true,
-                    category = "sensitive screenshot",
-                    reason = "Cloud screenshot analysis may expose sensitive screen contents"
-                )
-            }
+            val sensitive = isSensitivePackage(activePackage, sensitiveDenylist)
+            return SafetyDecision(
+                requiresConfirmation = true,
+                category = if (sensitive) "sensitive screenshot" else "screenshot analysis",
+                reason = if (sensitive) {
+                    "Cloud screenshot analysis may expose sensitive screen contents"
+                } else {
+                    "Confirm before sending screenshot contents for analysis"
+                },
+                mandatoryConfirmation = true
+            )
         }
 
         if (plannedAction is DroidLmAction.DeleteSelectedText) {

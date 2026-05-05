@@ -1,5 +1,6 @@
 package ai.droidlm.voice
 
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
@@ -24,7 +25,8 @@ import kotlin.math.sqrt
 class VoskOfflineSpeechRecognizer(
     private val context: Context,
     private val logs: ActionLogRepository,
-    private val diagnostics: SpeechDiagnosticsLogger
+    private val diagnostics: SpeechDiagnosticsLogger,
+    private val debugLogStore: DebugLogStore? = null
 ) {
     data class Callbacks(
         val onStarting: () -> Unit = {},
@@ -87,6 +89,15 @@ class VoskOfflineSpeechRecognizer(
         var speechStarted = false
         var lastSpeechAt: Long? = null
         val startedAt = System.currentTimeMillis()
+        val audioCaptureFile = debugLogStore?.createRetainedFile("audio", "pcm", "vosk")
+        val audioCaptureOutput = audioCaptureFile?.let { runCatching { it.outputStream() }.getOrNull() }
+        audioCaptureFile?.let {
+            diagnostics.record(
+                diagnosticSessionId,
+                "debug_audio_capture_started",
+                mapOf("file" to it.name, "format" to "pcm_s16le_mono", "sampleRate" to SAMPLE_RATE)
+            )
+        }
         stopRequested = false
         cancelRequested = false
         activeAudioRecord = recorder
@@ -101,6 +112,7 @@ class VoskOfflineSpeechRecognizer(
             while (!stopRequested && System.currentTimeMillis() - startedAt < maxDurationMs) {
                 val read = runCatching { recorder.read(buffer, 0, buffer.size) }.getOrDefault(0)
                 if (read <= 0) continue
+                runCatching { audioCaptureOutput?.write(buffer, 0, read) }
 
                 val rms = pcmRms(buffer, read)
                 if (rms > peakRms) peakRms = rms
@@ -168,6 +180,14 @@ class VoskOfflineSpeechRecognizer(
             diagnostics.record(diagnosticSessionId, "vosk_error", mapOf("message" to error.message, "errorClass" to error::class.java.name))
             throw error
         } finally {
+            runCatching { audioCaptureOutput?.close() }
+            audioCaptureFile?.let { file ->
+                if (file.length() > 0L) {
+                    diagnostics.record(diagnosticSessionId, "debug_audio_capture_saved", mapOf("file" to file.name, "bytes" to file.length()))
+                } else {
+                    file.delete()
+                }
+            }
             activeAudioRecord = null
             runCatching { recorder.stop() }
             runCatching { recorder.release() }

@@ -116,6 +116,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                 app.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${screenshot.message}", screenshot.errorCode)
                 return@launch
             }
+            app.debugLogStore.retainScreenshot(screenshot.bitmap, "ocr-test")
             runCatching { app.ocrEngine.recognize(screenshot.bitmap) }
                 .onSuccess { app.actionLogRepository.log(ActionLogType.OCR_RESULT, "OCR test detected ${it.lines.size} lines") }
                 .onFailure { app.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${it.message}") }
@@ -138,30 +139,28 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }
     fun updateCloudVision(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }
-    fun updateConfirmScreenshots(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateConfirmBeforeSendingScreenshots(value) }
-    fun updateDebugAudio(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateDebugAudioRetention(value) }
-    fun updateDebugScreenshots(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateDebugScreenshotRetention(value) }
-    fun updateSpeechDiagnostics(value: Boolean) = viewModelScope.launch {
-        app.settingsRepository.updateSpeechDiagnosticsEnabled(value)
+    fun updateDebugLogging(value: Boolean) = viewModelScope.launch {
+        app.settingsRepository.updateDebugLoggingEnabled(value)
         app.speechDiagnosticsLogger.setEnabled(value)
         if (value) {
             app.actionLogRepository.log(
                 ActionLogType.ACTION_RESULT,
-                "Speech diagnostics enabled",
-                "Logs may include spoken text and speech-recognition state."
+                "Debug logging enabled",
+                "Exports may include spoken text, screenshots, retained audio, and speech-recognition state."
             )
         } else {
             app.speechDiagnosticsLogger.clear()
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Speech diagnostics disabled and cleared")
+            app.debugLogStore.clear()
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Debug logging disabled and cleared")
         }
     }
 
-    fun speechDiagnosticsExportFileName(): String = app.speechDiagnosticsLogger.exportFileName()
+    fun debugLogsExportFileName(): String = app.debugLogStore.exportFileName()
 
-    fun saveSpeechDiagnosticsToUri(uri: Uri) = viewModelScope.launch {
-        val file = withContext(Dispatchers.IO) { app.speechDiagnosticsLogger.shareFile() }
+    fun saveDebugLogsToUri(uri: Uri) = viewModelScope.launch {
+        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
         if (file == null) {
-            app.actionLogRepository.log(ActionLogType.ERROR, "No speech diagnostics to save")
+            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to save")
             return@launch
         }
         runCatching {
@@ -171,34 +170,35 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                 } ?: error("Could not open destination file")
             }
         }.onSuccess {
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved speech diagnostics")
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved debug logs")
         }.onFailure { error ->
-            app.actionLogRepository.log(ActionLogType.ERROR, "Could not save speech diagnostics: ${error.message}")
+            app.actionLogRepository.log(ActionLogType.ERROR, "Could not save debug logs: ${error.message}")
         }
     }
 
-    fun shareSpeechDiagnostics() = viewModelScope.launch {
-        val file = withContext(Dispatchers.IO) { app.speechDiagnosticsLogger.shareFile() }
+    fun shareDebugLogs() = viewModelScope.launch {
+        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
         if (file == null) {
-            app.actionLogRepository.log(ActionLogType.ERROR, "No speech diagnostics to share")
+            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to share")
             return@launch
         }
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "DroidLM speech diagnostics")
+            type = "application/zip"
+            putExtra(Intent.EXTRA_SUBJECT, "DroidLM debug logs")
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, "DroidLM speech diagnostics attached.")
+            putExtra(Intent.EXTRA_TEXT, "DroidLM debug logs attached.")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(sendIntent, "Share speech diagnostics").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val chooser = Intent.createChooser(sendIntent, "Share debug logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { app.startActivity(chooser) }
-            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened speech diagnostics share sheet") }
-            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not share speech diagnostics: ${error.message}") }
+            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened debug logs share sheet") }
+            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not share debug logs: ${error.message}") }
     }
 
-    fun clearSpeechDiagnostics() {
+    fun clearDebugLogs() {
         app.speechDiagnosticsLogger.clear()
+        viewModelScope.launch { app.debugLogStore.clear() }
     }
 
     fun completeOnboarding() = viewModelScope.launch {
