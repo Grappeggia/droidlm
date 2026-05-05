@@ -114,6 +114,7 @@ class FloatingControlOverlayService : Service() {
     private var transientStatusMessage: String? = null
     private var isDraggingOverlay: Boolean = false
     private var isInDismissZone: Boolean = false
+    private var lastRecordButtonText: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -561,7 +562,21 @@ class FloatingControlOverlayService : Service() {
         acceptPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
         moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
-        recordButton?.text = OverlayStatusFormatter.recordButton(speech.isActive, execution.status)
+        val recordText = OverlayStatusFormatter.recordButton(speech.isActive, execution.status)
+        if (recordText != lastRecordButtonText) {
+            lastRecordButtonText = recordText
+            app.speechDiagnosticsLogger.record(
+                null,
+                "overlay_record_button_state",
+                mapOf(
+                    "text" to recordText,
+                    "speechStarting" to speech.isStarting,
+                    "speechListening" to speech.isListening,
+                    "executionStatus" to execution.status
+                )
+            )
+        }
+        recordButton?.text = recordText
         transientStatusMessage?.let { message ->
             statusText?.text = message
             return

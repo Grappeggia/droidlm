@@ -50,10 +50,9 @@ class OpenAiClient(
     }
 
     private fun buildChatRequest(apiKey: String, model: String, prompt: String, maxTokens: Int): Request {
+        val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val json = JSONObject()
-            .put("model", model.ifBlank { DEFAULT_MODEL })
-            .put("temperature", 0)
-            .put("max_tokens", maxTokens)
+            .put("model", resolvedModel)
             .put("response_format", JSONObject().put("type", "json_object"))
             .put(
                 "messages",
@@ -61,6 +60,12 @@ class OpenAiClient(
                     .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
                     .put(JSONObject().put("role", "user").put("content", prompt))
             )
+        if (usesMaxCompletionTokens(resolvedModel)) {
+            json.put("max_completion_tokens", maxTokens)
+        } else {
+            json.put("temperature", 0)
+            json.put("max_tokens", maxTokens)
+        }
         return Request.Builder()
             .url(endpoint)
             .addHeader("Authorization", "Bearer $apiKey")
@@ -204,6 +209,15 @@ class OpenAiClient(
             .put("packages", JSONArray(packages.map { it.toJson() }))
         extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
         return json
+    }
+
+    private fun usesMaxCompletionTokens(model: String): Boolean {
+        val normalized = model.trim().lowercase()
+        return normalized.startsWith("gpt-5") ||
+            normalized.startsWith("o1") ||
+            normalized.startsWith("o3") ||
+            normalized.startsWith("o4") ||
+            normalized.startsWith("o5")
     }
 
     companion object {

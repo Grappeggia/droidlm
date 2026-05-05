@@ -84,10 +84,21 @@ class SpeechRecognitionController(
             throw IllegalStateException(message)
         }
         val sessionId = diagnosticSessionId ?: diagnostics.startSession("speech_recognizer_direct")
+        val fallbackSupported = canUseVoskFallback(languageTag)
+        diagnostics.record(
+            sessionId,
+            "recognize_command_start",
+            recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf("voskFallbackSupported" to fallbackSupported)
+        )
+        if (preferOffline && fallbackSupported) {
+            val message = "Using built-in offline English speech because offline Android speech may not be installed."
+            diagnostics.record(sessionId, "prefer_offline_vosk_direct", mapOf("language" to languageTag))
+            return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             val message = "No Android speech recognizer is available on this device."
             diagnostics.record(diagnosticSessionId, "recognizer_unavailable")
-            if (canUseVoskFallback(languageTag)) {
+            if (fallbackSupported) {
                 diagnostics.record(sessionId, "android_recognizer_unavailable_falling_back_to_vosk", mapOf("message" to message))
                 return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
             }
@@ -101,12 +112,6 @@ class SpeechRecognitionController(
             )
             throw IllegalStateException(fullMessage)
         }
-
-        diagnostics.record(
-            sessionId,
-            "recognize_command_start",
-            recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf("voskFallbackSupported" to canUseVoskFallback(languageTag))
-        )
 
         try {
         suspendCancellableCoroutine { continuation ->
@@ -269,18 +274,35 @@ class SpeechRecognitionController(
                         return
                     }
 
-                    finishDiagnostics("error", mapOf("code" to error, "message" to message))
+                    val willFallback = shouldFallbackToVosk(error, languageTag)
+                    if (willFallback) {
+                        diagnostics.record(sessionId, "android_speech_fallback_pending", mapOf("code" to error, "message" to message))
+                    } else {
+                        finishDiagnostics("error", mapOf("code" to error, "message" to message))
+                    }
                     cleanup()
                     val isLanguageError = isLanguageSupportError(error)
-                    _state.value = _state.value.copy(
-                        isStarting = false,
-                        isListening = false,
-                        errorMessage = message,
-                        missingLanguageTag = if (isLanguageError) languageTag else null,
-                        missingLanguageMessage = if (isLanguageError) message else null,
-                        recognizerService = voiceRecognitionService()
-                    )
-                    logs.log(ActionLogType.ERROR, message, "SPEECH_RECOGNIZER_$error")
+                    _state.value = if (willFallback) {
+                        _state.value.copy(
+                            isStarting = true,
+                            isListening = false,
+                            partialTranscript = "",
+                            errorMessage = null,
+                            missingLanguageTag = null,
+                            missingLanguageMessage = null,
+                            providerLabel = VOSK_PROVIDER_LABEL
+                        )
+                    } else {
+                        _state.value.copy(
+                            isStarting = false,
+                            isListening = false,
+                            errorMessage = message,
+                            missingLanguageTag = if (isLanguageError) languageTag else null,
+                            missingLanguageMessage = if (isLanguageError) message else null,
+                            recognizerService = voiceRecognitionService()
+                        )
+                    }
+                    logs.log(if (willFallback) ActionLogType.TRANSCRIPTION_REQUEST else ActionLogType.ERROR, message, "SPEECH_RECOGNIZER_$error")
                     if (continuation.isActive) continuation.resumeWithException(AndroidSpeechRecognitionException(error, message))
                 }
 
@@ -416,7 +438,7 @@ class SpeechRecognitionController(
                 checkSpeechSetupOnApi33(preferOffline, languageTag)
             } else {
                 val message = if (fallbackSupported) {
-                    "DroidLM includes built-in offline English speech. Android ${Build.VERSION.RELEASE} cannot verify Google/OEM offline speech before recording, so DroidLM will fall back automatically if Android speech fails."
+                    "DroidLM includes built-in offline English speech. Android ${Build.VERSION.RELEASE} cannot verify Google/OEM offline speech before recording, so DroidLM will use built-in offline English directly when offline mode is enabled."
                 } else {
                     "Android ${Build.VERSION.RELEASE} cannot verify offline speech languages before recording. Install or check offline Android speech recognition for ${languageDisplayName(languageTag)} in Android voice input settings, then try recording again."
                 }
@@ -440,63 +462,77 @@ class SpeechRecognitionController(
             "vosk_fallback_started",
             mapOf("language" to languageTag, "androidFailureMessage" to androidFailureMessage)
         )
-        return runCatching {
-            val transcript = voskRecognizer.recognizeCommand(
-                languageTag = languageTag,
-                maxDurationMs = maxDurationMs,
-                diagnosticSessionId = sessionId,
-                callbacks = VoskOfflineSpeechRecognizer.Callbacks(
-                    onStarting = {
-                        _state.value = _state.value.copy(
-                            isStarting = true,
-                            isListening = false,
-                            partialTranscript = "",
-                            errorMessage = null,
-                            providerLabel = VOSK_PROVIDER_LABEL
-                        )
-                    },
-                    onReady = {
-                        _state.value = _state.value.copy(
-                            isStarting = false,
-                            isListening = true,
-                            partialTranscript = "",
-                            errorMessage = null,
-                            providerLabel = VOSK_PROVIDER_LABEL
-                        )
-                    },
-                    onPartial = { partial ->
-                        _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null, providerLabel = VOSK_PROVIDER_LABEL)
-                    }
+        activeDiagnosticSessionId = sessionId
+        try {
+            return runCatching {
+                val transcript = voskRecognizer.recognizeCommand(
+                    languageTag = languageTag,
+                    maxDurationMs = maxDurationMs,
+                    diagnosticSessionId = sessionId,
+                    callbacks = VoskOfflineSpeechRecognizer.Callbacks(
+                        onStarting = {
+                            _state.value = _state.value.copy(
+                                isStarting = true,
+                                isListening = false,
+                                partialTranscript = "",
+                                errorMessage = null,
+                                providerLabel = VOSK_PROVIDER_LABEL
+                            )
+                        },
+                        onReady = {
+                            _state.value = _state.value.copy(
+                                isStarting = false,
+                                isListening = true,
+                                partialTranscript = "",
+                                errorMessage = null,
+                                providerLabel = VOSK_PROVIDER_LABEL
+                            )
+                        },
+                        onPartial = { partial ->
+                            _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null, providerLabel = VOSK_PROVIDER_LABEL)
+                        }
+                    )
                 )
-            )
-            val finalText = appendTranscript(_state.value.finalTranscript, transcript)
-            _state.value = _state.value.copy(
-                isStarting = false,
-                isListening = false,
-                partialTranscript = "",
-                finalTranscript = finalText,
-                errorMessage = null,
-                missingLanguageTag = null,
-                missingLanguageMessage = null,
-                speechSetupChecked = true,
-                speechSetupAvailable = true,
-                speechSetupMessage = "Using built-in offline English speech.",
-                providerLabel = VOSK_PROVIDER_LABEL
-            )
-            logs.log(ActionLogType.TRANSCRIPTION_RESULT, transcript)
-            diagnostics.endSession(sessionId, "vosk_results", transcriptFields(transcript, 1))
-            transcript
-        }.getOrElse { error ->
-            val message = "Built-in offline speech failed: ${error.message ?: error::class.java.simpleName}"
-            diagnostics.record(sessionId, "vosk_fallback_failed", mapOf("message" to message, "errorClass" to error::class.java.name))
-            _state.value = _state.value.copy(
-                isStarting = false,
-                isListening = false,
-                errorMessage = message,
-                providerLabel = VOSK_PROVIDER_LABEL
-            )
-            logs.log(ActionLogType.ERROR, message, "VOSK_FALLBACK_FAILED")
-            throw IllegalStateException(message, error)
+                val finalText = appendTranscript(_state.value.finalTranscript, transcript)
+                _state.value = _state.value.copy(
+                    isStarting = false,
+                    isListening = false,
+                    partialTranscript = "",
+                    finalTranscript = finalText,
+                    errorMessage = null,
+                    missingLanguageTag = null,
+                    missingLanguageMessage = null,
+                    speechSetupChecked = true,
+                    speechSetupAvailable = true,
+                    speechSetupMessage = "Using built-in offline English speech.",
+                    providerLabel = VOSK_PROVIDER_LABEL
+                )
+                logs.log(ActionLogType.TRANSCRIPTION_RESULT, transcript)
+                diagnostics.endSession(sessionId, "vosk_results", transcriptFields(transcript, 1))
+                transcript
+            }.getOrElse { error ->
+                val cancelled = error.message?.contains("cancelled", ignoreCase = true) == true
+                val message = if (cancelled) {
+                    "Built-in offline speech cancelled."
+                } else {
+                    "Built-in offline speech failed: ${error.message ?: error::class.java.simpleName}"
+                }
+                diagnostics.record(
+                    sessionId,
+                    if (cancelled) "vosk_fallback_cancelled" else "vosk_fallback_failed",
+                    mapOf("message" to message, "errorClass" to error::class.java.name)
+                )
+                _state.value = _state.value.copy(
+                    isStarting = false,
+                    isListening = false,
+                    errorMessage = if (cancelled) null else message,
+                    providerLabel = VOSK_PROVIDER_LABEL
+                )
+                logs.log(if (cancelled) ActionLogType.CANCELLED else ActionLogType.ERROR, message, if (cancelled) "VOSK_FALLBACK_CANCELLED" else "VOSK_FALLBACK_FAILED")
+                throw IllegalStateException(message, error)
+            }
+        } finally {
+            if (activeDiagnosticSessionId == sessionId) activeDiagnosticSessionId = null
         }
     }
 
@@ -513,7 +549,22 @@ class SpeechRecognitionController(
 
 
     fun stopCurrent(): Boolean {
-        val recognizer = activeRecognizer ?: return voskRecognizer.stopCurrent()
+        val recognizer = activeRecognizer
+        if (recognizer == null) {
+            val sessionId = activeDiagnosticSessionId
+            val stopped = voskRecognizer.cancelCurrent()
+            if (stopped) {
+                diagnostics.record(sessionId, "stop_current_requested", mapOf("provider" to VOSK_PROVIDER_LABEL))
+                _state.value = _state.value.copy(
+                    isStarting = false,
+                    isListening = false,
+                    partialTranscript = "",
+                    errorMessage = null
+                )
+                logs.log(ActionLogType.RECORDING_STOPPED, "Built-in offline speech stop requested")
+            }
+            return stopped
+        }
         mainHandler.post {
             diagnostics.record(activeDiagnosticSessionId, "stop_current_requested")
             runCatching { recognizer.stopListening() }
@@ -653,12 +704,10 @@ class SpeechRecognitionController(
                     val fallbackSupported = canUseVoskFallback(languageTag)
                     val available = androidAvailable || fallbackSupported
                     val message = when {
+                        preferOffline && fallbackSupported -> "DroidLM will use built-in offline English speech for $languageName."
                         preferOffline && installedMatch -> "Offline Android speech recognition for $languageName is installed."
-                        preferOffline && pendingMatch && fallbackSupported -> "Offline Android speech recognition for $languageName is pending download. DroidLM can use built-in offline English speech while it finishes."
                         preferOffline && pendingMatch -> "Offline Android speech recognition for $languageName is pending download. Open Android speech settings to finish installing it."
-                        preferOffline && supportedMatch && fallbackSupported -> "Offline Android speech recognition for $languageName is supported but not installed. DroidLM can use built-in offline English speech now."
                         preferOffline && supportedMatch -> "Offline Android speech recognition for $languageName is supported but not installed. Open Android speech settings and download it."
-                        preferOffline && fallbackSupported -> "Android offline speech for $languageName is not installed or not reported by this device. DroidLM will use built-in offline English speech."
                         preferOffline -> "Offline Android speech recognition for $languageName is not installed or not reported by this device. Open Android speech settings and download it if available."
                         available -> "Android speech recognition for $languageName is available."
                         else -> "Android speech recognition for $languageName is not available on this device. Open Android speech settings or choose another language."

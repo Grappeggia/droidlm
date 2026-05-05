@@ -706,7 +706,7 @@ tasks.register("connectedHoverMicAudioE2e") {
         project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
-        val instrumentationArgs = mutableMapOf<String, String>()
+        val instrumentationArgs = mutableMapOf("preferOfflineSpeechRecognition" to "true")
         project.localEnvValue("OPENAI_API_KEY")?.let { key ->
             instrumentationArgs["openAiApiKey"] = key
         }

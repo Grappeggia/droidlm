@@ -106,7 +106,7 @@ class WakeWordForegroundService : Service() {
                     "push_to_talk_settings_loaded",
                     mapOf("preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition)
                 )
-                app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Using Android SpeechRecognizer")
+                app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Starting push-to-talk speech recognition")
                 val transcript = app.speechRecognitionController.recognizeCommand(
                     preferOffline = settings.preferOfflineSpeechRecognition,
                     diagnosticSessionId = sessionId
@@ -119,12 +119,16 @@ class WakeWordForegroundService : Service() {
                 app.executor.planTranscript(transcript)
                 app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_plan_requested")
             }.onFailure { error ->
+                val cancelled = error.message?.contains("cancelled", ignoreCase = true) == true
                 app.speechDiagnosticsLogger.record(
                     sessionId,
-                    "push_to_talk_failed",
+                    if (cancelled) "push_to_talk_cancelled" else "push_to_talk_failed",
                     mapOf("errorClass" to error::class.java.name, "message" to error.message)
                 )
-                app.actionLogRepository.log(ActionLogType.ERROR, error.message ?: "Push-to-talk failed")
+                app.actionLogRepository.log(
+                    if (cancelled) ActionLogType.CANCELLED else ActionLogType.ERROR,
+                    error.message ?: "Push-to-talk failed"
+                )
             }
             if (!isRunningState.value) {
                 stopForegroundCompat()
