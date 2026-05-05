@@ -34,6 +34,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val speechRecognitionState = app.speechRecognitionController.state
     val pendingPlan = app.executor.pendingPlan
     val plannerKeySetupRequest = app.executor.plannerKeySetupRequest
+    val promptHistory = app.promptHistoryRepository.prompts
     val overlayState = FloatingControlOverlayService.isRunningState
 
 
@@ -124,6 +125,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
     fun updateAutoAcceptSafePlans(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateAutoAcceptSafePlans(value) }
+    fun clearPromptHistory() = app.promptHistoryRepository.clear()
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
     fun updateExecutionMode(mode: ExecutionMode) = viewModelScope.launch { app.settingsRepository.updateExecutionMode(mode) }

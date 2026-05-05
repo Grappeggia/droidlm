@@ -3,6 +3,7 @@ package ai.droidlm
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.logs.ActionLogEntry
+import ai.droidlm.prompts.PromptHistoryEntry
 import ai.droidlm.settings.DroidLmSettings
 
 import ai.droidlm.ui.DroidLmViewModel
@@ -63,6 +64,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -114,6 +117,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
+    val promptHistory by viewModel.promptHistory.collectAsState()
     val overlayRunning by viewModel.overlayState.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
@@ -254,6 +258,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
                         speechRecognition = speechRecognition,
+                        promptHistory = promptHistory,
                     )
                 }
             } else {
@@ -434,6 +439,7 @@ private fun SettingsPage(
     onRequestNotificationPermission: () -> Unit,
     onStartOverlay: () -> Unit,
     onOpenSpeechSettings: () -> Unit,
+    promptHistory: List<PromptHistoryEntry>,
     onOpenRecognizerAppSettings: () -> Unit,
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
@@ -464,7 +470,7 @@ private fun SettingsPage(
         onClear = onClearOpenAiKey,
         onCancel = onDismissPlannerKeySetup
     )
-    SettingsCard(settings, speechRecognition, viewModel)
+    SettingsCard(settings, speechRecognition, promptHistory, viewModel)
     VersionFooter()
 }
 
@@ -649,7 +655,12 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 
 
 @Composable
-private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) = DroidCard {
+private fun SettingsCard(
+    settings: DroidLmSettings,
+    speechRecognition: SpeechRecognitionUiState,
+    promptHistory: List<PromptHistoryEntry>,
+    viewModel: DroidLmViewModel
+) = DroidCard {
     val saveSpeechDiagnosticsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -657,9 +668,20 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
     }
 
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
+    var showPreviousPrompts by remember { mutableStateOf(false) }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
+
+    Text("GPT planning", fontWeight = FontWeight.SemiBold)
+    ToggleRow("Auto-accept safe GPT plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
+    Text("Risky or sensitive plans still require confirmation.", color = DroidLmColors.TextMuted)
+    OutlinedButton(onClick = { showPreviousPrompts = !showPreviousPrompts }) {
+        Text(if (showPreviousPrompts) "Hide previous prompts" else "Previous prompts")
+    }
+    if (showPreviousPrompts) {
+        PreviousPromptsPanel(promptHistory, viewModel::clearPromptHistory)
+    }
 
     Text("Floating controls", fontWeight = FontWeight.SemiBold)
     ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
@@ -687,6 +709,20 @@ private fun SettingsCard(settings: DroidLmSettings, speechRecognition: SpeechRec
 }
 
 @Composable
+private fun PreviousPromptsPanel(promptHistory: List<PromptHistoryEntry>, onClear: () -> Unit) = DroidCard(container = DroidLmColors.SurfaceAlt) {
+    Text("Previous prompts", fontWeight = FontWeight.SemiBold)
+    if (promptHistory.isEmpty()) {
+        Text("No previous prompts yet.", color = DroidLmColors.TextMuted)
+    } else {
+        promptHistory.forEach { entry ->
+            Text(promptTimestamp(entry.timestampMs), fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = DroidLmColors.TextMuted)
+            Text(entry.prompt)
+        }
+        OutlinedButton(onClick = onClear) { Text("Clear previous prompts") }
+    }
+}
+
+@Composable
 private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) {
     val languageTag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
     val languageName = displayLanguage(languageTag)
@@ -709,6 +745,10 @@ private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: Speech
         OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
     }
 }
+
+
+private fun promptTimestamp(timestampMs: Long): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(timestampMs))
 
 
 @Composable

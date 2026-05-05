@@ -58,7 +58,7 @@ class SettingsRepository(private val context: Context) {
     val settings: Flow<DroidLmSettings> = context.settingsDataStore.data.map { preferences ->
         DroidLmSettings(
             relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
-            openAiApiKeyConfigured = preferences[Keys.openAiApiKeyConfigured] ?: hasOpenAiApiKey(),
+            openAiApiKeyConfigured = hasOpenAiApiKey(),
             openAiModel = preferences[Keys.openAiModel] ?: "gpt-5.4-nano",
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
             transcriptionProvider = androidSpeechTranscriptionProvider(preferences[Keys.transcriptionProvider]),
@@ -133,8 +133,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun updatePackageDenylist(value: String) = editString(Keys.packageDenylist, value)
 
     suspend fun saveOpenAiApiKey(value: String) {
-        securePreferences.edit().putString(OPENAI_API_KEY, value).apply()
-        editBoolean(Keys.openAiApiKeyConfigured, value.isNotBlank())
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) {
+            clearOpenAiApiKey()
+            return
+        }
+        securePreferences.edit().putString(OPENAI_API_KEY, trimmed).apply()
+        editBoolean(Keys.openAiApiKeyConfigured, true)
     }
 
     suspend fun clearOpenAiApiKey() {

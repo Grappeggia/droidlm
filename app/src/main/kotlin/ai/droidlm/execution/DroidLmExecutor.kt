@@ -2,6 +2,7 @@ package ai.droidlm.execution
 
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
+import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.fileops.WorkspaceFileOperationController
@@ -15,6 +16,7 @@ import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.openai.OpenAiClient
+import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.RelayPlanRequest
 import ai.droidlm.safety.SafetyClassifier
@@ -66,6 +68,8 @@ class DroidLmExecutor(
     private val deviceContextAggregator: DeviceContextAggregator,
     private val logs: ActionLogRepository,
     private val safetyClassifier: SafetyClassifier,
+    private val promptHistoryRepository: PromptHistoryRepository,
+    private val diagnostics: SpeechDiagnosticsLogger,
     private val mobilerunCloudClient: MobilerunCloudClient,
     private val parser: IntentParser = IntentParser()
 ) {
@@ -88,6 +92,7 @@ class DroidLmExecutor(
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
+        promptHistoryRepository.record(stripped, "manual_command")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val settings = settingsRepository.settings.first()
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
@@ -108,20 +113,34 @@ class DroidLmExecutor(
         }
     }
 
-    suspend fun planTranscript(transcript: String): ActionResult {
+    suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        promptHistoryRepository.record(stripped, "voice_prompt")
         _plannerKeySetupRequest.value = null
-        _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano")
+        _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano", lastResult = "")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
+        logs.log(ActionLogType.PLANNER_STARTED, "GPT planning started", "promptLength=${stripped.length}")
         val settings = settingsRepository.settings.first()
         val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
+        diagnostics.record(
+            diagnosticSessionId,
+            "planner_started",
+            mapOf(
+                "promptLength" to stripped.length,
+                "openAiKeyConfigured" to apiKey.isNotBlank(),
+                "model" to settings.openAiModel,
+                "maxAutonomousSteps" to settings.maxAutonomousSteps,
+                "autoAcceptSafePlans" to settings.autoAcceptSafePlans
+            )
+        )
         if (apiKey.isBlank()) {
             _plannerKeySetupRequest.value = PlannerKeySetupRequest(
-                message = "GPT planning requires an OpenAI API key saved on this device.",
+                message = "OpenAI key is missing or could not be read. Re-enter the key on this device to use GPT planning.",
                 retryTranscript = stripped
             )
-            logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing", "OPENAI_API_KEY_MISSING")
+            diagnostics.record(diagnosticSessionId, "planner_key_missing")
+            logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing or unreadable", "OPENAI_API_KEY_MISSING")
             return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
         }
         val state = runCatching { portalController.getState() }.getOrNull()
@@ -129,9 +148,15 @@ class DroidLmExecutor(
         val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
         val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps, activeApp, deviceContext)
+        diagnostics.record(
+            diagnosticSessionId,
+            "openai_plan_request_started",
+            mapOf("model" to settings.openAiModel, "packageCount" to packages.size, "activePackage" to activeApp?.packageName)
+        )
         return when (val result = openAiClient.planPreview(apiKey, settings.openAiModel, request)) {
             is RelayCallResult.Failure -> {
-                logs.log(ActionLogType.ERROR, result.message, result.errorCode)
+                diagnostics.record(diagnosticSessionId, "openai_plan_failed", mapOf("errorCode" to result.errorCode, "message" to result.message.take(240)))
+                logs.log(ActionLogType.ERROR, "GPT planning failed: ${result.message}", result.errorCode)
                 finish(ActionResult.fail(result.message, result.errorCode))
             }
             is RelayCallResult.Success -> {
@@ -143,9 +168,15 @@ class DroidLmExecutor(
                     status = "Plan ready",
                     lastResult = plan.summary
                 )
-                logs.log(ActionLogType.PARSED_ACTION, "Plan: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}")
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "openai_plan_succeeded",
+                    mapOf("model" to plan.model, "riskLevel" to plan.riskLevel, "stepCount" to plan.steps.size, "requiresConfirmation" to plan.requiresConfirmation)
+                )
+                logs.log(ActionLogType.PLANNER_RESULT, "GPT plan ready: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}; steps=${plan.steps.size}")
                 if (settings.autoAcceptSafePlans && plan.isSafe) {
                     logs.log(ActionLogType.CONFIRMATION_ACCEPTED, "Auto-accepted safe plan")
+                    diagnostics.record(diagnosticSessionId, "safe_plan_auto_accepted", mapOf("stepCount" to plan.steps.size))
                     executePlan(pending)
                 } else {
                     ActionResult.ok("Plan ready for review")

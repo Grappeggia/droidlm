@@ -15,6 +15,7 @@ import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.AccessibilityPortalController
 import ai.droidlm.portal.PortalController
+import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.safety.SafetyClassifier
 import ai.droidlm.settings.SettingsRepository
@@ -32,6 +33,8 @@ class DroidLMApp : Application() {
     lateinit var actionLogRepository: ActionLogRepository
         private set
     lateinit var speechDiagnosticsLogger: SpeechDiagnosticsLogger
+        private set
+    lateinit var promptHistoryRepository: PromptHistoryRepository
         private set
     lateinit var relayClient: RelayClient
         private set
@@ -68,6 +71,7 @@ class DroidLMApp : Application() {
         super.onCreate()
         settingsRepository = SettingsRepository(this)
         actionLogRepository = ActionLogRepository()
+        promptHistoryRepository = PromptHistoryRepository(this)
         speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
         relayClient = RelayClient()
         openAiClient = OpenAiClient()
@@ -97,6 +101,8 @@ class DroidLMApp : Application() {
             deviceContextAggregator = deviceContextAggregator,
             logs = actionLogRepository,
             safetyClassifier = safetyClassifier,
+            promptHistoryRepository = promptHistoryRepository,
+            diagnostics = speechDiagnosticsLogger,
             mobilerunCloudClient = mobilerunCloudClient
         )
         commandRecorder = CommandRecorder(this, settingsRepository, actionLogRepository)

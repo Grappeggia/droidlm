@@ -66,6 +66,9 @@ fun org.gradle.api.Project.androidTestMethodNames(sourcePath: String): List<Stri
 
 fun org.gradle.api.Project.sanitizeArtifactName(value: String): String =
     value.replace(Regex("[^A-Za-z0-9._-]+"), "-").trim('-').ifBlank { "artifact" }
+fun org.gradle.api.Project.shouldRecordE2eVideos(): Boolean =
+    (System.getenv("DROIDLM_E2E_RECORD_VIDEO") ?: "true").toBooleanStrictOrNull() ?: true
+
 
 fun org.gradle.api.Project.startScreenRecording(adb: String, deviceVideoPath: String): Process {
     adbOutput(adb, "shell", "rm", "-f", deviceVideoPath)
@@ -96,15 +99,20 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
     val deviceVideoDir = "/sdcard/Documents/DroidLMTestRuns/videos"
     adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
     val failures = mutableListOf<String>()
+    val recordVideo = shouldRecordE2eVideos()
 
     androidTestMethodNames(suite.sourcePath).forEach { methodName ->
         val selector = "${suite.className}#$methodName"
         val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
         val hostVideo = artifactDir.resolve(videoFileName)
         val deviceVideoPath = "$deviceVideoDir/$videoFileName"
-        println("Recording $selector to ${hostVideo.relativeTo(projectDir)}")
-        val recorder = startScreenRecording(adb, deviceVideoPath)
-        Thread.sleep(1000)
+        val recorder = if (recordVideo) {
+            println("Recording $selector to ${hostVideo.relativeTo(projectDir)}")
+            startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) }
+        } else {
+            println("Running $selector without video recording")
+            null
+        }
         val output = java.io.ByteArrayOutputStream()
 
         try {
@@ -127,9 +135,11 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
                 failures += selector
             }
         } finally {
-            runCatching { stopScreenRecording(adb, recorder) }
-            runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
-                .onFailure { failures += "$selector (video capture failed: ${it.message})" }
+            if (recordVideo && recorder != null) {
+                runCatching { stopScreenRecording(adb, recorder) }
+                runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+                    .onFailure { failures += "$selector (video capture failed: ${it.message})" }
+            }
         }
     }
 
@@ -404,14 +414,19 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
     val markerPath = "/sdcard/Documents/DroidLMTestRuns/mic-audio-ready-${System.currentTimeMillis()}.marker"
     adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
     adbOutput(adb, "shell", "rm", "-f", markerPath)
+    val recordVideo = shouldRecordE2eVideos()
 
     val selector = "${suite.className}#$methodName"
     val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
     val hostVideo = artifactDir.resolve(videoFileName)
     val deviceVideoPath = "$deviceVideoDir/$videoFileName"
-    println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
-    val recorder = startScreenRecording(adb, deviceVideoPath)
-    Thread.sleep(1000)
+    val recorder = if (recordVideo) {
+        println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
+        startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) }
+    } else {
+        println("Running $selector with mic injection without video recording")
+        null
+    }
 
     val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
     suite.instrumentationArgs.forEach { (key, value) -> args += listOf("-e", key, value) }
@@ -441,8 +456,10 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
     val text = output.toString()
     print(text)
 
-    runCatching { stopScreenRecording(adb, recorder) }
-    runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+    if (recordVideo && recorder != null) {
+        runCatching { stopScreenRecording(adb, recorder) }
+        runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+    }
     adbOutput(adb, "shell", "rm", "-f", markerPath)
 
     if (!played) error("Mic audio was never injected because marker was not created by $selector")
