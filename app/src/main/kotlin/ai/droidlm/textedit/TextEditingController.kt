@@ -134,23 +134,46 @@ class TextEditingController(
     }
 
     private suspend fun insertTextAtAnchorByOcr(anchorText: String, anchorPosition: AnchorPosition, textToInsert: String): ActionResult {
+        debugLogStore?.recordEvent(
+            "text_edit_ocr_fallback_started",
+            mapOf("anchorLength" to anchorText.length, "anchorPosition" to anchorPosition.name, "insertLength" to textToInsert.length)
+        )
         val screenshot = portalController.takeScreenshot()
         if (!screenshot.success || screenshot.bitmap == null) {
+            debugLogStore?.recordEvent(
+                "text_edit_ocr_screenshot_failed",
+                mapOf("message" to screenshot.message, "errorCode" to screenshot.errorCode, "hasBitmap" to (screenshot.bitmap != null))
+            )
             return ActionResult.fail("Accessibility text and OCR fallback are unavailable: ${screenshot.message}", screenshot.errorCode)
         }
         debugLogStore?.retainScreenshot(screenshot.bitmap, "text-edit-ocr-fallback")
         actionLogRepository.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR fallback")
         actionLogRepository.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
         val ocrResult = runCatching { ocrEngine.recognize(screenshot.bitmap) }
-            .getOrElse { return ActionResult.fail("OCR failed: ${it.message}", "OCR_FAILED") }
+            .getOrElse {
+                debugLogStore?.recordEvent("text_edit_ocr_failed", mapOf("message" to it.message, "errorClass" to it::class.java.name))
+                return ActionResult.fail("OCR failed: ${it.message}", "OCR_FAILED")
+            }
+        debugLogStore?.recordEvent(
+            "text_edit_ocr_completed",
+            mapOf("lineCount" to ocrResult.lines.size, "elementCount" to ocrResult.elements.size, "source" to ocrResult.source.name)
+        )
         actionLogRepository.log(ActionLogType.OCR_RESULT, "OCR completed")
         val coordinate = when (anchorPosition) {
             AnchorPosition.AFTER -> coordinateMapper.estimateCoordinateAfterText(ocrResult, anchorText)
             AnchorPosition.BEFORE -> coordinateMapper.estimateCoordinateBeforeText(ocrResult, anchorText)
-        } ?: return ActionResult.fail("OCR could not locate anchor: $anchorText", "OCR_ANCHOR_NOT_FOUND")
+        } ?: run {
+            debugLogStore?.recordEvent("text_edit_ocr_anchor_not_found", mapOf("anchorLength" to anchorText.length, "anchorPosition" to anchorPosition.name))
+            return ActionResult.fail("OCR could not locate anchor: $anchorText", "OCR_ANCHOR_NOT_FOUND")
+        }
+        debugLogStore?.recordEvent("text_edit_ocr_coordinate_estimated", mapOf("x" to coordinate.x, "y" to coordinate.y))
         val tap = portalController.tap(coordinate.x, coordinate.y)
-        if (!tap.success) return tap
+        if (!tap.success) {
+            debugLogStore?.recordEvent("text_edit_ocr_tap_failed", mapOf("message" to tap.message, "errorCode" to tap.errorCode))
+            return tap
+        }
         val input = portalController.inputTextAtCurrentCursor(textToInsert)
+        debugLogStore?.recordEvent("text_edit_ocr_input_result", mapOf("success" to input.success, "message" to input.message, "errorCode" to input.errorCode))
         return if (input.success) ActionResult.ok("Inserted text using OCR coordinate estimate") else input
     }
 

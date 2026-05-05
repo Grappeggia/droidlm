@@ -32,6 +32,7 @@ class SpeechDiagnosticsLogger(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionStarts = ConcurrentHashMap<String, Long>()
     private val sequence = AtomicLong(0)
+    private val eventSequence = AtomicLong(0)
     private val logDirectory = File(context.cacheDir, "droidlm-diagnostics")
     private val logFile = File(logDirectory, "speech-diagnostics.jsonl")
     private val pendingWrites = mutableListOf<Job>()
@@ -49,6 +50,9 @@ class SpeechDiagnosticsLogger(
 
     fun setEnabled(value: Boolean) {
         val changed = enabled != value
+        if (!value && changed) {
+            record(sessionId = null, event = "diagnostics_disabled", fields = deviceFields())
+        }
         enabled = value
         if (value && changed) {
             record(
@@ -94,6 +98,11 @@ class SpeechDiagnosticsLogger(
     fun exportFileName(): String = "droidlm-speech-diagnostics-${utcTimestampForFile(System.currentTimeMillis())}.jsonl"
 
     suspend fun exportSnapshot(): File? = withContext(Dispatchers.IO) {
+        record(
+            sessionId = null,
+            event = "diagnostics_export_requested",
+            fields = mapOf("sourceExists" to logFile.exists(), "sourceBytes" to if (logFile.exists()) logFile.length() else 0L)
+        )
         awaitPendingWrites()
         if (!logFile.exists() || logFile.length() == 0L) return@withContext null
         logDirectory.mkdirs()
@@ -120,6 +129,7 @@ class SpeechDiagnosticsLogger(
         val values = linkedMapOf<String, Any?>(
             "wallTime" to utcTimestamp(nowMs),
             "wallTimeMs" to nowMs,
+            "seq" to eventSequence.incrementAndGet(),
             "event" to event
         )
         if (sessionId != null) {
@@ -183,6 +193,9 @@ class SpeechDiagnosticsLogger(
         null -> "null"
         is Number -> value.toString()
         is Boolean -> value.toString()
+        is Map<*, *> -> value.entries.joinToString(prefix = "{", postfix = "}") { (key, item) ->
+            "\"${escapeJson(key.toString())}\":${jsonValue(item)}"
+        }
         is Iterable<*> -> value.joinToString(prefix = "[", postfix = "]") { jsonValue(it) }
         is Array<*> -> value.joinToString(prefix = "[", postfix = "]") { jsonValue(it) }
         else -> "\"${escapeJson(value.toString())}\""

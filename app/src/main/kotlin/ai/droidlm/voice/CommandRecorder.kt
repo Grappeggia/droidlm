@@ -28,16 +28,19 @@ class CommandRecorder(
 
     fun queueDebugRecordedCommand(file: File, mimeType: String, durationMs: Long) {
         check(isDebuggable()) { "Debug audio overrides are only available in debug builds" }
+        debugLogStore?.recordEvent("command_recorder_debug_audio_queued", mapOf("fileName" to file.name, "bytes" to file.length(), "mimeType" to mimeType, "durationMs" to durationMs))
         debugRecordedCommand = RecordedCommand(file, durationMs, mimeType)
     }
 
     suspend fun recordCommand(maxDurationMs: Long = 12_000): RecordedCommand = withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            debugLogStore?.recordEvent("command_recorder_permission_missing", mapOf("permission" to Manifest.permission.RECORD_AUDIO))
             throw IllegalStateException("Microphone permission is missing")
         }
         debugRecordedCommand?.let { queued ->
             check(isDebuggable()) { "Debug audio overrides are only available in debug builds" }
             debugRecordedCommand = null
+            debugLogStore?.recordEvent("command_recorder_using_queued_audio", mapOf("fileName" to queued.file.name, "bytes" to queued.file.length(), "durationMs" to queued.durationMs, "mimeType" to queued.mimeType))
             logs.log(ActionLogType.RECORDING_STARTED, "Using queued debug command audio")
             logs.log(ActionLogType.RECORDING_STOPPED, "Queued debug command audio ready")
             return@withContext queued
@@ -46,6 +49,7 @@ class CommandRecorder(
         val recorder = createMediaRecorder()
         val startedAt = System.currentTimeMillis()
         activeRecorder = recorder
+        debugLogStore?.recordEvent("command_recorder_started", mapOf("maxDurationMs" to maxDurationMs, "outputName" to file.name))
         try {
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -60,12 +64,14 @@ class CommandRecorder(
             stopRecorder(recorder)
             val durationMs = System.currentTimeMillis() - startedAt
             logs.log(ActionLogType.RECORDING_STOPPED, "Recording stopped after ${durationMs}ms")
+            debugLogStore?.recordEvent("command_recorder_stopped", mapOf("durationMs" to durationMs, "bytes" to file.length()))
             if (durationMs < 400 || file.length() < 512) {
                 throw IllegalStateException("Audio clip was too short")
             }
             debugLogStore?.retainFile(file, "audio", file.name)
             RecordedCommand(file, durationMs, "audio/mp4")
         } catch (error: Throwable) {
+            debugLogStore?.recordEvent("command_recorder_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "bytes" to file.length()))
             debugLogStore?.retainFile(file, "audio", file.name)
             if (!settingsRepository.settings.first().debugLoggingEnabled) file.delete()
             throw error

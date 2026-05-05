@@ -143,6 +143,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         app.settingsRepository.updateDebugLoggingEnabled(value)
         app.speechDiagnosticsLogger.setEnabled(value)
         if (value) {
+            app.debugLogStore.recordEvent("setting_enabled", mapOf("source" to "settings_ui"))
             app.actionLogRepository.log(
                 ActionLogType.ACTION_RESULT,
                 "Debug logging enabled",
@@ -158,8 +159,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun debugLogsExportFileName(): String = app.debugLogStore.exportFileName()
 
     fun saveDebugLogsToUri(uri: Uri) = viewModelScope.launch {
+        app.debugLogStore.recordEvent("save_requested", mapOf("uriScheme" to uri.scheme))
         val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
         if (file == null) {
+            app.debugLogStore.recordEvent("save_empty")
             app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to save")
             return@launch
         }
@@ -170,15 +173,19 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                 } ?: error("Could not open destination file")
             }
         }.onSuccess {
+            app.debugLogStore.recordEvent("save_succeeded", mapOf("zipName" to file.name, "zipBytes" to file.length()))
             app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved debug logs")
         }.onFailure { error ->
+            app.debugLogStore.recordEvent("save_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "zipName" to file.name, "zipBytes" to file.length()))
             app.actionLogRepository.log(ActionLogType.ERROR, "Could not save debug logs: ${error.message}")
         }
     }
 
     fun shareDebugLogs() = viewModelScope.launch {
+        app.debugLogStore.recordEvent("share_requested")
         val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
         if (file == null) {
+            app.debugLogStore.recordEvent("share_empty")
             app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to share")
             return@launch
         }
@@ -192,11 +199,18 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         }
         val chooser = Intent.createChooser(sendIntent, "Share debug logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { app.startActivity(chooser) }
-            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened debug logs share sheet") }
-            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not share debug logs: ${error.message}") }
+            .onSuccess {
+                app.debugLogStore.recordEvent("share_sheet_opened", mapOf("zipName" to file.name, "zipBytes" to file.length()))
+                app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened debug logs share sheet")
+            }
+            .onFailure { error ->
+                app.debugLogStore.recordEvent("share_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "zipName" to file.name, "zipBytes" to file.length()))
+                app.actionLogRepository.log(ActionLogType.ERROR, "Could not share debug logs: ${error.message}")
+            }
     }
 
     fun clearDebugLogs() {
+        app.debugLogStore.recordEvent("clear_requested", mapOf("source" to "settings_ui"))
         app.speechDiagnosticsLogger.clear()
         viewModelScope.launch { app.debugLogStore.clear() }
     }

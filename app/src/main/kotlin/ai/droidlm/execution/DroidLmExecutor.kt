@@ -51,7 +51,8 @@ data class PendingConfirmation(
 
 data class PendingPlan(
     val transcript: String,
-    val plan: PlanPreview
+    val plan: PlanPreview,
+    val diagnosticSessionId: String? = null
 )
 
 data class PlannerKeySetupRequest(
@@ -94,19 +95,22 @@ class DroidLmExecutor(
     suspend fun executeTranscript(transcript: String): ActionResult {
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        debugEvent(null, "manual_execute_started", mapOf("transcriptLength" to stripped.length))
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
         promptHistoryRepository.record(stripped, "manual_command")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val settings = settingsRepository.settings.first()
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val action = parser.parse(stripped, packages)
+        debugEvent(null, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
         _uiState.value = _uiState.value.copy(parsedAction = action.displayName())
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
 
         val state = runCatching { portalController.getState() }.getOrNull()
         val safety = safetyClassifier.classify(stripped, action, state, settings.sensitiveAppScreenshotDenylist)
+        recordSafetyDecision(null, "manual_command", safety, settings.requireRiskConfirmation)
         if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
-            val confirmed = requestConfirmation(stripped, action, safety.reason ?: "This action is sensitive")
+            val confirmed = requestConfirmation(stripped, action, safety.reason ?: "This action is sensitive", null)
             if (!confirmed) return finish(ActionResult.fail("Command cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
         }
 
@@ -119,6 +123,7 @@ class DroidLmExecutor(
     suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        debugEvent(diagnosticSessionId, "voice_plan_started", mapOf("transcriptLength" to stripped.length, "hasSessionId" to (diagnosticSessionId != null)))
         promptHistoryRepository.record(stripped, "voice_prompt")
         _plannerKeySetupRequest.value = null
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano", lastResult = "")
@@ -146,8 +151,26 @@ class DroidLmExecutor(
             logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing or unreadable", "OPENAI_API_KEY_MISSING")
             return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
         }
-        val state = runCatching { portalController.getState() }.getOrNull()
-        val deviceContext = runCatching { deviceContextAggregator.collect(stripped, state) }.getOrNull()
+        val stateResult = runCatching { portalController.getState() }
+        stateResult
+            .onSuccess { state -> debugEvent(diagnosticSessionId, "portal_state_collected", portalStateFields(state)) }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "portal_state_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+        val state = stateResult.getOrNull()
+        val deviceContextResult = runCatching { deviceContextAggregator.collect(stripped, state) }
+        deviceContextResult
+            .onSuccess { context ->
+                debugEvent(
+                    diagnosticSessionId,
+                    "device_context_collected",
+                    mapOf(
+                        "packageCount" to context.packages.size,
+                        "activePackage" to context.activeApp?.packageName,
+                        "extraKeyCount" to context.extras.length()
+                    )
+                )
+            }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+        val deviceContext = deviceContextResult.getOrNull()
         val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
         val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps, activeApp, deviceContext)
@@ -164,7 +187,7 @@ class DroidLmExecutor(
             }
             is RelayCallResult.Success -> {
                 val plan = result.value
-                val pending = PendingPlan(stripped, plan)
+                val pending = PendingPlan(stripped, plan, diagnosticSessionId)
                 _pendingPlan.value = pending
                 _uiState.value = _uiState.value.copy(
                     parsedAction = "PLAN ${plan.steps.size} steps via ${plan.model}",
@@ -190,6 +213,7 @@ class DroidLmExecutor(
 
     suspend fun acceptPendingPlan(alwaysAcceptSafePlans: Boolean): ActionResult {
         val pending = _pendingPlan.value ?: return ActionResult.fail("No pending plan", "NO_PENDING_PLAN")
+        debugEvent(pending.diagnosticSessionId, "pending_plan_accepted", mapOf("alwaysAcceptSafePlans" to alwaysAcceptSafePlans, "stepCount" to pending.plan.steps.size))
         if (alwaysAcceptSafePlans && pending.plan.isSafe) {
             settingsRepository.updateAutoAcceptSafePlans(true)
         }
@@ -198,9 +222,11 @@ class DroidLmExecutor(
     }
 
     fun rejectPendingPlan() {
+        val pending = _pendingPlan.value
         _pendingPlan.value = null
         _uiState.value = _uiState.value.copy(status = "Plan rejected", lastResult = "Plan rejected")
         logs.log(ActionLogType.CONFIRMATION_REJECTED, "User rejected GPT plan")
+        debugEvent(pending?.diagnosticSessionId, "pending_plan_rejected", mapOf("stepCount" to (pending?.plan?.steps?.size ?: 0)))
     }
 
     fun clearPlannerKeySetupRequest() {
@@ -216,6 +242,7 @@ class DroidLmExecutor(
 
     fun cancelActive() {
         cancelled = true
+        debugEvent(null, "cancel_requested", mapOf("hadPendingConfirmation" to (_pendingConfirmation.value != null), "hadPendingPlan" to (_pendingPlan.value != null)))
         confirmationDeferred?.complete(false)
         _pendingConfirmation.value = null
         _pendingPlan.value = null
@@ -226,34 +253,43 @@ class DroidLmExecutor(
 
     private suspend fun executePlan(pending: PendingPlan): ActionResult {
         val settings = settingsRepository.settings.first()
+        val sessionId = pending.diagnosticSessionId
         _pendingPlan.value = null
         if (pending.plan.steps.isEmpty()) {
+            debugEvent(sessionId, "plan_execute_failed", mapOf("reason" to "empty_plan"))
             return finish(ActionResult.fail("Planner returned no steps", "EMPTY_PLAN"))
         }
+        debugEvent(sessionId, "plan_execute_started", mapOf("stepCount" to pending.plan.steps.size, "maxSteps" to settings.maxAutonomousSteps, "summaryLength" to pending.plan.summary.length))
         _uiState.value = _uiState.value.copy(status = "Executing plan", parsedAction = "PLAN ${pending.plan.steps.size} steps")
         var last = ActionResult.ok("Started plan")
         for (step in pending.plan.steps.take(settings.maxAutonomousSteps)) {
             ensureNotCancelled()?.let { return finish(it) }
             val state = runCatching { portalController.getState() }.getOrNull()
             val safety = safetyClassifier.classify(pending.transcript, step.action, state, settings.sensitiveAppScreenshotDenylist)
+            debugEvent(sessionId, "plan_step_ready", mapOf("index" to step.index, "action" to step.actionLabel, "requiresConfirmation" to step.requiresConfirmation))
+            recordSafetyDecision(sessionId, "plan_step_${step.index}", safety, settings.requireRiskConfirmation)
             if ((step.requiresConfirmation && settings.requireRiskConfirmation) || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
                 val confirmed = requestConfirmation(
                     pending.transcript,
                     step.action,
-                    safety.reason ?: step.reason.ifBlank { "Planner marked this step as sensitive" }
+                    safety.reason ?: step.reason.ifBlank { "Planner marked this step as sensitive" },
+                    sessionId
                 )
                 if (!confirmed) return finish(ActionResult.fail("Plan cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
             }
             logs.log(ActionLogType.ACTION_STARTED, "Plan step ${step.index}: ${step.actionLabel}", step.reason)
-            last = executeAction(step.action, pending.transcript, finishState = false)
+            last = executeAction(step.action, pending.transcript, finishState = false, diagnosticSessionId = sessionId)
+            debugEvent(sessionId, "plan_step_result", mapOf("index" to step.index, "action" to step.actionLabel, "success" to last.success, "message" to last.message, "errorCode" to last.errorCode))
             if (!last.success) return finish(last)
         }
+        debugEvent(sessionId, "plan_execute_succeeded", mapOf("stepCount" to pending.plan.steps.take(settings.maxAutonomousSteps).size, "lastMessage" to last.message))
         return finish(ActionResult.ok("Plan executed: ${pending.plan.summary}"))
     }
 
     fun respondToConfirmation(accepted: Boolean) {
         if (accepted) logs.log(ActionLogType.CONFIRMATION_ACCEPTED, "User accepted confirmation")
         else logs.log(ActionLogType.CONFIRMATION_REJECTED, "User rejected confirmation")
+        debugEvent(null, "confirmation_user_response", mapOf("accepted" to accepted, "hadPending" to (_pendingConfirmation.value != null)))
         confirmationDeferred?.complete(accepted)
         confirmationDeferred = null
         _pendingConfirmation.value = null
@@ -279,6 +315,7 @@ class DroidLmExecutor(
         var lastResult = ActionResult.ok("Started local LLM loop")
         for (step in 1..maxSteps.coerceAtLeast(1)) {
             ensureNotCancelled()?.let { return finish(it) }
+            debugEvent(null, "local_loop_step_started", mapOf("step" to step, "maxSteps" to maxSteps, "historySize" to history.size))
             _uiState.value = _uiState.value.copy(status = "Planning step $step/$maxSteps")
             val state = portalController.getState()
             val deviceContext = deviceContextAggregator.collect(goal, state, history)
@@ -299,11 +336,13 @@ class DroidLmExecutor(
                     logs.log(ActionLogType.PARSED_ACTION, action.displayName())
                     if (action == DroidLmAction.Done) return finish(ActionResult.ok("Task complete"))
                     val safety = safetyClassifier.classify(goal, action, state, settings.sensitiveAppScreenshotDenylist)
+                    recordSafetyDecision(null, "local_loop_step_$step", safety, settings.requireRiskConfirmation)
                     if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
-                        val confirmed = requestConfirmation(goal, action, safety.reason ?: "This action is sensitive")
+                        val confirmed = requestConfirmation(goal, action, safety.reason ?: "This action is sensitive", null)
                         if (!confirmed) return finish(ActionResult.fail("Planner action cancelled", "CONFIRMATION_REJECTED"))
                     }
                     lastResult = executeAction(action, goal, finishState = false)
+                    debugEvent(null, "local_loop_step_result", mapOf("step" to step, "action" to action.displayName(), "success" to lastResult.success, "errorCode" to lastResult.errorCode))
                     history += "${action.displayName()} -> ${lastResult.success}: ${lastResult.message}"
                     if (!lastResult.success || action is DroidLmAction.NoOp) return finish(lastResult)
                 }
@@ -314,19 +353,22 @@ class DroidLmExecutor(
 
     private suspend fun runMobilerunTask(goal: String): ActionResult {
         _uiState.value = _uiState.value.copy(status = "Running Mobilerun Cloud task")
+        debugEvent(null, "mobilerun_task_started", mapOf("goalLength" to goal.length))
         val result = mobilerunCloudClient.runTaskNonStreaming(goal)
+        debugEvent(null, "mobilerun_task_result", mapOf("success" to result.success, "message" to result.message))
         return finish(ActionResult(result.success, result.message, if (result.success) null else "MOBILERUN_FAILED"))
     }
 
-    private suspend fun executeAction(action: DroidLmAction, transcript: String, finishState: Boolean = true): ActionResult {
+    private suspend fun executeAction(action: DroidLmAction, transcript: String, finishState: Boolean = true, diagnosticSessionId: String? = null): ActionResult {
         ensureNotCancelled()?.let { return finish(it) }
         logs.log(ActionLogType.ACTION_STARTED, action.displayName())
+        debugEvent(diagnosticSessionId, "action_started", mapOf("action" to action.displayName(), "finishState" to finishState, "transcriptLength" to transcript.length))
         _uiState.value = _uiState.value.copy(status = "Executing ${action.displayName()}")
         val result = when (action) {
             is DroidLmAction.NoOp -> ActionResult.fail(action.message, "NO_OP")
             is DroidLmAction.NeedLlmPlanning -> handlePlanning(transcript)
             is DroidLmAction.AskConfirmation -> {
-                val confirmed = requestConfirmation(transcript, action, action.reason)
+                val confirmed = requestConfirmation(transcript, action, action.reason, diagnosticSessionId)
                 if (confirmed) ActionResult.ok("Confirmation accepted") else ActionResult.fail("Confirmation rejected", "CONFIRMATION_REJECTED")
             }
             is DroidLmAction.OpenApp -> portalController.openApp(action.packageName)
@@ -341,6 +383,7 @@ class DroidLmExecutor(
             is DroidLmAction.TypeText -> textEditingController.insertTextAtSelection(action.text)
             DroidLmAction.TakeScreenshot -> {
                 val screenshot = portalController.takeScreenshot()
+                debugEvent(diagnosticSessionId, "screenshot_capture_result", mapOf("success" to screenshot.success, "hasBitmap" to (screenshot.bitmap != null), "errorCode" to screenshot.errorCode, "message" to screenshot.message))
                 if (screenshot.success && screenshot.bitmap != null) {
                     debugLogStore?.retainScreenshot(screenshot.bitmap, "take-screenshot")
                 }
@@ -364,8 +407,8 @@ class DroidLmExecutor(
             }
             is DroidLmAction.MoveCursor -> textEditingController.moveCursorBySemanticTarget(action.targetDescription)
             is DroidLmAction.TapTextAnchor -> textEditingController.insertTextAtAnchor(action.anchorText, action.anchorPosition, "")
-            DroidLmAction.OcrScreen -> runOcrScreen()
-            is DroidLmAction.AnalyzeScreenshot -> runOcrScreen()
+            DroidLmAction.OcrScreen -> runOcrScreen(diagnosticSessionId)
+            is DroidLmAction.AnalyzeScreenshot -> runOcrScreen(diagnosticSessionId)
             is DroidLmAction.VerifyTextChange -> ActionResult.ok("Verification requested: ${action.expectedText}")
             is DroidLmAction.InsertTextAtAnchor -> textEditingController.insertTextAtAnchor(action.anchorText, action.anchorPosition, action.text)
             is DroidLmAction.ReplaceTextRange -> textEditingController.replaceText(action.targetText, action.replacementText)
@@ -380,24 +423,35 @@ class DroidLmExecutor(
             is DroidLmAction.AddSpreadsheetRow -> workspaceFileOperationController.addSpreadsheetRow(transcript, action)
             DroidLmAction.Done -> ActionResult.ok("Done")
         }
+        debugEvent(diagnosticSessionId, "action_result", mapOf("action" to action.displayName(), "success" to result.success, "message" to result.message, "errorCode" to result.errorCode))
         logs.log(if (result.success) ActionLogType.ACTION_RESULT else ActionLogType.ERROR, result.message, result.errorCode)
         return if (finishState) finish(result) else result
     }
 
-    private suspend fun runOcrScreen(): ActionResult {
+    private suspend fun runOcrScreen(diagnosticSessionId: String? = null): ActionResult {
+        debugEvent(diagnosticSessionId, "ocr_screen_started")
         val screenshot = portalController.takeScreenshot()
+        debugEvent(diagnosticSessionId, "ocr_screenshot_result", mapOf("success" to screenshot.success, "hasBitmap" to (screenshot.bitmap != null), "errorCode" to screenshot.errorCode, "message" to screenshot.message))
         if (!screenshot.success || screenshot.bitmap == null) return ActionResult.fail(screenshot.message, screenshot.errorCode)
         debugLogStore?.retainScreenshot(screenshot.bitmap, "ocr-screen")
         logs.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR")
         logs.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
-        val deviceContext = runCatching { deviceContextAggregator.collect("Analyze screenshot", portalController.getState()) }.getOrNull()
+        val deviceContextResult = runCatching { deviceContextAggregator.collect("Analyze screenshot", portalController.getState()) }
+        deviceContextResult
+            .onSuccess { context -> debugEvent(diagnosticSessionId, "ocr_device_context_collected", mapOf("packageCount" to context.packages.size, "activePackage" to context.activeApp?.packageName)) }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "ocr_device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+        val deviceContext = deviceContextResult.getOrNull()
         return runCatching { ocrEngine.recognize(screenshot.bitmap, deviceContext) }
             .fold(
                 onSuccess = {
                     logs.log(ActionLogType.OCR_RESULT, "OCR detected ${it.lines.size} lines")
+                    debugEvent(diagnosticSessionId, "ocr_result", mapOf("lineCount" to it.lines.size, "elementCount" to it.elements.size, "source" to it.source.name))
                     ActionResult.ok("OCR detected ${it.lines.size} lines")
                 },
-                onFailure = { ActionResult.fail("OCR failed: ${it.message}", "OCR_FAILED") }
+                onFailure = {
+                    debugEvent(diagnosticSessionId, "ocr_failed", mapOf("message" to it.message, "errorClass" to it::class.java.name))
+                    ActionResult.fail("OCR failed: ${it.message}", "OCR_FAILED")
+                }
             )
     }
 
@@ -407,7 +461,7 @@ class DroidLmExecutor(
         return textEditingController.setSelection(target, 0, text.length)
     }
 
-    private suspend fun requestConfirmation(transcript: String, action: DroidLmAction, reason: String): Boolean {
+    private suspend fun requestConfirmation(transcript: String, action: DroidLmAction, reason: String, diagnosticSessionId: String? = null): Boolean {
         val deferred = CompletableDeferred<Boolean>()
         confirmationDeferred = deferred
         val pending = PendingConfirmation(
@@ -419,11 +473,19 @@ class DroidLmExecutor(
         )
         _pendingConfirmation.value = pending
         logs.log(ActionLogType.CONFIRMATION_REQUIRED, reason)
+        debugEvent(
+            diagnosticSessionId,
+            "confirmation_requested",
+            mapOf("id" to pending.id, "action" to pending.actionLabel, "reasonLength" to reason.length, "transcriptLength" to transcript.length)
+        )
         _uiState.value = _uiState.value.copy(status = "Waiting for confirmation")
         return try {
-            withTimeout(30_000) { deferred.await() }
+            withTimeout(30_000) { deferred.await() }.also { accepted ->
+                debugEvent(diagnosticSessionId, "confirmation_result", mapOf("id" to pending.id, "accepted" to accepted, "timedOut" to false))
+            }
         } catch (_: TimeoutCancellationException) {
             logs.log(ActionLogType.CONFIRMATION_REJECTED, "Confirmation timed out")
+            debugEvent(diagnosticSessionId, "confirmation_result", mapOf("id" to pending.id, "accepted" to false, "timedOut" to true))
             false
         } finally {
             confirmationDeferred = null
@@ -436,6 +498,36 @@ class DroidLmExecutor(
 
     private fun SafetyDecision.needsConfirmationPrompt(requireRiskConfirmation: Boolean): Boolean =
         requiresConfirmation && (requireRiskConfirmation || mandatoryConfirmation)
+
+    private fun debugEvent(sessionId: String?, event: String, fields: Map<String, Any?> = emptyMap()) {
+        diagnostics.record(sessionId, "executor_$event", fields)
+    }
+
+    private fun recordSafetyDecision(sessionId: String?, source: String, safety: SafetyDecision, requireRiskConfirmation: Boolean) {
+        debugEvent(
+            sessionId,
+            "safety_decision",
+            mapOf(
+                "source" to source,
+                "requiresConfirmation" to safety.requiresConfirmation,
+                "mandatoryConfirmation" to safety.mandatoryConfirmation,
+                "confirmationPromptNeeded" to safety.needsConfirmationPrompt(requireRiskConfirmation),
+                "category" to safety.category,
+                "blocked" to safety.blocked,
+                "reasonLength" to (safety.reason?.length ?: 0)
+            )
+        )
+    }
+
+    private fun portalStateFields(state: ai.droidlm.portal.PortalState): Map<String, Any?> = mapOf(
+        "packageName" to state.packageName,
+        "activityName" to state.activityName,
+        "screenWidth" to state.screenWidth,
+        "screenHeight" to state.screenHeight,
+        "nodeCount" to state.nodes.size,
+        "editableNodeCount" to state.nodes.count { it.editable },
+        "focusedNodeCount" to state.nodes.count { it.focused }
+    )
 
     private fun finish(result: ActionResult): ActionResult {
         _uiState.value = _uiState.value.copy(

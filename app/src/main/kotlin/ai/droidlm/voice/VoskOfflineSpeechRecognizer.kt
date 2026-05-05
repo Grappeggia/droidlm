@@ -98,6 +98,9 @@ class VoskOfflineSpeechRecognizer(
                 mapOf("file" to it.name, "format" to "pcm_s16le_mono", "sampleRate" to SAMPLE_RATE)
             )
         }
+        if (audioCaptureFile != null && audioCaptureOutput == null) {
+            diagnostics.record(diagnosticSessionId, "debug_audio_capture_open_failed", mapOf("file" to audioCaptureFile.name))
+        }
         stopRequested = false
         cancelRequested = false
         activeAudioRecord = recorder
