@@ -17,6 +17,8 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         val selectionEnd = focusedEditable?.textSelectionEnd
         val uiMode = detectUiMode(state, focusedEditable)
         val visibleText = visibleText(state.nodes)
+        val visibleDocuments = visibleDocuments(state.nodes, uiMode)
+        val selectedDocument = selectedDocument(state.nodes, visibleDocuments)
         val title = inferDocumentTitle(state.nodes)
         val sharingFlowActive = uiMode == "SHARE_DIALOG"
         val deleteFlowActive = hasAnyText(state.nodes, "delete", "move to trash", "remove")
@@ -51,7 +53,9 @@ class GoogleDocsContextProvider : DeviceContextProvider {
                 JSONObject()
                     .put("uiMode", uiMode)
                     .put("isGoogleDocs", true)
-                    .put("availableActions", JSONArray(availableActions(uiMode, focusedEditable)))
+                    .put("visibleDocuments", visibleDocuments)
+                    .put("selectedDocument", selectedDocument)
+                    .put("availableActions", JSONArray(availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)))
             )
             .put("editor", editor)
             .put("selectionContext", selection)
@@ -64,7 +68,7 @@ class GoogleDocsContextProvider : DeviceContextProvider {
                     .put("textAfterCursor", cap(textAfterCursor(editableText, selectionEnd), MAX_CURSOR_TEXT))
                     .put("currentParagraph", cap(currentParagraph(editableText, selectionStart), MAX_CURSOR_TEXT))
             )
-            .put("availableDocActions", JSONArray(availableActions(uiMode, focusedEditable)))
+            .put("availableDocActions", JSONArray(availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)))
             .put("safety", safety)
     }
 
@@ -115,7 +119,38 @@ class GoogleDocsContextProvider : DeviceContextProvider {
             .firstOrNull()
     }
 
-    private fun availableActions(uiMode: String, focusedEditable: UiNode?): List<String> {
+    private fun visibleDocuments(nodes: List<UiNode>, uiMode: String): JSONArray {
+        if (uiMode == "DOCUMENT_EDIT" || uiMode == "FORMAT_TOOLBAR" || uiMode == "COMMENT_PANEL") return JSONArray()
+        val rows = nodes.asSequence()
+            .filter { it.visible && (it.clickable || it.effectiveActions.isNotEmpty() || !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank()) }
+            .mapNotNull { documentCandidate(it) }
+            .distinctBy { it.optString("title") }
+            .take(50)
+            .toList()
+        return JSONArray(rows)
+    }
+
+    private fun documentCandidate(node: UiNode): JSONObject? {
+        val raw = listOfNotNull(node.text, node.contentDescription).joinToString(" ").trim()
+        if (raw.isBlank() || raw.length < 2 || raw.length > 180) return null
+        val lower = raw.lowercase()
+        if (lower in documentListGenericLabels()) return null
+        val targetNodeId = node.tapTargetNodeId()
+        return JSONObject()
+            .put("title", raw)
+            .put("nodeId", targetNodeId ?: JSONObject.NULL)
+            .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
+            .put("tappable", targetNodeId != null)
+            .put("confidence", if (targetNodeId != null) 0.7 else 0.3)
+    }
+
+    private fun selectedDocument(nodes: List<UiNode>, visibleDocuments: JSONArray): JSONObject {
+        val selected = nodes.firstOrNull { it.selected || it.focused }
+        if (selected != null) return documentCandidate(selected) ?: JSONObject()
+        return if (visibleDocuments.length() == 1) visibleDocuments.optJSONObject(0) ?: JSONObject() else JSONObject()
+    }
+
+    private fun availableActions(uiMode: String, focusedEditable: UiNode?, hasVisibleDocuments: Boolean): List<String> {
         val actions = linkedSetOf("OPEN_DOC", "OPEN_FIND")
         when (uiMode) {
             "DOCUMENT_EDIT", "FORMAT_TOOLBAR" -> {
@@ -135,8 +170,20 @@ class GoogleDocsContextProvider : DeviceContextProvider {
             actions += "TYPE_TEXT"
             actions += "REPLACE_TEXT"
         }
+        if (hasVisibleDocuments) actions += "OPEN_RECENT_DOC"
         return actions.toList()
     }
+
+    private fun UiNode.tapTargetNodeId(): String? {
+        if (availableActions.any { it.droidLmAction == "TAP_NODE" }) return nodeId
+        return effectiveActions.firstOrNull { it.droidLmAction == "TAP_NODE" }?.targetNodeId
+            ?: nodeId.takeIf { clickable }
+    }
+
+    private fun documentListGenericLabels(): Set<String> = setOf(
+        "docs", "google docs", "recent documents", "owned by me", "shared with me", "templates",
+        "edit", "share", "comments", "more options", "undo", "redo", "find", "format", "search"
+    )
 
     private fun safetyContext(text: String, sharingFlowActive: Boolean, deleteFlowActive: Boolean): JSONObject = JSONObject()
         .put("containsEmail", EMAIL_REGEX.containsMatchIn(text))

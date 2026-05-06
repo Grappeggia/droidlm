@@ -61,11 +61,18 @@ class DroidLMAccessibilityService : AccessibilityService() {
     suspend fun tapNode(nodeId: String): ActionResult {
         refreshNodeCache()
         val node = nodeCache[nodeId] ?: return ActionResult.fail("Node is no longer available: $nodeId", "NODE_NOT_FOUND")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_CLICK) && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return ActionResult.ok("Clicked node $nodeId")
+        val clickTarget = tapCandidates(node).firstOrNull { candidate ->
+            hasAction(candidate, AccessibilityNodeInfo.ACTION_CLICK) && candidate.isEnabled && candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
-        val rect = Rect().also { node.getBoundsInScreen(it) }
-        if (rect.isEmpty) return ActionResult.fail("Node has no tappable bounds: $nodeId", "NODE_BOUNDS_MISSING")
+        if (clickTarget != null) {
+            val suffix = if (clickTarget === node) "" else " via nearest tappable parent"
+            return ActionResult.ok("Clicked node $nodeId$suffix")
+        }
+        val rect = tapCandidates(node).firstNotNullOfOrNull { candidate ->
+            val bounds = tappableBounds(candidate)
+            if (bounds != null && (candidate === node || isTappableNode(candidate))) bounds else null
+        }
+        if (rect == null) return ActionResult.fail("Node has no tappable bounds: $nodeId", "NODE_BOUNDS_MISSING")
         return tap(rect.centerX(), rect.centerY())
     }
 
@@ -328,7 +335,7 @@ class DroidLMAccessibilityService : AccessibilityService() {
 
     private fun buildNodeId(node: AccessibilityNodeInfo, path: String): String {
         val viewId = node.viewIdResourceName?.takeIf { it.isNotBlank() }
-        return viewId ?: listOfNotNull(node.packageName, node.className, path).joinToString(":")
+        return if (viewId != null) "$viewId@$path" else listOfNotNull(node.packageName, node.className, path).joinToString(":")
     }
 
     private fun AccessibilityNodeInfo.toEditableTarget(nodeId: String): EditableTarget {
@@ -354,6 +361,24 @@ class DroidLMAccessibilityService : AccessibilityService() {
     private fun hasAction(node: AccessibilityNodeInfo, actionId: Int): Boolean {
         return node.actionList.any { it.id == actionId } || (node.actions and actionId) == actionId
     }
+
+    private fun tapCandidates(node: AccessibilityNodeInfo): Sequence<AccessibilityNodeInfo> = sequence {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops <= MAX_TAP_PARENT_HOPS) {
+            yield(current)
+            current = current.parent
+            hops += 1
+        }
+    }
+
+    private fun tappableBounds(node: AccessibilityNodeInfo): Rect? {
+        val rect = Rect().also { node.getBoundsInScreen(it) }
+        return rect.takeUnless { it.isEmpty }
+    }
+
+    private fun isTappableNode(node: AccessibilityNodeInfo): Boolean =
+        node.isEnabled && node.isVisibleToUser && (node.isClickable || hasAction(node, AccessibilityNodeInfo.ACTION_CLICK))
 
     private fun stateDescription(node: AccessibilityNodeInfo): String? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) node.stateDescription?.toString() else null
@@ -423,6 +448,7 @@ class DroidLMAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        private const val MAX_TAP_PARENT_HOPS = 12
         private val currentService = AtomicReference<DroidLMAccessibilityService?>()
         fun current(): DroidLMAccessibilityService? = currentService.get()
     }

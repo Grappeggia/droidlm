@@ -53,7 +53,7 @@ ACTION_SCHEMA = {
         "action": {
             "type": "string",
             "enum": [
-                "OPEN_APP", "OPEN_SETTINGS", "TAP", "LONG_PRESS", "SWIPE", "TYPE_TEXT",
+                "OPEN_APP", "OPEN_SETTINGS", "TAP_NODE", "FOCUS_NODE", "TAP", "LONG_PRESS", "SWIPE", "TYPE_TEXT",
                 "GLOBAL_BACK", "GLOBAL_HOME", "TAKE_SCREENSHOT", "FOCUS_EDITABLE",
                 "SET_SELECTION", "INSERT_TEXT", "REPLACE_SELECTION", "SET_FULL_TEXT",
                 "MOVE_CURSOR", "TAP_TEXT_ANCHOR", "OCR_SCREEN", "ANALYZE_SCREENSHOT",
@@ -194,6 +194,9 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
         "For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations. "
         "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
         "If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files. "
+        "Use tapTargetNodeId or focusTargetNodeId when present; never tap a static label id when effectiveActions has a targetNodeId. "
+        "For visible files or documents, use visibleFiles/visibleDocuments nodeId values because they are already tappable row targets. "
+        "Do not emit LONG_PRESS from LONG_CLICK node actions unless exact x/y coordinates are available. "
         "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal, local actions. Never claim actions were executed. "
         "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
@@ -236,6 +239,9 @@ async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
         "For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations. "
         "If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing. "
         "If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files. "
+        "Use tapTargetNodeId or focusTargetNodeId when present; never tap a static label id when effectiveActions has a targetNodeId. "
+        "For visible files or documents, use visibleFiles/visibleDocuments nodeId values because they are already tappable row targets. "
+        "Do not emit LONG_PRESS from LONG_CLICK node actions unless exact x/y coordinates are available. "
         "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal actions. Ask for confirmation for risky operations. Never claim you executed an action. "
         "Use DONE when task is complete. Do not request actions outside the available Android tool schema."

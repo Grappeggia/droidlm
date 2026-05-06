@@ -55,6 +55,7 @@ class UiContextJsonTest {
         assertTrue(node.has("center"))
         assertTrue(node.getJSONArray("actions").toString().contains("CLICK"))
         assertEquals("TAP_NODE", node.getJSONArray("availableActions").getJSONObject(0).getString("droidLmAction"))
+        assertEquals("com.google.android.apps.docs:id/search_bar", node.getString("tapTargetNodeId"))
         assertTrue(json.getJSONObject("actionMap").getJSONArray("com.google.android.apps.docs:id/search_bar").toString().contains("CLICK"))
     }
 
@@ -96,6 +97,7 @@ class UiContextJsonTest {
         val node = UiContextJson.portalStateToJson(state).getJSONArray("nodes").getJSONObject(0)
         val effective = node.getJSONArray("effectiveActions").getJSONObject(0)
         assertEquals("row-node", effective.getString("targetNodeId"))
+        assertEquals("row-node", node.getString("tapTargetNodeId"))
         assertEquals("TAP_NODE", effective.getString("droidLmAction"))
         assertEquals("nearest actionable parent", effective.getString("reason"))
     }

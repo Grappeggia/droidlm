@@ -3,6 +3,7 @@ package ai.droidlm.portal
 import android.view.accessibility.AccessibilityNodeInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -13,6 +14,7 @@ class UiNodeActionCatalogTest {
     @Test fun mapsAccessibilityActionsToDroidLmAffordances() {
         val node = AccessibilityNodeInfo.obtain().apply {
             addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, "Open"))
+            addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK, "Options"))
             addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_SET_TEXT, "Set text"))
             addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, "Scroll forward"))
         }
@@ -33,6 +35,9 @@ class UiNodeActionCatalogTest {
 
         val scrollForward = actions.first { it.name == "SCROLL_FORWARD" }
         assertEquals("SWIPE", scrollForward.droidLmAction)
+
+        val longClick = actions.first { it.name == "LONG_CLICK" }
+        assertNull(longClick.droidLmAction)
     }
 
     @Test fun createsEffectiveActionsTargetingParentNode() {

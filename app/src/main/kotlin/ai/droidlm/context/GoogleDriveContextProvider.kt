@@ -92,12 +92,14 @@ class GoogleDriveContextProvider : DeviceContextProvider {
             lower.endsWith(".jpg") || lower.endsWith(".png") -> "image"
             else -> JSONObject.NULL
         }
+        val targetNodeId = node.tapTargetNodeId()
         return JSONObject()
             .put("title", raw)
             .put("type", type)
-            .put("nodeId", node.nodeId)
-            .put("tappable", node.clickable)
-            .put("confidence", if (node.clickable) 0.62 else 0.42)
+            .put("nodeId", targetNodeId ?: JSONObject.NULL)
+            .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
+            .put("tappable", targetNodeId != null)
+            .put("confidence", if (targetNodeId != null) 0.72 else 0.3)
     }
 
     private fun selectedFile(nodes: List<UiNode>, visibleFiles: JSONArray): JSONObject {
@@ -146,6 +148,12 @@ class GoogleDriveContextProvider : DeviceContextProvider {
             actions += "DELETE"
         }
         return actions.toList()
+    }
+
+    private fun UiNode.tapTargetNodeId(): String? {
+        if (availableActions.any { it.droidLmAction == "TAP_NODE" }) return nodeId
+        return effectiveActions.firstOrNull { it.droidLmAction == "TAP_NODE" }?.targetNodeId
+            ?: nodeId.takeIf { clickable }
     }
 
     private fun genericLabels(): Set<String> = setOf(

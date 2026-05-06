@@ -76,6 +76,8 @@ object UiContextJson {
         putIfTrue(json, "screenReaderFocusable", screenReaderFocusable)
         putIfTrue(json, "showingHintText", showingHintText)
         putIfTrue(json, "contextClickable", contextClickable)
+        putIfPresent(json, "tapTargetNodeId", actionTargetNodeId("TAP_NODE"))
+        putIfPresent(json, "focusTargetNodeId", actionTargetNodeId("FOCUS_NODE"))
         collectionInfo?.let { json.put("collectionInfo", it.toJson()) }
         collectionItemInfo?.let { json.put("collectionItemInfo", it.toJson()) }
         rangeInfo?.let { json.put("rangeInfo", it.toJson()) }
@@ -110,6 +112,11 @@ object UiContextJson {
             json.put("argSchema", JSONObject().also { schema -> argSchema.forEach { (key, value) -> schema.put(key, value) } })
         }
         return json
+    }
+
+    private fun UiNode.actionTargetNodeId(droidLmAction: String): String? {
+        if (availableActions.any { it.droidLmAction == droidLmAction }) return nodeId
+        return effectiveActions.firstOrNull { it.droidLmAction == droidLmAction }?.targetNodeId
     }
 
     private fun UiCollectionInfo.toJson(): JSONObject = JSONObject()

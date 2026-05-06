@@ -95,7 +95,10 @@ class OpenAiClient(
         If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files.
         Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content.
         Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
+        Use tapTargetNodeId or focusTargetNodeId when present. Never tap a static label's own id when effectiveActions has a targetNodeId.
         Use each UI node's availableActions as the source of truth for direct node operations, and effectiveActions when a label/text child points to a clickable or focusable parent.
+        For visible files or documents, use the visibleFiles/visibleDocuments nodeId; these are already the tappable row targets.
+        Do not turn LONG_CLICK node actions into LONG_PRESS unless exact x/y coordinates are available.
         Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT or SET_SELECTION, use text actions instead of simulated typing when editing existing text.
         Keep plans to the minimum safe number of steps.
 
@@ -119,7 +122,10 @@ class OpenAiClient(
         If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files.
         Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content.
         Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
+        Use tapTargetNodeId or focusTargetNodeId when present. Never tap a static label's own id when effectiveActions has a targetNodeId.
         Use each UI node's availableActions as the source of truth for direct node operations, and effectiveActions when a label/text child points to a clickable or focusable parent.
+        For visible files or documents, use the visibleFiles/visibleDocuments nodeId; these are already the tappable row targets.
+        Do not turn LONG_CLICK node actions into LONG_PRESS unless exact x/y coordinates are available.
         Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT or SET_SELECTION, use text actions instead of simulated typing when editing existing text.
         If the task is complete, return {"action":"DONE","reason":"Task complete"}.
         If no useful action is possible, return {"action":"NO_OP","message":"brief reason"}.

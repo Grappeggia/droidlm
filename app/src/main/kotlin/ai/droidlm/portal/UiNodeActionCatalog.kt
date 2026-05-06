@@ -53,7 +53,7 @@ object UiNodeActionCatalog {
         add(ActionSpec("CLEAR_FOCUS", AccessibilityNodeInfo.ACTION_CLEAR_FOCUS))
         add(ActionSpec("SELECT", AccessibilityNodeInfo.ACTION_SELECT))
         add(ActionSpec("CLEAR_SELECTION", AccessibilityNodeInfo.ACTION_CLEAR_SELECTION))
-        add(ActionSpec("LONG_CLICK", AccessibilityNodeInfo.ACTION_LONG_CLICK, droidLmAction = "LONG_PRESS"))
+        add(ActionSpec("LONG_CLICK", AccessibilityNodeInfo.ACTION_LONG_CLICK))
         add(ActionSpec("SET_TEXT", AccessibilityNodeInfo.ACTION_SET_TEXT, droidLmAction = "SET_FULL_TEXT", requiresArgs = true, argSchema = mapOf("text" to "string"), safe = false))
         add(ActionSpec("SET_SELECTION", AccessibilityNodeInfo.ACTION_SET_SELECTION, droidLmAction = "SET_SELECTION", requiresArgs = true, argSchema = mapOf("start" to "int", "end" to "int")))
         add(ActionSpec("COPY", AccessibilityNodeInfo.ACTION_COPY))

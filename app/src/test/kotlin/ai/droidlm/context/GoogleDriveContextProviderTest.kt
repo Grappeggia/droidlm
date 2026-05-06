@@ -3,6 +3,7 @@ package ai.droidlm.context
 import ai.droidlm.context.GoogleWorkspaceContextUtils.DRIVE_PACKAGE
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.UiNode
+import ai.droidlm.portal.UiNodeAction
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -53,11 +54,37 @@ class GoogleDriveContextProviderTest {
         assertTrue(json.getJSONObject("safety").getBoolean("containsEmail"))
     }
 
+    @Test fun usesEffectiveParentTargetForVisibleFileLabels() = runTest {
+        val state = PortalState(
+            packageName = DRIVE_PACKAGE,
+            activityName = "DriveActivity",
+            screenWidth = 100,
+            screenHeight = 200,
+            nodes = listOf(
+                node(text = "My Drive"),
+                node(nodeId = "row-1", clickable = true),
+                node(
+                    nodeId = "entry-label",
+                    text = "Summary of Docs document",
+                    effectiveActions = listOf(UiNodeAction("CLICK", droidLmAction = "TAP_NODE", targetNodeId = "row-1"))
+                )
+            )
+        )
+
+        val json = GoogleDriveContextProvider().collect(DeviceContextRequest(null, state, null, emptyList()))
+        val file = json.getJSONObject("driveContext").getJSONArray("visibleFiles").getJSONObject(0)
+
+        assertEquals("row-1", file.getString("nodeId"))
+        assertEquals("entry-label", file.getString("labelNodeId"))
+        assertTrue(file.getBoolean("tappable"))
+    }
+
     private fun node(
         nodeId: String? = null,
         text: String? = null,
         contentDescription: String? = null,
-        clickable: Boolean = false
+        clickable: Boolean = false,
+        effectiveActions: List<UiNodeAction> = emptyList()
     ) = UiNode(
         nodeId = nodeId,
         text = text,
@@ -69,6 +96,7 @@ class GoogleDriveContextProviderTest {
         editable = false,
         focused = false,
         enabled = true,
-        selected = false
+        selected = false,
+        effectiveActions = effectiveActions
     )
 }
