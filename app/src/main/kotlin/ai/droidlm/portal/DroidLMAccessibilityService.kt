@@ -8,6 +8,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -253,13 +254,22 @@ class DroidLMAccessibilityService : AccessibilityService() {
         rootInActiveWindow?.let { collectNodes(it, "w0") }
     }
 
-    private fun collectNodes(node: AccessibilityNodeInfo, path: String): List<UiNode> {
+    private fun collectNodes(
+        node: AccessibilityNodeInfo,
+        path: String,
+        parentId: String? = null,
+        depth: Int = 0,
+        childIndex: Int = 0,
+        inheritedActions: List<UiNodeAction> = emptyList()
+    ): List<UiNode> {
         val id = buildNodeId(node, path)
         nodeCache[id] = node
         val rect = Rect().also { node.getBoundsInScreen(it) }
+        val availableActions = UiNodeActionCatalog.fromAccessibilityNode(node)
+        val effectiveActions = if (availableActions.isEmpty() && inheritedActions.isNotEmpty()) inheritedActions else emptyList()
         val uiNode = UiNode(
             nodeId = id,
-            text = node.text?.toString(),
+            text = if (node.isPassword) null else node.text?.toString(),
             contentDescription = node.contentDescription?.toString(),
             className = node.className?.toString(),
             packageName = node.packageName?.toString(),
@@ -279,11 +289,38 @@ class DroidLMAccessibilityService : AccessibilityService() {
             password = node.isPassword,
             textSelectionStart = node.textSelectionStart.takeIf { it >= 0 },
             textSelectionEnd = node.textSelectionEnd.takeIf { it >= 0 },
-            actions = actionLabels(node)
+            actions = UiNodeActionCatalog.labels(availableActions),
+            hintText = node.hintText?.toString(),
+            stateDescription = stateDescription(node),
+            tooltipText = node.tooltipText?.toString(),
+            paneTitle = node.paneTitle?.toString(),
+            inputType = node.inputType.takeIf { it != 0 },
+            inputTypeLabel = inputTypeLabel(node.inputType),
+            textEntryKey = node.isTextEntryKey,
+            multiLine = node.isMultiLine || ((node.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0),
+            heading = node.isHeading,
+            screenReaderFocusable = node.isScreenReaderFocusable,
+            showingHintText = node.isShowingHintText,
+            contextClickable = node.isContextClickable,
+            parentId = parentId,
+            depth = depth,
+            childIndex = childIndex,
+            collectionInfo = node.collectionInfo?.toUiCollectionInfo(),
+            collectionItemInfo = node.collectionItemInfo?.toUiCollectionItemInfo(),
+            rangeInfo = node.rangeInfo?.toUiRangeInfo(),
+            availableActions = availableActions,
+            effectiveActions = effectiveActions
         )
+        val childInheritedActions = if (availableActions.isNotEmpty()) {
+            UiNodeActionCatalog.effectiveFromParent(id, availableActions)
+        } else {
+            inheritedActions
+        }
         val children = buildList {
             for (index in 0 until node.childCount) {
-                node.getChild(index)?.let { addAll(collectNodes(it, "$path.$index")) }
+                node.getChild(index)?.let { child ->
+                    addAll(collectNodes(child, "$path.$index", id, depth + 1, index, childInheritedActions))
+                }
             }
         }
         return listOf(uiNode) + children
@@ -314,19 +351,75 @@ class DroidLMAccessibilityService : AccessibilityService() {
         return node.isEditable || className.contains("EditText", ignoreCase = true) || hasAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)
     }
 
-    private fun actionLabels(node: AccessibilityNodeInfo): List<String> = buildList {
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_CLICK)) add("CLICK")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_FOCUS)) add("FOCUS")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_SET_TEXT)) add("SET_TEXT")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_SET_SELECTION)) add("SET_SELECTION")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) add("SCROLL_FORWARD")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) add("SCROLL_BACKWARD")
-        if (hasAction(node, AccessibilityNodeInfo.ACTION_LONG_CLICK)) add("LONG_CLICK")
-    }
-
-
     private fun hasAction(node: AccessibilityNodeInfo, actionId: Int): Boolean {
         return node.actionList.any { it.id == actionId } || (node.actions and actionId) == actionId
+    }
+
+    private fun stateDescription(node: AccessibilityNodeInfo): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) node.stateDescription?.toString() else null
+
+    private fun AccessibilityNodeInfo.CollectionInfo.toUiCollectionInfo(): UiCollectionInfo = UiCollectionInfo(
+        rowCount = rowCount.takeIf { it >= 0 },
+        columnCount = columnCount.takeIf { it >= 0 },
+        hierarchical = isHierarchical,
+        selectionMode = selectionModeLabel(selectionMode)
+    )
+
+    private fun AccessibilityNodeInfo.CollectionItemInfo.toUiCollectionItemInfo(): UiCollectionItemInfo = UiCollectionItemInfo(
+        rowIndex = rowIndex.takeIf { it >= 0 },
+        rowSpan = rowSpan.takeIf { it >= 0 },
+        columnIndex = columnIndex.takeIf { it >= 0 },
+        columnSpan = columnSpan.takeIf { it >= 0 },
+        heading = isHeading,
+        selected = isSelected
+    )
+
+    private fun AccessibilityNodeInfo.RangeInfo.toUiRangeInfo(): UiRangeInfo = UiRangeInfo(
+        type = rangeTypeLabel(type),
+        min = min,
+        max = max,
+        current = current
+    )
+
+    private fun selectionModeLabel(selectionMode: Int): String = when (selectionMode) {
+        AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_NONE -> "NONE"
+        AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_SINGLE -> "SINGLE"
+        AccessibilityNodeInfo.CollectionInfo.SELECTION_MODE_MULTIPLE -> "MULTIPLE"
+        else -> "UNKNOWN_$selectionMode"
+    }
+
+    private fun rangeTypeLabel(type: Int): String = when (type) {
+        AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT -> "INT"
+        AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT -> "FLOAT"
+        AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT -> "PERCENT"
+        else -> "UNKNOWN_$type"
+    }
+
+    private fun inputTypeLabel(inputType: Int): String? {
+        if (inputType == 0) return null
+        val typeClass = inputType and InputType.TYPE_MASK_CLASS
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        val classLabel = when (typeClass) {
+            InputType.TYPE_CLASS_TEXT -> "TEXT"
+            InputType.TYPE_CLASS_NUMBER -> "NUMBER"
+            InputType.TYPE_CLASS_PHONE -> "PHONE"
+            InputType.TYPE_CLASS_DATETIME -> "DATETIME"
+            else -> "UNKNOWN_CLASS_$typeClass"
+        }
+        val variationLabel = when {
+            variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS -> "EMAIL_ADDRESS"
+            variation == InputType.TYPE_TEXT_VARIATION_URI -> "URI"
+            variation == InputType.TYPE_TEXT_VARIATION_PASSWORD -> "PASSWORD"
+            variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD -> "VISIBLE_PASSWORD"
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD -> "WEB_PASSWORD"
+            variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD -> "NUMBER_PASSWORD"
+            variation == InputType.TYPE_TEXT_VARIATION_PERSON_NAME -> "PERSON_NAME"
+            variation == InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS -> "POSTAL_ADDRESS"
+            variation == InputType.TYPE_TEXT_VARIATION_NORMAL -> null
+            variation == 0 -> null
+            else -> "VARIATION_$variation"
+        }
+        return listOfNotNull(classLabel, variationLabel).joinToString("_")
     }
 
     companion object {

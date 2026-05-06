@@ -59,5 +59,60 @@ data class UiNode(
     val password: Boolean = false,
     val textSelectionStart: Int? = null,
     val textSelectionEnd: Int? = null,
-    val actions: List<String> = emptyList()
+    val actions: List<String> = emptyList(),
+    val hintText: String? = null,
+    val stateDescription: String? = null,
+    val tooltipText: String? = null,
+    val paneTitle: String? = null,
+    val inputType: Int? = null,
+    val inputTypeLabel: String? = null,
+    val textEntryKey: Boolean = false,
+    val multiLine: Boolean = false,
+    val heading: Boolean = false,
+    val screenReaderFocusable: Boolean = false,
+    val showingHintText: Boolean = false,
+    val contextClickable: Boolean = false,
+    val parentId: String? = null,
+    val depth: Int = 0,
+    val childIndex: Int = 0,
+    val collectionInfo: UiCollectionInfo? = null,
+    val collectionItemInfo: UiCollectionItemInfo? = null,
+    val rangeInfo: UiRangeInfo? = null,
+    val availableActions: List<UiNodeAction> = emptyList(),
+    val effectiveActions: List<UiNodeAction> = emptyList()
+)
+
+data class UiNodeAction(
+    val name: String,
+    val androidActionId: Int? = null,
+    val label: String? = null,
+    val droidLmAction: String? = null,
+    val requiresArgs: Boolean = false,
+    val argSchema: Map<String, String> = emptyMap(),
+    val safe: Boolean = true,
+    val targetNodeId: String? = null,
+    val reason: String? = null
+)
+
+data class UiCollectionInfo(
+    val rowCount: Int? = null,
+    val columnCount: Int? = null,
+    val hierarchical: Boolean = false,
+    val selectionMode: String? = null
+)
+
+data class UiCollectionItemInfo(
+    val rowIndex: Int? = null,
+    val rowSpan: Int? = null,
+    val columnIndex: Int? = null,
+    val columnSpan: Int? = null,
+    val heading: Boolean = false,
+    val selected: Boolean = false
+)
+
+data class UiRangeInfo(
+    val type: String? = null,
+    val min: Float? = null,
+    val max: Float? = null,
+    val current: Float? = null
 )
