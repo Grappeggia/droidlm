@@ -22,7 +22,7 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.sqrt
 
-class VoskOfflineSpeechRecognizer(
+open class VoskOfflineSpeechRecognizer(
     private val context: Context,
     private val logs: ActionLogRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
@@ -41,20 +41,20 @@ class VoskOfflineSpeechRecognizer(
     private val modelLock = Any()
     private var cachedModel: Model? = null
 
-    fun supportsLanguage(languageTag: String): Boolean {
+    open fun supportsLanguage(languageTag: String): Boolean {
         val locale = Locale.forLanguageTag(languageTag)
         val language = locale.language.ifBlank { languageTag.substringBefore('-') }
         return language.equals("en", ignoreCase = true)
     }
 
-    fun stopCurrent(): Boolean {
+    open fun stopCurrent(): Boolean {
         val recorder = activeAudioRecord ?: return false
         stopRequested = true
         runCatching { recorder.stop() }
         return true
     }
 
-    fun cancelCurrent(): Boolean {
+    open fun cancelCurrent(): Boolean {
         val recorder = activeAudioRecord ?: return false
         cancelRequested = true
         stopRequested = true
@@ -62,7 +62,7 @@ class VoskOfflineSpeechRecognizer(
         return true
     }
 
-    suspend fun recognizeCommand(
+    open suspend fun recognizeCommand(
         languageTag: String,
         maxDurationMs: Long,
         diagnosticSessionId: String?,

@@ -15,3 +15,5 @@ node_modules/
 .npmrc
 test-artifacts/
 __pycache__/
+support-logs/
+

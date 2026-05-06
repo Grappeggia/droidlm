@@ -552,7 +552,7 @@ class SpeechRecognitionController(
         val recognizer = activeRecognizer
         if (recognizer == null) {
             val sessionId = activeDiagnosticSessionId
-            val stopped = voskRecognizer.cancelCurrent()
+            val stopped = voskRecognizer.stopCurrent()
             if (stopped) {
                 diagnostics.record(sessionId, "stop_current_requested", mapOf("provider" to VOSK_PROVIDER_LABEL))
                 _state.value = _state.value.copy(
