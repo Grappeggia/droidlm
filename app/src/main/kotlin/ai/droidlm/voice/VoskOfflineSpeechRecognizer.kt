@@ -313,7 +313,7 @@ open class VoskOfflineSpeechRecognizer(
     private fun rounded(value: Double): Double = kotlin.math.round(value * 10.0) / 10.0
 
     private companion object {
-        const val ASSET_MODEL_NAME = "vosk-model-small-en-us-0.15"
+        const val ASSET_MODEL_NAME = "vosk-model-en-us-0.22-lgraph"
         const val READY_MARKER = ".droidlm-model-ready"
         const val SAMPLE_RATE = 16_000
         const val BUFFER_BYTES = 4_096
