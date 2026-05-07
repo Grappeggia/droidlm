@@ -14,6 +14,30 @@ object ActionUiFormatter {
         is DroidLmAction.FocusNode -> semanticLabel(reason, fallbackLabel) ?: "Focus an on-screen item"
         is DroidLmAction.LongPress -> semanticLabel(reason, fallbackLabel) ?: "Long-press the screen"
         is DroidLmAction.Swipe -> semanticLabel(reason, fallbackLabel) ?: "Swipe on the screen"
+        is DroidLmAction.Scroll -> semanticLabel(reason, fallbackLabel) ?: "Scroll ${action.direction.name.lowercase()}"
+        is DroidLmAction.TapText -> semanticLabel(reason, fallbackLabel) ?: "Tap \"${shorten(action.text, 28)}\""
+        is DroidLmAction.LongPressNode -> semanticLabel(reason, fallbackLabel) ?: "Long-press \"${shorten(action.text ?: action.nodeId.orEmpty(), 28)}\""
+        is DroidLmAction.WaitForUi -> semanticLabel(reason, fallbackLabel) ?: "Wait for the screen to update"
+        is DroidLmAction.PressImeAction -> semanticLabel(reason, fallbackLabel) ?: "Press ${action.action.name.lowercase()} on the keyboard"
+        is DroidLmAction.DialogAction -> semanticLabel(reason, fallbackLabel) ?: "Respond to the dialog"
+        is DroidLmAction.OpenMenu -> semanticLabel(reason, fallbackLabel) ?: "Open the ${menuLabel(action.menu)} menu"
+        is DroidLmAction.SelectTab -> semanticLabel(reason, fallbackLabel) ?: "Select the ${shorten(action.label, 28)} tab"
+        is DroidLmAction.SetToggle -> semanticLabel(reason, fallbackLabel) ?: "Turn ${toggleValueLabel(action.value)} ${shorten(action.label ?: "the setting", 28)}"
+        is DroidLmAction.ExpandCollapse -> semanticLabel(reason, fallbackLabel) ?: if (action.expanded) "Expand the section" else "Collapse the section"
+        is DroidLmAction.SetSlider -> semanticLabel(reason, fallbackLabel) ?: "Adjust the slider"
+        is DroidLmAction.Refresh -> semanticLabel(reason, fallbackLabel) ?: "Refresh the current screen"
+        is DroidLmAction.FindTextOnScreen -> semanticLabel(reason, fallbackLabel) ?: "Find \"${shorten(action.text, 28)}\" on screen"
+        DroidLmAction.OpenNotifications -> "Open notifications"
+        DroidLmAction.OpenQuickSettings -> "Open Quick Settings"
+        DroidLmAction.OpenRecents -> "Open recent apps"
+        is DroidLmAction.SwitchApp -> semanticLabel(reason, fallbackLabel) ?: "Switch to ${shorten(action.appName ?: action.packageName ?: "another app", 24)}"
+        is DroidLmAction.OpenUrl -> semanticLabel(reason, fallbackLabel) ?: "Open ${shorten(action.url, 28)}"
+        is DroidLmAction.OpenDeepLink -> semanticLabel(reason, fallbackLabel) ?: "Open app link"
+        is DroidLmAction.PickFromChooser -> semanticLabel(reason, fallbackLabel) ?: "Choose ${shorten(action.itemText, 28)}"
+        is DroidLmAction.PickFile -> semanticLabel(reason, fallbackLabel) ?: "Pick file ${shorten(action.fileName, 28)}"
+        is DroidLmAction.PickPhoto -> semanticLabel(reason, fallbackLabel) ?: "Pick photo ${shorten(action.photoLabel, 28)}"
+        is DroidLmAction.ShareToApp -> semanticLabel(reason, fallbackLabel) ?: "Share to ${shorten(action.appName ?: action.packageName ?: "another app", 24)}"
+        is DroidLmAction.PermissionDecision -> semanticLabel(reason, fallbackLabel) ?: if (action.allow) "Allow the permission" else "Deny the permission"
         is DroidLmAction.TypeText -> "Type text"
         DroidLmAction.TakeScreenshot -> "Take a screenshot"
         is DroidLmAction.FocusEditable -> semanticLabel(reason, fallbackLabel) ?: "Focus the text field"
@@ -50,6 +74,30 @@ object ActionUiFormatter {
         is DroidLmAction.FocusNode -> compactSemanticLabel(reason, fallbackLabel) ?: "Focus item"
         is DroidLmAction.LongPress -> compactSemanticLabel(reason, fallbackLabel) ?: "Long press"
         is DroidLmAction.Swipe -> compactSemanticLabel(reason, fallbackLabel) ?: "Swipe"
+        is DroidLmAction.Scroll -> compactSemanticLabel(reason, fallbackLabel) ?: "Scroll ${action.direction.name.lowercase()}"
+        is DroidLmAction.TapText -> compactSemanticLabel(reason, fallbackLabel) ?: "Tap \"${shorten(action.text, 16)}\""
+        is DroidLmAction.LongPressNode -> compactSemanticLabel(reason, fallbackLabel) ?: "Long press item"
+        is DroidLmAction.WaitForUi -> "Wait"
+        is DroidLmAction.PressImeAction -> "Keyboard ${action.action.name.lowercase()}"
+        is DroidLmAction.DialogAction -> "Dialog"
+        is DroidLmAction.OpenMenu -> "Open menu"
+        is DroidLmAction.SelectTab -> "Tab \"${shorten(action.label, 14)}\""
+        is DroidLmAction.SetToggle -> if (action.value) "Toggle on" else "Toggle off"
+        is DroidLmAction.ExpandCollapse -> if (action.expanded) "Expand" else "Collapse"
+        is DroidLmAction.SetSlider -> "Adjust slider"
+        is DroidLmAction.Refresh -> "Refresh"
+        is DroidLmAction.FindTextOnScreen -> "Find text"
+        DroidLmAction.OpenNotifications -> "Notifications"
+        DroidLmAction.OpenQuickSettings -> "Quick Settings"
+        DroidLmAction.OpenRecents -> "Recents"
+        is DroidLmAction.SwitchApp -> "Switch app"
+        is DroidLmAction.OpenUrl -> "Open URL"
+        is DroidLmAction.OpenDeepLink -> "Open app link"
+        is DroidLmAction.PickFromChooser -> "Pick choice"
+        is DroidLmAction.PickFile -> "Pick file"
+        is DroidLmAction.PickPhoto -> "Pick photo"
+        is DroidLmAction.ShareToApp -> "Share"
+        is DroidLmAction.PermissionDecision -> if (action.allow) "Allow" else "Deny"
         is DroidLmAction.TypeText -> "Type"
         DroidLmAction.TakeScreenshot -> "Screenshot"
         is DroidLmAction.FocusEditable -> "Focus field"
@@ -122,6 +170,11 @@ object ActionUiFormatter {
             "type text",
             "insert text",
             "replace text",
+            "tap text",
+            "scroll",
+            "wait for ui",
+            "dialog action",
+            "open menu",
             "set full text",
             "analyze screenshot",
             "ocr screen",
@@ -140,6 +193,14 @@ object ActionUiFormatter {
         AnchorPosition.BEFORE -> "before"
         AnchorPosition.AFTER -> "after"
     }
+
+    private fun menuLabel(menu: MenuType): String = when (menu) {
+        MenuType.OVERFLOW -> "overflow"
+        MenuType.NAVIGATION_DRAWER -> "navigation drawer"
+        MenuType.CONTEXT -> "context"
+    }
+
+    private fun toggleValueLabel(value: Boolean): String = if (value) "on" else "off"
 
     private fun shorten(value: String, maxChars: Int): String {
         val cleaned = value.replace(Regex("\\s+"), " ").trim()

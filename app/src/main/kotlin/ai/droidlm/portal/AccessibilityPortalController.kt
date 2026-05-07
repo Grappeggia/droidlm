@@ -1,11 +1,16 @@
 package ai.droidlm.portal
 
+import ai.droidlm.intent.DialogButtonRole
+import ai.droidlm.intent.ImeActionType
+import ai.droidlm.intent.MenuType
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.textedit.EditableTarget
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.net.Uri
 import android.provider.Settings
 import android.view.KeyEvent
 import kotlinx.coroutines.Dispatchers
@@ -70,8 +75,51 @@ class AccessibilityPortalController(
 
     override suspend fun tap(x: Int, y: Int): ActionResult = withService { it.tap(x, y) }
     override suspend fun tapNode(nodeId: String): ActionResult = withService { it.tapNode(nodeId) }
+    override suspend fun tapText(text: String, role: String?, containerNodeId: String?): ActionResult = withService {
+        it.tapText(text, role, containerNodeId)
+    }
 
     override suspend fun focusNode(nodeId: String): ActionResult = withService { it.focusNode(nodeId) }
+
+    override suspend fun longPressNode(nodeId: String?, text: String?, durationMs: Int): ActionResult = withService {
+        it.longPressNode(nodeId, text, durationMs)
+    }
+
+    override suspend fun scroll(direction: ScrollDirection, targetNodeId: String?, untilText: String?): ActionResult = withService {
+        it.scroll(direction, targetNodeId, untilText)
+    }
+
+    override suspend fun waitForUi(text: String?, packageName: String?, nodeId: String?, timeoutMs: Int): ActionResult = withService {
+        it.waitForUi(text, packageName, nodeId, timeoutMs)
+    }
+
+    override suspend fun pressImeAction(action: ImeActionType): ActionResult = withService { it.pressImeAction(action) }
+
+    override suspend fun dialogAction(buttonText: String?, role: DialogButtonRole?): ActionResult = withService {
+        it.dialogAction(buttonText, role)
+    }
+
+    override suspend fun openMenu(menu: MenuType): ActionResult = withService { it.openMenu(menu) }
+
+    override suspend fun selectTab(label: String): ActionResult = withService { it.selectTab(label) }
+
+    override suspend fun setToggle(label: String?, nodeId: String?, value: Boolean): ActionResult = withService {
+        it.setToggle(label, nodeId, value)
+    }
+
+    override suspend fun expandCollapse(label: String?, nodeId: String?, expanded: Boolean): ActionResult = withService {
+        it.expandCollapse(label, nodeId, expanded)
+    }
+
+    override suspend fun setSlider(label: String?, nodeId: String?, value: Float?, percent: Int?): ActionResult = withService {
+        it.setSlider(label, nodeId, value, percent)
+    }
+
+    override suspend fun refresh(targetNodeId: String?): ActionResult = withService { it.refresh(targetNodeId) }
+
+    override suspend fun findTextOnScreen(text: String, tapOnMatch: Boolean): ActionResult = withService {
+        it.findTextOnScreen(text, tapOnMatch)
+    }
 
 
     override suspend fun longPress(x: Int, y: Int, durationMs: Int): ActionResult = withService {
@@ -100,6 +148,11 @@ class AccessibilityPortalController(
 
     override suspend fun pressBack(): ActionResult = withService { it.performGlobalBack() }
     override suspend fun pressHome(): ActionResult = withService { it.performGlobalHome() }
+    override suspend fun openNotifications(): ActionResult = withService { it.performGlobalNotifications() }
+    override suspend fun openQuickSettings(): ActionResult = withService { it.performGlobalQuickSettings() }
+    override suspend fun openRecents(): ActionResult = withService { it.performGlobalRecents() }
+    override suspend fun openUrl(url: String): ActionResult = openViewIntent(url, "Opened $url")
+    override suspend fun openDeepLink(uri: String): ActionResult = openViewIntent(uri, "Opened app link")
     override suspend fun takeScreenshot(): ScreenshotResult = withServiceScreenshot { it.takeScreenshotBitmap() }
 
     override suspend fun findFocusedEditableNode(): EditableTarget? = withContext(Dispatchers.Main) {
@@ -124,6 +177,18 @@ class AccessibilityPortalController(
 
     override suspend fun performSetText(nodeId: String, text: String): ActionResult = withService {
         it.performSetText(nodeId, text)
+    }
+
+    private suspend fun openViewIntent(uri: String, successMessage: String): ActionResult = withContext(Dispatchers.Main) {
+        val normalized = uri.trim()
+        if (normalized.isBlank()) return@withContext ActionResult.fail("URL is blank", "INVALID_URI")
+        runCatching {
+            val parsed = if (normalized.matches(Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:.*"))) Uri.parse(normalized) else Uri.parse("https://$normalized")
+            context.startActivity(Intent(Intent.ACTION_VIEW, parsed).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.fold(
+            onSuccess = { ActionResult.ok(successMessage) },
+            onFailure = { ActionResult.fail("Failed to open $normalized: ${it.message}", "OPEN_VIEW_FAILED") }
+        )
     }
 
     private suspend fun withService(block: suspend (DroidLMAccessibilityService) -> ActionResult): ActionResult =

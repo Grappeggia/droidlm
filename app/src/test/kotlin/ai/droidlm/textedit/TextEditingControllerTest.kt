@@ -5,6 +5,10 @@ import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.ocr.OcrResult
 import ai.droidlm.ocr.OcrSource
+import ai.droidlm.intent.DialogButtonRole
+import ai.droidlm.intent.ImeActionType
+import ai.droidlm.intent.MenuType
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalController
@@ -72,6 +76,19 @@ class TextEditingControllerTest {
         override suspend fun tapNode(nodeId: String) = ActionResult.ok()
         override suspend fun focusNode(nodeId: String) = ActionResult.ok()
         override suspend fun longPress(x: Int, y: Int, durationMs: Int) = ActionResult.ok()
+        override suspend fun tapText(text: String, role: String?, containerNodeId: String?) = ActionResult.ok()
+        override suspend fun longPressNode(nodeId: String?, text: String?, durationMs: Int) = ActionResult.ok()
+        override suspend fun scroll(direction: ScrollDirection, targetNodeId: String?, untilText: String?) = ActionResult.ok()
+        override suspend fun waitForUi(text: String?, packageName: String?, nodeId: String?, timeoutMs: Int) = ActionResult.ok()
+        override suspend fun pressImeAction(action: ImeActionType) = ActionResult.ok()
+        override suspend fun dialogAction(buttonText: String?, role: DialogButtonRole?) = ActionResult.ok()
+        override suspend fun openMenu(menu: MenuType) = ActionResult.ok()
+        override suspend fun selectTab(label: String) = ActionResult.ok()
+        override suspend fun setToggle(label: String?, nodeId: String?, value: Boolean) = ActionResult.ok()
+        override suspend fun expandCollapse(label: String?, nodeId: String?, expanded: Boolean) = ActionResult.ok()
+        override suspend fun setSlider(label: String?, nodeId: String?, value: Float?, percent: Int?) = ActionResult.ok()
+        override suspend fun refresh(targetNodeId: String?) = ActionResult.ok()
+        override suspend fun findTextOnScreen(text: String, tapOnMatch: Boolean) = ActionResult.ok()
         override suspend fun swipe(startX: Int, startY: Int, endX: Int, endY: Int, durationMs: Int) = ActionResult.ok()
         override suspend fun typeText(text: String, clear: Boolean) = inputTextAtCurrentCursor(text)
         override suspend fun inputTextAtCurrentCursor(text: String): ActionResult {
@@ -86,6 +103,11 @@ class TextEditingControllerTest {
         override suspend fun sendKeyCode(keyCode: Int) = ActionResult.ok()
         override suspend fun pressBack() = ActionResult.ok()
         override suspend fun pressHome() = ActionResult.ok()
+        override suspend fun openNotifications() = ActionResult.ok()
+        override suspend fun openQuickSettings() = ActionResult.ok()
+        override suspend fun openRecents() = ActionResult.ok()
+        override suspend fun openUrl(url: String) = ActionResult.ok()
+        override suspend fun openDeepLink(uri: String) = ActionResult.ok()
         override suspend fun takeScreenshot() = ScreenshotResult(false, message = "unused")
         override suspend fun findFocusedEditableNode() = target
         override suspend fun findEditableNodes() = listOf(target)

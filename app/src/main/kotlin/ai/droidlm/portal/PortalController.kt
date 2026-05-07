@@ -1,5 +1,9 @@
 package ai.droidlm.portal
 
+import ai.droidlm.intent.DialogButtonRole
+import ai.droidlm.intent.ImeActionType
+import ai.droidlm.intent.MenuType
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.textedit.EditableTarget
 
 interface PortalController {
@@ -16,6 +20,19 @@ interface PortalController {
     suspend fun tapNode(nodeId: String): ActionResult
     suspend fun focusNode(nodeId: String): ActionResult
     suspend fun longPress(x: Int, y: Int, durationMs: Int = 600): ActionResult
+    suspend fun tapText(text: String, role: String? = null, containerNodeId: String? = null): ActionResult
+    suspend fun longPressNode(nodeId: String? = null, text: String? = null, durationMs: Int = 600): ActionResult
+    suspend fun scroll(direction: ScrollDirection, targetNodeId: String? = null, untilText: String? = null): ActionResult
+    suspend fun waitForUi(text: String? = null, packageName: String? = null, nodeId: String? = null, timeoutMs: Int = 2_500): ActionResult
+    suspend fun pressImeAction(action: ImeActionType): ActionResult
+    suspend fun dialogAction(buttonText: String? = null, role: DialogButtonRole? = null): ActionResult
+    suspend fun openMenu(menu: MenuType): ActionResult
+    suspend fun selectTab(label: String): ActionResult
+    suspend fun setToggle(label: String? = null, nodeId: String? = null, value: Boolean): ActionResult
+    suspend fun expandCollapse(label: String? = null, nodeId: String? = null, expanded: Boolean): ActionResult
+    suspend fun setSlider(label: String? = null, nodeId: String? = null, value: Float? = null, percent: Int? = null): ActionResult
+    suspend fun refresh(targetNodeId: String? = null): ActionResult
+    suspend fun findTextOnScreen(text: String, tapOnMatch: Boolean = false): ActionResult
     suspend fun swipe(
         startX: Int,
         startY: Int,
@@ -30,6 +47,11 @@ interface PortalController {
 
     suspend fun pressBack(): ActionResult
     suspend fun pressHome(): ActionResult
+    suspend fun openNotifications(): ActionResult
+    suspend fun openQuickSettings(): ActionResult
+    suspend fun openRecents(): ActionResult
+    suspend fun openUrl(url: String): ActionResult
+    suspend fun openDeepLink(uri: String): ActionResult
     suspend fun takeScreenshot(): ScreenshotResult
 
     suspend fun findFocusedEditableNode(): EditableTarget?

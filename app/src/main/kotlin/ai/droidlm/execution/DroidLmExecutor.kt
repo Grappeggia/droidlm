@@ -10,6 +10,7 @@ import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.intent.IntentParser
 import ai.droidlm.intent.SpeechTextNormalizer
+import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
@@ -184,7 +185,7 @@ class DroidLmExecutor(
             is RelayCallResult.Failure -> {
                 diagnostics.record(diagnosticSessionId, "openai_plan_failed", mapOf("errorCode" to result.errorCode, "message" to result.message.take(240)))
                 logs.log(ActionLogType.ERROR, "GPT planning failed: ${result.message}", result.errorCode)
-                finish(ActionResult.fail(result.message, result.errorCode))
+                finish(ActionResult.fail(userFacingPlannerMessage(result), result.errorCode))
             }
             is RelayCallResult.Success -> {
                 val plan = result.value
@@ -250,6 +251,12 @@ class DroidLmExecutor(
         _plannerKeySetupRequest.value = null
         _uiState.value = _uiState.value.copy(status = "Cancelled")
         logs.log(ActionLogType.CANCELLED, "Active automation loop cancelled")
+    }
+
+    fun prepareForNewRecording() {
+        val current = _uiState.value
+        if (current.status == "Idle" && current.lastResult.isBlank()) return
+        _uiState.value = current.copy(status = "Idle", lastResult = "", parsedAction = "")
     }
 
     private suspend fun executePlan(pending: PendingPlan): ActionResult {
@@ -331,7 +338,7 @@ class DroidLmExecutor(
                 return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
             }
             when (val planned = openAiClient.planAction(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp, deviceContext))) {
-                is RelayCallResult.Failure -> return finish(ActionResult.fail(planned.message, planned.errorCode))
+                is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(planned), planned.errorCode))
                 is RelayCallResult.Success -> {
                     val action = planned.value
                     logs.log(ActionLogType.PARSED_ACTION, action.displayName())
@@ -381,6 +388,30 @@ class DroidLmExecutor(
             is DroidLmAction.FocusNode -> portalController.focusNode(action.nodeId)
             is DroidLmAction.LongPress -> portalController.longPress(action.x, action.y, action.durationMs)
             is DroidLmAction.Swipe -> portalController.swipe(action.startX, action.startY, action.endX, action.endY, action.durationMs)
+            is DroidLmAction.Scroll -> portalController.scroll(action.direction, action.targetNodeId, action.untilText)
+            is DroidLmAction.TapText -> portalController.tapText(action.text, action.role, action.containerNodeId)
+            is DroidLmAction.LongPressNode -> portalController.longPressNode(action.nodeId, action.text, action.durationMs)
+            is DroidLmAction.WaitForUi -> portalController.waitForUi(action.text, action.packageName, action.nodeId, action.timeoutMs)
+            is DroidLmAction.PressImeAction -> portalController.pressImeAction(action.action)
+            is DroidLmAction.DialogAction -> portalController.dialogAction(action.buttonText, action.role)
+            is DroidLmAction.OpenMenu -> portalController.openMenu(action.menu)
+            is DroidLmAction.SelectTab -> portalController.selectTab(action.label)
+            is DroidLmAction.SetToggle -> portalController.setToggle(action.label, action.nodeId, action.value)
+            is DroidLmAction.ExpandCollapse -> portalController.expandCollapse(action.label, action.nodeId, action.expanded)
+            is DroidLmAction.SetSlider -> portalController.setSlider(action.label, action.nodeId, action.value, action.percent)
+            is DroidLmAction.Refresh -> portalController.refresh(action.targetNodeId)
+            is DroidLmAction.FindTextOnScreen -> portalController.findTextOnScreen(action.text, action.tapOnMatch)
+            DroidLmAction.OpenNotifications -> portalController.openNotifications()
+            DroidLmAction.OpenQuickSettings -> portalController.openQuickSettings()
+            DroidLmAction.OpenRecents -> portalController.openRecents()
+            is DroidLmAction.SwitchApp -> switchApp(action)
+            is DroidLmAction.OpenUrl -> portalController.openUrl(action.url)
+            is DroidLmAction.OpenDeepLink -> portalController.openDeepLink(action.uri)
+            is DroidLmAction.PickFromChooser -> portalController.tapText(action.itemText, role = "item")
+            is DroidLmAction.PickFile -> portalController.tapText(action.fileName, role = "item")
+            is DroidLmAction.PickPhoto -> portalController.tapText(action.photoLabel, role = "item")
+            is DroidLmAction.ShareToApp -> shareToApp(action)
+            is DroidLmAction.PermissionDecision -> portalController.dialogAction(role = if (action.allow) DialogButtonRole.POSITIVE else DialogButtonRole.NEGATIVE)
             is DroidLmAction.TypeText -> textEditingController.insertTextAtSelection(action.text)
             DroidLmAction.TakeScreenshot -> {
                 val screenshot = portalController.takeScreenshot()
@@ -536,5 +567,30 @@ class DroidLmExecutor(
             lastResult = result.message
         )
         return result
+    }
+
+    private fun userFacingPlannerMessage(result: RelayCallResult.Failure): String =
+        if (result.errorCode == "INVALID_JSON") {
+            "I couldn't turn that into a valid Android action. Please try again."
+        } else {
+            result.message
+        }
+
+    private suspend fun switchApp(action: DroidLmAction.SwitchApp): ActionResult {
+        action.packageName?.takeIf { it.isNotBlank() }?.let { return portalController.openApp(it) }
+        action.appName?.takeIf { it.isNotBlank() }?.let {
+            val visiblePick = portalController.tapText(it, role = "item")
+            if (visiblePick.success) return visiblePick
+        }
+        return portalController.openRecents()
+    }
+
+    private suspend fun shareToApp(action: DroidLmAction.ShareToApp): ActionResult {
+        action.appName?.takeIf { it.isNotBlank() }?.let {
+            val visiblePick = portalController.tapText(it, role = "item")
+            if (visiblePick.success) return visiblePick
+        }
+        action.packageName?.takeIf { it.isNotBlank() }?.let { return portalController.openApp(it) }
+        return ActionResult.fail("Share target is not visible on screen", "SHARE_TARGET_NOT_FOUND")
     }
 }

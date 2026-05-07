@@ -106,6 +106,7 @@ class WakeWordForegroundService : Service() {
                     "push_to_talk_settings_loaded",
                     mapOf("preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition)
                 )
+                app.executor.prepareForNewRecording()
                 app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Starting push-to-talk speech recognition")
                 val transcript = app.speechRecognitionController.recognizeCommand(
                     preferOffline = settings.preferOfflineSpeechRecognition,

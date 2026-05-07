@@ -2,7 +2,11 @@ package ai.droidlm.e2e
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.execution.DroidLmExecutor
+import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.intent.ImeActionType
+import ai.droidlm.intent.MenuType
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.ocr.OcrResult
 import ai.droidlm.ocr.OcrSource
@@ -240,6 +244,19 @@ class DroidLmActionKnownIssuesE2ETest {
         override suspend fun tapNode(nodeId: String): ActionResult = ActionResult.ok("Tapped $nodeId")
         override suspend fun focusNode(nodeId: String): ActionResult = focusEditable(nodeId)
         override suspend fun longPress(x: Int, y: Int, durationMs: Int): ActionResult = ActionResult.ok("Long pressed")
+        override suspend fun tapText(text: String, role: String?, containerNodeId: String?): ActionResult = ActionResult.ok("Tapped $text")
+        override suspend fun longPressNode(nodeId: String?, text: String?, durationMs: Int): ActionResult = ActionResult.ok("Long pressed ${nodeId ?: text}")
+        override suspend fun scroll(direction: ScrollDirection, targetNodeId: String?, untilText: String?): ActionResult = ActionResult.ok("Scrolled ${direction.name}")
+        override suspend fun waitForUi(text: String?, packageName: String?, nodeId: String?, timeoutMs: Int): ActionResult = ActionResult.ok("Waited")
+        override suspend fun pressImeAction(action: ImeActionType): ActionResult = ActionResult.ok("Pressed ${action.name}")
+        override suspend fun dialogAction(buttonText: String?, role: DialogButtonRole?): ActionResult = ActionResult.ok("Dialog action")
+        override suspend fun openMenu(menu: MenuType): ActionResult = ActionResult.ok("Opened menu")
+        override suspend fun selectTab(label: String): ActionResult = ActionResult.ok("Selected $label")
+        override suspend fun setToggle(label: String?, nodeId: String?, value: Boolean): ActionResult = ActionResult.ok("Toggle $value")
+        override suspend fun expandCollapse(label: String?, nodeId: String?, expanded: Boolean): ActionResult = ActionResult.ok("Expanded $expanded")
+        override suspend fun setSlider(label: String?, nodeId: String?, value: Float?, percent: Int?): ActionResult = ActionResult.ok("Set slider")
+        override suspend fun refresh(targetNodeId: String?): ActionResult = ActionResult.ok("Refreshed")
+        override suspend fun findTextOnScreen(text: String, tapOnMatch: Boolean): ActionResult = ActionResult.ok("Found $text")
         override suspend fun swipe(startX: Int, startY: Int, endX: Int, endY: Int, durationMs: Int): ActionResult = ActionResult.ok("Swiped")
         override suspend fun typeText(text: String, clear: Boolean): ActionResult {
             if (clear) {
@@ -268,6 +285,11 @@ class DroidLmActionKnownIssuesE2ETest {
 
         override suspend fun pressBack(): ActionResult = ActionResult.ok("Pressed back")
         override suspend fun pressHome(): ActionResult = ActionResult.ok("Pressed home")
+        override suspend fun openNotifications(): ActionResult = ActionResult.ok("Opened notifications")
+        override suspend fun openQuickSettings(): ActionResult = ActionResult.ok("Opened quick settings")
+        override suspend fun openRecents(): ActionResult = ActionResult.ok("Opened recents")
+        override suspend fun openUrl(url: String): ActionResult = ActionResult.ok("Opened $url")
+        override suspend fun openDeepLink(uri: String): ActionResult = ActionResult.ok("Opened $uri")
         override suspend fun takeScreenshot(): ScreenshotResult = ScreenshotResult(success = false, message = "Fake screenshot unavailable")
         override suspend fun findFocusedEditableNode(): EditableTarget? = editableTarget(focusedNodeId)
         override suspend fun findEditableNodes(): List<EditableTarget> = fields.keys.mapNotNull(::editableTarget)

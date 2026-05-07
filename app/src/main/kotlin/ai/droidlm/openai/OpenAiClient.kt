@@ -39,7 +39,7 @@ class OpenAiClient(
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, planPreviewPrompt(requestBody), maxTokens = 1800)
         val request = buildChatRequest(apiKey, payload)
-        return executeTracedChat("plan-preview", resolvedModel, payload, request) { assistantContent ->
+        return executeTracedChat("plan-preview", apiKey, resolvedModel, payload, request) { assistantContent ->
             val plan = relayJsonParser.parsePlanPreviewJson(assistantContent)
             ParsedChat(plan, plan.toDebugJson())
         }
@@ -50,7 +50,7 @@ class OpenAiClient(
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, planActionPrompt(requestBody), maxTokens = 900)
         val request = buildChatRequest(apiKey, payload)
-        return executeTracedChat("plan-action", resolvedModel, payload, request) { assistantContent ->
+        return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request) { assistantContent ->
             val action = relayJsonParser.parsePlanActionJson(assistantContent)
             ParsedChat(action, action.toDebugJson())
         }
@@ -97,19 +97,20 @@ class OpenAiClient(
           ]
         }
         Each step object must include an action field and all required fields for that action.
-        Supported actions: OPEN_APP, OPEN_SETTINGS, TAP_NODE, FOCUS_NODE, TAP, LONG_PRESS, SWIPE, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
+        Supported actions: OPEN_APP, OPEN_SETTINGS, TAP_NODE, FOCUS_NODE, TAP, LONG_PRESS, SWIPE, SCROLL, TAP_TEXT, LONG_PRESS_NODE, WAIT_FOR_UI, PRESS_IME_ACTION, DIALOG_ACTION, OPEN_MENU, SELECT_TAB, SET_TOGGLE, EXPAND_COLLAPSE, SET_SLIDER, REFRESH, FIND_TEXT_ON_SCREEN, OPEN_NOTIFICATIONS, OPEN_QUICK_SETTINGS, OPEN_RECENTS, SWITCH_APP, OPEN_URL, OPEN_DEEP_LINK, PICK_FROM_CHOOSER, PICK_FILE, PICK_PHOTO, SHARE_TO_APP, PERMISSION_DECISION, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
         For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations.
         If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing.
         If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files.
         Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content.
-        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
+        Prefer semantic actions over raw coordinates. Use SCROLL for scroll intents, TAP_TEXT for visible labels, LONG_PRESS_NODE for visible items, WAIT_FOR_UI after transitions, DIALOG_ACTION for popups, OPEN_MENU for drawer/overflow menus, SELECT_TAB for tab switches, SET_TOGGLE for switches, EXPAND_COLLAPSE for accordions, SET_SLIDER for sliders, REFRESH for pull-to-refresh flows, and OPEN_URL or OPEN_DEEP_LINK when direct navigation is safer.
+        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state and no semantic action fits.
         Use tapTargetNodeId or focusTargetNodeId when present. Never tap a static label's own id when effectiveActions has a targetNodeId.
         Use each UI node's availableActions as the source of truth for direct node operations, and effectiveActions when a label/text child points to a clickable or focusable parent.
         For visible files or documents, use the visibleFiles/visibleDocuments nodeId; these are already the tappable row targets.
-        Do not turn LONG_CLICK node actions into LONG_PRESS unless exact x/y coordinates are available.
-        Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT or SET_SELECTION, use text actions instead of simulated typing when editing existing text.
+        Do not emit malformed coordinate actions. If a scroll is intended but coordinates are unavailable, emit SCROLL with direction. If a long-press target is visible but x/y are unavailable, emit LONG_PRESS_NODE with nodeId or text. If a text label is visible but nodeId is missing, emit TAP_TEXT instead of TAP.
+        Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT, SET_SELECTION, LONG_CLICK, SCROLL_*, EXPAND, COLLAPSE, DISMISS, or SET_PROGRESS, use the matching semantic action instead of a gesture fallback.
         Keep plans to the minimum safe number of steps.
 
         Goal: ${request.goal}
@@ -131,12 +132,13 @@ class OpenAiClient(
         If Google Docs is not in DOCUMENT_EDIT mode, enter edit mode before typing. Prefer accessibility text and selection context over OCR; use OCR only when text context is missing.
         If Google Sheets is not in CELL_EDIT or FORMULA_BAR mode, enter cell edit mode before typing cell text. For Drive, prefer visible file nodeIds when opening/searching files.
         Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content.
-        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state.
+        Prefer semantic actions over raw coordinates. Use SCROLL for scroll intents, TAP_TEXT for visible labels, LONG_PRESS_NODE for visible items, WAIT_FOR_UI after transitions, DIALOG_ACTION for popups, OPEN_MENU for drawer/overflow menus, SELECT_TAB for tab switches, SET_TOGGLE for switches, EXPAND_COLLAPSE for accordions, SET_SLIDER for sliders, REFRESH for pull-to-refresh flows, and OPEN_URL or OPEN_DEEP_LINK when direct navigation is safer.
+        Prefer TAP_NODE or FOCUS_NODE with nodeId for visible UI targets. Only use TAP, LONG_PRESS, or SWIPE when exact coordinates are present in UI state and no semantic action fits.
         Use tapTargetNodeId or focusTargetNodeId when present. Never tap a static label's own id when effectiveActions has a targetNodeId.
         Use each UI node's availableActions as the source of truth for direct node operations, and effectiveActions when a label/text child points to a clickable or focusable parent.
         For visible files or documents, use the visibleFiles/visibleDocuments nodeId; these are already the tappable row targets.
-        Do not turn LONG_CLICK node actions into LONG_PRESS unless exact x/y coordinates are available.
-        Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT or SET_SELECTION, use text actions instead of simulated typing when editing existing text.
+        Do not emit malformed coordinate actions. If a scroll is intended but coordinates are unavailable, emit SCROLL with direction. If a long-press target is visible but x/y are unavailable, emit LONG_PRESS_NODE with nodeId or text. If a text label is visible but nodeId is missing, emit TAP_TEXT instead of TAP.
+        Prefer node-level actions with nodeId over coordinates. If a node offers SET_TEXT, SET_SELECTION, LONG_CLICK, SCROLL_*, EXPAND, COLLAPSE, DISMISS, or SET_PROGRESS, use the matching semantic action instead of a gesture fallback.
         If the task is complete, return {"action":"DONE","reason":"Task complete"}.
         If no useful action is possible, return {"action":"NO_OP","message":"brief reason"}.
 
@@ -151,6 +153,7 @@ class OpenAiClient(
 
     private suspend fun <T> executeTracedChat(
         source: String,
+        apiKey: String,
         model: String,
         requestJson: JSONObject,
         request: Request,
@@ -175,8 +178,9 @@ class OpenAiClient(
                 } else {
                     runCatching {
                         assistantContent = extractAssistantJson(rawResponse.orEmpty())
-                        val parsed = parser(assistantContent.orEmpty())
+                        val parsed = parseAssistantContent(apiKey, source, model, assistantContent.orEmpty(), parser)
                         parsedContent = parsed.debugJson
+                        assistantContent = parsed.assistantContent
                         parsed.value
                     }.fold(
                         onSuccess = { value -> RelayCallResult.Success(value) },
@@ -212,6 +216,49 @@ class OpenAiClient(
             success = result is RelayCallResult.Success
         )
         result
+    }
+
+    private fun <T> parseAssistantContent(
+        apiKey: String,
+        source: String,
+        model: String,
+        assistantJson: String,
+        parser: (String) -> ParsedChat<T>
+    ): ParsedAssistant<T> {
+        return runCatching { parser(assistantJson) }
+            .fold(
+                onSuccess = { parsed -> ParsedAssistant(parsed.value, parsed.debugJson, assistantJson) },
+                onFailure = { error ->
+                    val repairedAssistantJson = repairAssistantJson(apiKey, source, model, assistantJson, error.message ?: error::class.java.simpleName)
+                    val repaired = parser(repairedAssistantJson)
+                    val debugJson = JSONObject(repaired.debugJson.toString())
+                        .put("repairAttempted", true)
+                    ParsedAssistant(repaired.value, debugJson, repairedAssistantJson)
+                }
+            )
+    }
+
+    private fun repairAssistantJson(
+        apiKey: String,
+        source: String,
+        model: String,
+        invalidJson: String,
+        errorMessage: String
+    ): String {
+        val payload = buildChatPayload(
+            model = model,
+            prompt = repairPrompt(source, invalidJson, errorMessage),
+            maxTokens = 900
+        )
+        val request = buildChatRequest(apiKey, payload)
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val error = parseOpenAiError(body)
+                throw IOException(error.first ?: "OpenAI repair returned HTTP ${response.code}")
+            }
+            return extractAssistantJson(body)
+        }
     }
 
     private suspend fun retainLlmTrace(
@@ -263,6 +310,17 @@ class OpenAiClient(
             .trim()
         return content.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
     }
+
+    private fun repairPrompt(source: String, invalidJson: String, errorMessage: String): String = """
+        Repair this DroidLM $source JSON so it is valid for the original intent.
+        Return JSON only. Keep the same meaning. Prefer semantic Android actions like SCROLL, TAP_TEXT, LONG_PRESS_NODE, WAIT_FOR_UI, DIALOG_ACTION, OPEN_MENU, SELECT_TAB, SET_TOGGLE, EXPAND_COLLAPSE, SET_SLIDER, REFRESH, OPEN_NOTIFICATIONS, OPEN_QUICK_SETTINGS, OPEN_RECENTS, OPEN_URL, and OPEN_DEEP_LINK when they fit.
+        If coordinates are missing for a scroll intent, convert it to SCROLL with a direction.
+        If coordinates are missing for a long-press on a UI element, convert it to LONG_PRESS_NODE using nodeId or text.
+
+        Validation error: $errorMessage
+        Invalid JSON:
+        $invalidJson
+    """.trimIndent()
 
     private fun parseOpenAiError(body: String): Pair<String?, String?> {
         return runCatching {
@@ -326,6 +384,7 @@ class OpenAiClient(
         .put("displayName", displayName())
 
     private data class ParsedChat<T>(val value: T, val debugJson: JSONObject)
+    private data class ParsedAssistant<T>(val value: T, val debugJson: JSONObject, val assistantContent: String)
 
     private fun usesMaxCompletionTokens(model: String): Boolean {
         val normalized = model.trim().lowercase()

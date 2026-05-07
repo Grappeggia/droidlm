@@ -34,10 +34,10 @@ class UiNodeActionCatalogTest {
         assertFalse(setText.safe)
 
         val scrollForward = actions.first { it.name == "SCROLL_FORWARD" }
-        assertEquals("SWIPE", scrollForward.droidLmAction)
+        assertEquals("SCROLL", scrollForward.droidLmAction)
 
         val longClick = actions.first { it.name == "LONG_CLICK" }
-        assertNull(longClick.droidLmAction)
+        assertEquals("LONG_PRESS_NODE", longClick.droidLmAction)
     }
 
     @Test fun createsEffectiveActionsTargetingParentNode() {

@@ -2,7 +2,11 @@ package ai.droidlm.relay
 
 import ai.droidlm.context.UiContextJson
 import ai.droidlm.intent.AnchorPosition
+import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.intent.ImeActionType
+import ai.droidlm.intent.MenuType
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.ocr.OcrElement
 import ai.droidlm.ocr.OcrLine
 import ai.droidlm.portal.AppPackage
@@ -257,7 +261,7 @@ class RelayClient(
     }
 
     fun parsePlanActionJson(json: String): DroidLmAction {
-        val obj = JSONObject(json)
+        val obj = coerceActionObject(JSONObject(json))
         return when (obj.optString("action").uppercase()) {
             "OPEN_APP" -> DroidLmAction.OpenApp(
                 appName = obj.optString("appName").takeIf { it.isNotBlank() },
@@ -271,6 +275,114 @@ class RelayClient(
             "LONG_PRESS" -> DroidLmAction.LongPress(obj.requireInt("x", "LONG_PRESS"), obj.requireInt("y", "LONG_PRESS"), obj.optInt("durationMs", 600), obj.optString("reason", "Long press"))
             "SWIPE" -> DroidLmAction.Swipe(
                 obj.requireInt("startX", "SWIPE"), obj.requireInt("startY", "SWIPE"), obj.requireInt("endX", "SWIPE"), obj.requireInt("endY", "SWIPE"), obj.optInt("durationMs", 400), obj.optString("reason", "Swipe")
+            )
+            "SCROLL", "SCROLL_UP", "SCROLL_DOWN", "SCROLL_LEFT", "SCROLL_RIGHT" -> DroidLmAction.Scroll(
+                direction = parseScrollDirection(obj.optString("direction").takeIf { it.isNotBlank() } ?: obj.optString("action")),
+                targetNodeId = obj.optString("targetNodeId").takeIf { it.isNotBlank() },
+                amount = obj.optString("amount").takeIf { it.isNotBlank() },
+                untilText = obj.optString("untilText").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Scroll")
+            )
+            "TAP_TEXT", "SELECT_ITEM" -> DroidLmAction.TapText(
+                text = obj.requireStringAny("TAP_TEXT", "text", "label", "itemText", "targetText", "buttonText"),
+                role = obj.optString("role").takeIf { it.isNotBlank() },
+                containerNodeId = obj.optString("containerNodeId").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Tap visible text")
+            )
+            "LONG_PRESS_NODE", "LONG_CLICK" -> DroidLmAction.LongPressNode(
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                text = obj.optFirstNonBlank("text", "label", "itemText", "targetText"),
+                durationMs = obj.optInt("durationMs", 600),
+                reason = obj.optString("reason", "Long press visible item")
+            )
+            "WAIT_FOR_UI" -> DroidLmAction.WaitForUi(
+                text = obj.optString("text").takeIf { it.isNotBlank() },
+                packageName = obj.optString("packageName").takeIf { it.isNotBlank() },
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                timeoutMs = obj.optInt("timeoutMs", 2_500),
+                reason = obj.optString("reason", "Wait for the screen to update")
+            )
+            "PRESS_IME_ACTION" -> DroidLmAction.PressImeAction(
+                action = parseImeActionType(obj.optString("imeAction").ifBlank { obj.optString("actionType") }),
+                reason = obj.optString("reason", "Press the keyboard action")
+            )
+            "DIALOG_ACTION" -> DroidLmAction.DialogAction(
+                buttonText = obj.optString("buttonText").takeIf { it.isNotBlank() },
+                role = obj.optString("role").takeIf { it.isNotBlank() }?.let(::parseDialogButtonRole),
+                reason = obj.optString("reason", "Respond to the dialog")
+            )
+            "OPEN_MENU" -> DroidLmAction.OpenMenu(
+                menu = parseMenuType(obj.optString("menu").ifBlank { obj.optString("menuType") }),
+                reason = obj.optString("reason", "Open the menu")
+            )
+            "SELECT_TAB" -> DroidLmAction.SelectTab(
+                label = obj.requireStringAny("SELECT_TAB", "label", "text", "tabLabel"),
+                reason = obj.optString("reason", "Select the tab")
+            )
+            "SET_TOGGLE" -> DroidLmAction.SetToggle(
+                label = obj.optString("label").takeIf { it.isNotBlank() } ?: obj.optString("text").takeIf { it.isNotBlank() },
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                value = obj.optBooleanOrNull("value") ?: obj.optBooleanOrNull("enabled") ?: throw JSONException("SET_TOGGLE requires value"),
+                reason = obj.optString("reason", "Set the toggle")
+            )
+            "EXPAND_COLLAPSE" -> DroidLmAction.ExpandCollapse(
+                label = obj.optString("label").takeIf { it.isNotBlank() } ?: obj.optString("text").takeIf { it.isNotBlank() },
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                expanded = obj.optBooleanOrNull("expanded") ?: obj.optString("state").equals("expanded", ignoreCase = true),
+                reason = obj.optString("reason", "Expand or collapse the section")
+            )
+            "SET_SLIDER" -> DroidLmAction.SetSlider(
+                label = obj.optString("label").takeIf { it.isNotBlank() } ?: obj.optString("text").takeIf { it.isNotBlank() },
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                value = obj.optDoubleOrNull("value")?.toFloat(),
+                percent = obj.optIntOrNull("percent"),
+                reason = obj.optString("reason", "Adjust the slider")
+            )
+            "REFRESH" -> DroidLmAction.Refresh(
+                targetNodeId = obj.optString("targetNodeId").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Refresh the current screen")
+            )
+            "FIND_TEXT_ON_SCREEN" -> DroidLmAction.FindTextOnScreen(
+                text = obj.requireStringAny("FIND_TEXT_ON_SCREEN", "text", "targetText", "label"),
+                tapOnMatch = obj.optBoolean("tapOnMatch", false),
+                reason = obj.optString("reason", "Find text on screen")
+            )
+            "OPEN_NOTIFICATIONS" -> DroidLmAction.OpenNotifications
+            "OPEN_QUICK_SETTINGS" -> DroidLmAction.OpenQuickSettings
+            "OPEN_RECENTS" -> DroidLmAction.OpenRecents
+            "SWITCH_APP" -> DroidLmAction.SwitchApp(
+                appName = obj.optString("appName").takeIf { it.isNotBlank() },
+                packageName = obj.optString("packageName").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Switch apps")
+            )
+            "OPEN_URL" -> DroidLmAction.OpenUrl(
+                url = obj.requireStringAny("OPEN_URL", "url", "uri"),
+                reason = obj.optString("reason", "Open a URL")
+            )
+            "OPEN_DEEP_LINK" -> DroidLmAction.OpenDeepLink(
+                uri = obj.requireStringAny("OPEN_DEEP_LINK", "uri", "url", "deepLink"),
+                reason = obj.optString("reason", "Open the app link")
+            )
+            "PICK_FROM_CHOOSER" -> DroidLmAction.PickFromChooser(
+                itemText = obj.requireStringAny("PICK_FROM_CHOOSER", "itemText", "label", "text", "choice"),
+                reason = obj.optString("reason", "Pick an item from the chooser")
+            )
+            "PICK_FILE" -> DroidLmAction.PickFile(
+                fileName = obj.requireStringAny("PICK_FILE", "fileName", "label", "text"),
+                reason = obj.optString("reason", "Pick a file")
+            )
+            "PICK_PHOTO" -> DroidLmAction.PickPhoto(
+                photoLabel = obj.requireStringAny("PICK_PHOTO", "photoLabel", "label", "text"),
+                reason = obj.optString("reason", "Pick a photo")
+            )
+            "SHARE_TO_APP" -> DroidLmAction.ShareToApp(
+                appName = obj.optString("appName").takeIf { it.isNotBlank() },
+                packageName = obj.optString("packageName").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Share to an app")
+            )
+            "PERMISSION_DECISION" -> DroidLmAction.PermissionDecision(
+                allow = parsePermissionAllow(obj),
+                reason = obj.optString("reason", "Respond to the permission request")
             )
             "TYPE_TEXT" -> DroidLmAction.TypeText(obj.optString("text"), clear = obj.optBoolean("clear", false), reason = obj.optString("reason", "Type text"))
             "GLOBAL_BACK" -> DroidLmAction.PressBack
@@ -473,6 +585,11 @@ class RelayClient(
             ?: throw org.json.JSONException("$action requires $name")
     }
 
+    private fun JSONObject.requireStringAny(action: String, vararg names: String): String {
+        return names.firstNotNullOfOrNull { name -> optString(name).takeIf { it.isNotBlank() } }
+            ?: throw org.json.JSONException("$action requires ${names.firstOrNull() ?: "value"}")
+    }
+
     private fun JSONObject.requireInt(name: String, action: String): Int {
         if (!has(name) || isNull(name)) throw org.json.JSONException("$action requires $name")
         return getInt(name)
@@ -483,6 +600,100 @@ class RelayClient(
         val array = optJSONArray(name) ?: return emptyList()
         return (0 until array.length())
             .mapNotNull { index -> array.optString(index).takeIf { it.isNotBlank() } }
+    }
+
+    private fun JSONObject.optFirstNonBlank(vararg names: String): String? =
+        names.firstNotNullOfOrNull { name -> optString(name).takeIf { it.isNotBlank() } }
+
+    private fun JSONObject.optBooleanOrNull(name: String): Boolean? =
+        if (has(name) && !isNull(name)) getBoolean(name) else null
+
+    private fun coerceActionObject(obj: JSONObject): JSONObject {
+        val repaired = JSONObject(obj.toString())
+        val action = repaired.optString("action").uppercase()
+        if (action == "SWIPE" && (!repaired.has("startX") || !repaired.has("startY") || !repaired.has("endX") || !repaired.has("endY"))) {
+            inferScrollDirection(repaired)?.let { direction ->
+                repaired.put("action", "SCROLL")
+                repaired.put("direction", direction.name)
+            }
+        }
+        if ((action == "LONG_PRESS" || action == "LONG_CLICK") && (!repaired.has("x") || !repaired.has("y"))) {
+            if (!repaired.optFirstNonBlank("nodeId", "text", "label", "itemText").isNullOrBlank()) {
+                repaired.put("action", "LONG_PRESS_NODE")
+            }
+        }
+        if ((action == "TAP" || action == "TAP_NODE") && !repaired.has("nodeId")) {
+            repaired.optFirstNonBlank("text", "label", "itemText", "targetText", "buttonText")?.let { text ->
+                repaired.put("action", "TAP_TEXT")
+                repaired.put("text", text)
+            }
+        }
+        return repaired
+    }
+
+    private fun inferScrollDirection(obj: JSONObject): ScrollDirection? {
+        parseScrollDirectionOrNull(obj.optString("direction"))?.let { return it }
+        return when {
+            obj.optString("action").contains("UP", ignoreCase = true) -> ScrollDirection.UP
+            obj.optString("action").contains("DOWN", ignoreCase = true) -> ScrollDirection.DOWN
+            obj.optString("action").contains("LEFT", ignoreCase = true) -> ScrollDirection.LEFT
+            obj.optString("action").contains("RIGHT", ignoreCase = true) -> ScrollDirection.RIGHT
+            else -> listOfNotNull(
+                obj.optFirstNonBlank("reason", "summary", "message", "text", "goal")
+            ).joinToString(" ").let { hint ->
+                when {
+                    hint.contains("scroll up", ignoreCase = true) -> ScrollDirection.UP
+                    hint.contains("scroll down", ignoreCase = true) -> ScrollDirection.DOWN
+                    hint.contains("scroll left", ignoreCase = true) -> ScrollDirection.LEFT
+                    hint.contains("scroll right", ignoreCase = true) -> ScrollDirection.RIGHT
+                    else -> null
+                }
+            }
+        }
+    }
+
+    private fun parseScrollDirection(value: String): ScrollDirection =
+        parseScrollDirectionOrNull(value) ?: throw JSONException("SCROLL requires direction")
+
+    private fun parseScrollDirectionOrNull(value: String?): ScrollDirection? = when (value?.trim()?.uppercase()) {
+        "UP", "SCROLL_UP" -> ScrollDirection.UP
+        "DOWN", "SCROLL_DOWN" -> ScrollDirection.DOWN
+        "LEFT", "SCROLL_LEFT" -> ScrollDirection.LEFT
+        "RIGHT", "SCROLL_RIGHT" -> ScrollDirection.RIGHT
+        else -> null
+    }
+
+    private fun parseImeActionType(value: String?): ImeActionType = when (value?.trim()?.uppercase()) {
+        "ENTER" -> ImeActionType.ENTER
+        "SEARCH" -> ImeActionType.SEARCH
+        "DONE" -> ImeActionType.DONE
+        "SEND" -> ImeActionType.SEND
+        "NEXT" -> ImeActionType.NEXT
+        "GO" -> ImeActionType.GO
+        else -> ImeActionType.DEFAULT
+    }
+
+    private fun parseDialogButtonRole(value: String): DialogButtonRole = when (value.trim().uppercase()) {
+        "POSITIVE", "ALLOW", "CONFIRM" -> DialogButtonRole.POSITIVE
+        "NEGATIVE", "DENY", "CANCEL" -> DialogButtonRole.NEGATIVE
+        "NEUTRAL" -> DialogButtonRole.NEUTRAL
+        "DISMISS", "CLOSE" -> DialogButtonRole.DISMISS
+        else -> throw JSONException("Unsupported dialog role: $value")
+    }
+
+    private fun parseMenuType(value: String?): MenuType = when (value?.trim()?.uppercase()) {
+        "NAVIGATION_DRAWER", "DRAWER" -> MenuType.NAVIGATION_DRAWER
+        "CONTEXT", "CONTEXT_MENU" -> MenuType.CONTEXT
+        else -> MenuType.OVERFLOW
+    }
+
+    private fun parsePermissionAllow(obj: JSONObject): Boolean {
+        obj.optBooleanOrNull("allow")?.let { return it }
+        return when (obj.optString("decision").trim().lowercase()) {
+            "allow", "grant", "approve", "yes" -> true
+            "deny", "reject", "block", "no" -> false
+            else -> throw JSONException("PERMISSION_DECISION requires allow or decision")
+        }
     }
 
     companion object {

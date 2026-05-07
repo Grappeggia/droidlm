@@ -53,24 +53,24 @@ object UiNodeActionCatalog {
         add(ActionSpec("CLEAR_FOCUS", AccessibilityNodeInfo.ACTION_CLEAR_FOCUS))
         add(ActionSpec("SELECT", AccessibilityNodeInfo.ACTION_SELECT))
         add(ActionSpec("CLEAR_SELECTION", AccessibilityNodeInfo.ACTION_CLEAR_SELECTION))
-        add(ActionSpec("LONG_CLICK", AccessibilityNodeInfo.ACTION_LONG_CLICK))
+        add(ActionSpec("LONG_CLICK", AccessibilityNodeInfo.ACTION_LONG_CLICK, droidLmAction = "LONG_PRESS_NODE"))
         add(ActionSpec("SET_TEXT", AccessibilityNodeInfo.ACTION_SET_TEXT, droidLmAction = "SET_FULL_TEXT", requiresArgs = true, argSchema = mapOf("text" to "string"), safe = false))
         add(ActionSpec("SET_SELECTION", AccessibilityNodeInfo.ACTION_SET_SELECTION, droidLmAction = "SET_SELECTION", requiresArgs = true, argSchema = mapOf("start" to "int", "end" to "int")))
         add(ActionSpec("COPY", AccessibilityNodeInfo.ACTION_COPY))
         add(ActionSpec("CUT", AccessibilityNodeInfo.ACTION_CUT, safe = false))
         add(ActionSpec("PASTE", AccessibilityNodeInfo.ACTION_PASTE, safe = false))
-        add(ActionSpec("SCROLL_FORWARD", AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, droidLmAction = "SWIPE"))
-        add(ActionSpec("SCROLL_BACKWARD", AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, droidLmAction = "SWIPE"))
-        optionalAction("EXPAND", "ACTION_EXPAND")?.let(::add)
-        optionalAction("COLLAPSE", "ACTION_COLLAPSE")?.let(::add)
-        optionalAction("DISMISS", "ACTION_DISMISS")?.let(::add)
+        add(ActionSpec("SCROLL_FORWARD", AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, droidLmAction = "SCROLL"))
+        add(ActionSpec("SCROLL_BACKWARD", AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, droidLmAction = "SCROLL"))
+        optionalAction("EXPAND", "ACTION_EXPAND", droidLmAction = "EXPAND_COLLAPSE")?.let(::add)
+        optionalAction("COLLAPSE", "ACTION_COLLAPSE", droidLmAction = "EXPAND_COLLAPSE")?.let(::add)
+        optionalAction("DISMISS", "ACTION_DISMISS", droidLmAction = "DIALOG_ACTION")?.let(::add)
         optionalAction("SHOW_ON_SCREEN", "ACTION_SHOW_ON_SCREEN")?.let(::add)
-        optionalAction("SCROLL_UP", "ACTION_SCROLL_UP", droidLmAction = "SWIPE")?.let(::add)
-        optionalAction("SCROLL_DOWN", "ACTION_SCROLL_DOWN", droidLmAction = "SWIPE")?.let(::add)
-        optionalAction("SCROLL_LEFT", "ACTION_SCROLL_LEFT", droidLmAction = "SWIPE")?.let(::add)
-        optionalAction("SCROLL_RIGHT", "ACTION_SCROLL_RIGHT", droidLmAction = "SWIPE")?.let(::add)
+        optionalAction("SCROLL_UP", "ACTION_SCROLL_UP", droidLmAction = "SCROLL")?.let(::add)
+        optionalAction("SCROLL_DOWN", "ACTION_SCROLL_DOWN", droidLmAction = "SCROLL")?.let(::add)
+        optionalAction("SCROLL_LEFT", "ACTION_SCROLL_LEFT", droidLmAction = "SCROLL")?.let(::add)
+        optionalAction("SCROLL_RIGHT", "ACTION_SCROLL_RIGHT", droidLmAction = "SCROLL")?.let(::add)
         optionalAction("SCROLL_TO_POSITION", "ACTION_SCROLL_TO_POSITION", requiresArgs = true, argSchema = mapOf("row" to "int", "column" to "int"))?.let(::add)
-        optionalAction("SET_PROGRESS", "ACTION_SET_PROGRESS", requiresArgs = true, argSchema = mapOf("value" to "number"), safe = false)?.let(::add)
+        optionalAction("SET_PROGRESS", "ACTION_SET_PROGRESS", droidLmAction = "SET_SLIDER", requiresArgs = true, argSchema = mapOf("value" to "number"), safe = false)?.let(::add)
     }
 
     private fun optionalAction(
@@ -105,5 +105,5 @@ object UiNodeActionCatalog {
         AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
     )
 
-    private val EFFECTIVE_PARENT_ACTIONS = setOf("CLICK", "LONG_CLICK", "FOCUS", "SCROLL_FORWARD", "SCROLL_BACKWARD")
+    private val EFFECTIVE_PARENT_ACTIONS = setOf("CLICK", "LONG_CLICK", "FOCUS", "SCROLL_FORWARD", "SCROLL_BACKWARD", "EXPAND", "COLLAPSE")
 }

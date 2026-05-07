@@ -102,6 +102,33 @@ class RelayClientTest {
         assertEquals("TAP requires x", error?.message)
     }
 
+    @Test fun malformedSwipeWithoutCoordinatesBecomesScroll() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"SWIPE\",\"reason\":\"Scroll down the list\"}"
+        )
+        assertTrue(action is DroidLmAction.Scroll)
+        action as DroidLmAction.Scroll
+        assertEquals(ai.droidlm.intent.ScrollDirection.DOWN, action.direction)
+    }
+
+    @Test fun malformedLongPressWithTextBecomesLongPressNode() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"LONG_PRESS\",\"text\":\"Budget\",\"reason\":\"Open the context menu\"}"
+        )
+        assertTrue(action is DroidLmAction.LongPressNode)
+        action as DroidLmAction.LongPressNode
+        assertEquals("Budget", action.text)
+    }
+
+    @Test fun selectItemAliasParsesTapText() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"SELECT_ITEM\",\"label\":\"Drive\",\"reason\":\"Open the chooser item\"}"
+        )
+        assertTrue(action is DroidLmAction.TapText)
+        action as DroidLmAction.TapText
+        assertEquals("Drive", action.text)
+    }
+
     @Test fun planPreviewJsonParse() {
         val plan = RelayClient().parsePlanPreviewJson("""{
             "model":"gpt-5.4-nano",

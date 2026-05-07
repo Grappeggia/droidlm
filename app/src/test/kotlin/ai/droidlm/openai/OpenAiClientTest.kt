@@ -77,6 +77,37 @@ class OpenAiClientTest {
         }
     }
 
+    @Test fun invalidActionJsonTriggersRepairAttempt() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(chatCompletion("{\"action\":\"OPEN_APP\",\"appName\":\"Drive\",\"reason\":\"Open Drive\"}"))
+            server.enqueue(chatCompletion("{\"action\":\"OPEN_APP\",\"appName\":\"Drive\",\"packageName\":\"com.google.android.apps.docs\",\"reason\":\"Open Drive\"}"))
+            server.start()
+
+            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+                .planAction("sk-test", "gpt-5.4-nano", minimalRequest())
+
+            assertTrue(result is RelayCallResult.Success)
+            assertEquals(2, server.requestCount)
+        }
+    }
+
+    @Test fun plannerPromptMentionsSemanticActions() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(chatCompletion(planPreviewJson()))
+            server.start()
+
+            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+                .planPreview("sk-test", "gpt-5.4-nano", minimalRequest())
+
+            assertTrue(result is RelayCallResult.Success)
+            val body = JSONObject(server.takeRequest().body.readUtf8())
+            val prompt = body.getJSONArray("messages").getJSONObject(1).getString("content")
+            assertTrue(prompt.contains("SCROLL"))
+            assertTrue(prompt.contains("TAP_TEXT"))
+            assertTrue(prompt.contains("WAIT_FOR_UI"))
+        }
+    }
+
     private fun minimalRequest(): RelayPlanRequest = RelayPlanRequest(
         goal = "open drive",
         uiState = null,
