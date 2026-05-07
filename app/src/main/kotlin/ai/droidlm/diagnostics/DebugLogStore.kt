@@ -88,6 +88,28 @@ class DebugLogStore(
         }.getOrNull()
     }
 
+    suspend fun retainText(category: String, source: String, text: String, extension: String = "txt"): File? = withContext(Dispatchers.IO) {
+        if (!isEnabled()) return@withContext null
+        val suffix = extension.trim().trimStart('.').ifBlank { "txt" }
+        val file = uniqueFile(category, "droidlm-${safeName(category)}-${utcTimestampForFile(System.currentTimeMillis())}-${safeName(source)}.$suffix")
+        runCatching {
+            file.writeText(text, Charsets.UTF_8)
+            file.takeIf { it.length() > 0L }?.also {
+                recordEvent(
+                    "text_retained",
+                    mapOf("category" to category, "source" to source, "retainedName" to it.name, "retainedBytes" to it.length())
+                )
+            } ?: run {
+                file.delete()
+                recordEvent("text_retention_failed", mapOf("category" to category, "source" to source, "reason" to "empty_file"))
+                null
+            }
+        }.onFailure { error ->
+            file.delete()
+            recordEvent("text_retention_failed", mapOf("category" to category, "source" to source, "message" to error.message))
+        }.getOrNull()
+    }
+
     suspend fun createRetainedFile(category: String, extension: String, source: String): File? = withContext(Dispatchers.IO) {
         if (!isEnabled()) return@withContext null
         val suffix = extension.trim().trimStart('.').ifBlank { "bin" }

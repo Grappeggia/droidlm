@@ -78,7 +78,7 @@ class DroidLMApp : Application() {
         speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
         debugLogStore = DebugLogStore(this, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
         relayClient = RelayClient()
-        openAiClient = OpenAiClient()
+        openAiClient = OpenAiClient(debugLogStore = debugLogStore)
         portalController = AccessibilityPortalController(this, actionLogRepository)
         appInventoryRepository = AppInventoryRepository(this)
         ocrEngine = MlKitOcrEngine()

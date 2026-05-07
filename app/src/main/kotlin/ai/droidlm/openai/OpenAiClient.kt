@@ -1,8 +1,9 @@
 package ai.droidlm.openai
 
 import ai.droidlm.context.UiContextJson
+import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.intent.DroidLmAction
-
+import ai.droidlm.intent.displayName
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.ActiveApp
@@ -12,20 +13,15 @@ import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.relay.RelayPlanRequest
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 class OpenAiClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -33,26 +29,36 @@ class OpenAiClient(
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(90, TimeUnit.SECONDS)
         .build(),
-    private val endpoint: String = "https://api.openai.com/v1/chat/completions"
+    private val endpoint: String = "https://api.openai.com/v1/chat/completions",
+    private val debugLogStore: DebugLogStore? = null
 ) {
     private val relayJsonParser = RelayClient()
 
     suspend fun planPreview(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
-        val request = buildChatRequest(apiKey, model, planPreviewPrompt(requestBody), maxTokens = 1800)
-        return execute(request) { body -> relayJsonParser.parsePlanPreviewJson(extractAssistantJson(body)) }
+        val resolvedModel = model.ifBlank { DEFAULT_MODEL }
+        val payload = buildChatPayload(resolvedModel, planPreviewPrompt(requestBody), maxTokens = 1800)
+        val request = buildChatRequest(apiKey, payload)
+        return executeTracedChat("plan-preview", resolvedModel, payload, request) { assistantContent ->
+            val plan = relayJsonParser.parsePlanPreviewJson(assistantContent)
+            ParsedChat(plan, plan.toDebugJson())
+        }
     }
 
     suspend fun planAction(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<DroidLmAction> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
-        val request = buildChatRequest(apiKey, model, planActionPrompt(requestBody), maxTokens = 900)
-        return execute(request) { body -> relayJsonParser.parsePlanActionJson(extractAssistantJson(body)) }
+        val resolvedModel = model.ifBlank { DEFAULT_MODEL }
+        val payload = buildChatPayload(resolvedModel, planActionPrompt(requestBody), maxTokens = 900)
+        val request = buildChatRequest(apiKey, payload)
+        return executeTracedChat("plan-action", resolvedModel, payload, request) { assistantContent ->
+            val action = relayJsonParser.parsePlanActionJson(assistantContent)
+            ParsedChat(action, action.toDebugJson())
+        }
     }
 
-    private fun buildChatRequest(apiKey: String, model: String, prompt: String, maxTokens: Int): Request {
-        val resolvedModel = model.ifBlank { DEFAULT_MODEL }
+    private fun buildChatPayload(model: String, prompt: String, maxTokens: Int): JSONObject {
         val json = JSONObject()
-            .put("model", resolvedModel)
+            .put("model", model)
             .put("response_format", JSONObject().put("type", "json_object"))
             .put(
                 "messages",
@@ -60,12 +66,16 @@ class OpenAiClient(
                     .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
                     .put(JSONObject().put("role", "user").put("content", prompt))
             )
-        if (usesMaxCompletionTokens(resolvedModel)) {
+        if (usesMaxCompletionTokens(model)) {
             json.put("max_completion_tokens", maxTokens)
         } else {
             json.put("temperature", 0)
             json.put("max_tokens", maxTokens)
         }
+        return json
+    }
+
+    private fun buildChatRequest(apiKey: String, json: JSONObject): Request {
         return Request.Builder()
             .url(endpoint)
             .addHeader("Authorization", "Bearer $apiKey")
@@ -139,35 +149,109 @@ class OpenAiClient(
         History: ${JSONArray(request.history)}
     """.trimIndent()
 
-    private suspend fun <T> execute(request: Request, parser: (String) -> T): RelayCallResult<T> = withContext(Dispatchers.IO) {
-        suspendCancellableCoroutine { continuation ->
-            val call = client.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    if (!continuation.isCancelled) {
-                        val code = if (e.message?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
-                        continuation.resume(RelayCallResult.Failure(e.message ?: "Network error", code, e))
-                    }
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        val body = it.body?.string().orEmpty()
-                        if (!it.isSuccessful) {
-                            val error = parseOpenAiError(body)
-                            continuation.resume(RelayCallResult.Failure(error.first ?: "OpenAI returned HTTP ${it.code}: $body", error.second ?: "HTTP_${it.code}"))
-                            return
+    private suspend fun <T> executeTracedChat(
+        source: String,
+        model: String,
+        requestJson: JSONObject,
+        request: Request,
+        parser: (String) -> ParsedChat<T>
+    ): RelayCallResult<T> = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
+        var httpStatus: Int? = null
+        var rawResponse: String? = null
+        var assistantContent: String? = null
+        var parsedContent: JSONObject? = null
+        var errorCode: String? = null
+        var errorMessage: String? = null
+        val result = try {
+            client.newCall(request).execute().use { response ->
+                httpStatus = response.code
+                rawResponse = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val error = parseOpenAiError(rawResponse.orEmpty())
+                    errorMessage = error.first ?: "OpenAI returned HTTP ${response.code}: ${rawResponse.orEmpty()}"
+                    errorCode = error.second ?: "HTTP_${response.code}"
+                    RelayCallResult.Failure(errorMessage.orEmpty(), errorCode)
+                } else {
+                    runCatching {
+                        assistantContent = extractAssistantJson(rawResponse.orEmpty())
+                        val parsed = parser(assistantContent.orEmpty())
+                        parsedContent = parsed.debugJson
+                        parsed.value
+                    }.fold(
+                        onSuccess = { value -> RelayCallResult.Success(value) },
+                        onFailure = { error ->
+                            errorMessage = "Invalid OpenAI JSON: ${error.message}"
+                            errorCode = "INVALID_JSON"
+                            RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
                         }
-                        runCatching { parser(body) }
-                            .fold(
-                                onSuccess = { value -> continuation.resume(RelayCallResult.Success(value)) },
-                                onFailure = { error -> continuation.resume(RelayCallResult.Failure("Invalid OpenAI JSON: ${error.message}", "INVALID_JSON", error)) }
-                            )
-                    }
+                    )
                 }
-            })
+            }
+        } catch (error: IOException) {
+            errorMessage = error.message ?: "Network error"
+            errorCode = if (errorMessage?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
+            RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
+        } catch (error: Throwable) {
+            errorMessage = error.message ?: error::class.java.name
+            errorCode = "OPENAI_CLIENT_ERROR"
+            RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
         }
+        retainLlmTrace(
+            source = source,
+            model = model,
+            requestJson = requestJson,
+            startedAtMs = startedAt,
+            durationMs = System.currentTimeMillis() - startedAt,
+            httpStatus = httpStatus,
+            rawResponse = rawResponse,
+            assistantContent = assistantContent,
+            parsedContent = parsedContent,
+            errorCode = errorCode,
+            errorMessage = errorMessage,
+            success = result is RelayCallResult.Success
+        )
+        result
+    }
+
+    private suspend fun retainLlmTrace(
+        source: String,
+        model: String,
+        requestJson: JSONObject,
+        startedAtMs: Long,
+        durationMs: Long,
+        httpStatus: Int?,
+        rawResponse: String?,
+        assistantContent: String?,
+        parsedContent: JSONObject?,
+        errorCode: String?,
+        errorMessage: String?,
+        success: Boolean
+    ) {
+        val trace = JSONObject()
+            .put("traceId", "llm-$startedAtMs-$source")
+            .put("source", source)
+            .put("startedAtMs", startedAtMs)
+            .put("durationMs", durationMs)
+            .put("model", model)
+            .put("endpoint", endpoint)
+            .put("request", JSONObject(requestJson.toString()))
+            .put(
+                "response",
+                JSONObject()
+                    .put("success", success)
+                    .put("httpStatus", httpStatus ?: JSONObject.NULL)
+                    .put("rawBody", rawResponse ?: JSONObject.NULL)
+                    .put("assistantContent", assistantContent ?: JSONObject.NULL)
+                    .put("parsed", parsedContent ?: JSONObject.NULL)
+                    .put(
+                        "error",
+                        if (errorMessage == null && errorCode == null) JSONObject.NULL else JSONObject()
+                            .put("code", errorCode ?: JSONObject.NULL)
+                            .put("message", errorMessage ?: JSONObject.NULL)
+                    )
+            )
+        debugLogStore?.retainText("llm", source, trace.toString(2), extension = "json")
     }
 
     private fun extractAssistantJson(body: String): String {
@@ -220,6 +304,28 @@ class OpenAiClient(
         extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
         return json
     }
+
+    private fun PlanPreview.toDebugJson(): JSONObject = JSONObject()
+        .put("model", model)
+        .put("summary", summary)
+        .put("riskLevel", riskLevel)
+        .put("requiresConfirmation", requiresConfirmation)
+        .put(
+            "steps",
+            JSONArray(steps.map { step ->
+                JSONObject()
+                    .put("index", step.index)
+                    .put("action", step.actionLabel)
+                    .put("reason", step.reason)
+                    .put("requiresConfirmation", step.requiresConfirmation)
+                    .put("parsedAction", step.action.displayName())
+            })
+        )
+
+    private fun DroidLmAction.toDebugJson(): JSONObject = JSONObject()
+        .put("displayName", displayName())
+
+    private data class ParsedChat<T>(val value: T, val debugJson: JSONObject)
 
     private fun usesMaxCompletionTokens(model: String): Boolean {
         val normalized = model.trim().lowercase()
