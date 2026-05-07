@@ -8,6 +8,10 @@ val releaseStoreFile = System.getenv("DROIDLM_RELEASE_STORE_FILE")
 val releaseStorePassword = System.getenv("DROIDLM_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = System.getenv("DROIDLM_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("DROIDLM_RELEASE_KEY_PASSWORD")
+val debugIteration = providers.gradleProperty("droidlm.debugIteration")
+    .orElse(providers.environmentVariable("DROIDLM_DEBUG_ITERATION"))
+    .orNull
+    ?.takeIf { it.isNotBlank() }
 val hasReleaseSigning = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -43,7 +47,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            versionNameSuffix = debugIteration?.let { "-debug.$it" } ?: "-debug"
         }
 
         release {
@@ -67,6 +71,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         unitTests.isReturnDefaultValues = true

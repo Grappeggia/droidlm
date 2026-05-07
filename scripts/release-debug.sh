@@ -36,13 +36,14 @@ APK="app/build/outputs/apk/debug/app-debug.apk"
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && fail "Tag already exists locally: $TAG"
 git ls-remote --exit-code --tags "$REMOTE" "$TAG" >/dev/null 2>&1 && fail "Tag already exists on $REMOTE: $TAG"
 
-./gradlew testDebugUnitTest assembleDebug
+GRADLE_DEBUG_FLAGS=(-Pdroidlm.debugIteration="$ITERATION")
+./gradlew "${GRADLE_DEBUG_FLAGS[@]}" testDebugUnitTest assembleDebug
 if [[ "$SKIP_E2E" != "true" ]]; then
-  ./gradlew connectedVoiceE2e
+  ./gradlew "${GRADLE_DEBUG_FLAGS[@]}" connectedVoiceE2e
 fi
-VERIFY_COMMANDS="./gradlew testDebugUnitTest assembleDebug"
+VERIFY_COMMANDS="./gradlew -Pdroidlm.debugIteration=${ITERATION} testDebugUnitTest assembleDebug"
 if [[ "$SKIP_E2E" != "true" ]]; then
-  VERIFY_COMMANDS="$VERIFY_COMMANDS and ./gradlew connectedVoiceE2e"
+  VERIFY_COMMANDS="$VERIFY_COMMANDS and ./gradlew -Pdroidlm.debugIteration=${ITERATION} connectedVoiceE2e"
 fi
 
 
