@@ -701,6 +701,25 @@ tasks.register("connectedVoiceE2e") {
     }
 }
 
+tasks.register("connectedActionKnownIssuesE2e") {
+    group = "verification"
+    description = "Runs E2E probes for action semantics that are expected to fail until support is improved. Requires a running emulator."
+    dependsOn(":app:installDebug", ":app:installDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        runInstrumentedSuiteWithVideos(
+            adbPath,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmActionKnownIssuesE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmActionKnownIssuesE2ETest.kt",
+                artifactSubdirectory = "action-known-issues",
+                instrumentationArgs = mapOf("actionKnownIssuesE2e" to "true")
+            )
+        )
+    }
+}
+
 tasks.register("connectedHoverMicAudioE2e") {
     group = "verification"
     description = "Runs hover-widget E2E with OpenAI-generated speech injected through the emulator microphone."
