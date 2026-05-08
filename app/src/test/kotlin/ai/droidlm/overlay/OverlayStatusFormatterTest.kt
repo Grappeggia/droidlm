@@ -24,6 +24,20 @@ class OverlayStatusFormatterTest {
         assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
     }
 
+    @Test fun stoppingShowsProcessingSpeech() {
+        val label = OverlayStatusFormatter.label(
+            isStarting = false,
+            isListening = false,
+            partialTranscript = "",
+            finalTranscript = "",
+            executionStatus = "Idle",
+            lastResult = "",
+            isStopping = true
+        )
+        assertEquals("Processing speech...", label)
+        assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
+    }
+
     @Test fun executingShowsCancelButton() {
         assertEquals("×", OverlayStatusFormatter.recordButton(false, "Executing OPEN_APP"))
     }

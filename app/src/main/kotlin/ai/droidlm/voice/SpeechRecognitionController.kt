@@ -31,6 +31,7 @@ import kotlin.coroutines.resumeWithException
 data class SpeechRecognitionUiState(
     val isStarting: Boolean = false,
     val isListening: Boolean = false,
+    val isStopping: Boolean = false,
     val partialTranscript: String = "",
     val finalTranscript: String = "",
     val errorMessage: String? = null,
@@ -44,7 +45,7 @@ data class SpeechRecognitionUiState(
     val providerLabel: String = "Android SpeechRecognizer"
 ) {
     val isActive: Boolean
-        get() = isStarting || isListening
+        get() = isStarting || isListening || isStopping
 }
 
 private class AndroidSpeechRecognitionException(
@@ -77,6 +78,7 @@ class SpeechRecognitionController(
             _state.value = _state.value.copy(
                 isStarting = false,
                 isListening = false,
+                isStopping = false,
                 errorMessage = message,
                 missingLanguageTag = null,
                 missingLanguageMessage = null
@@ -106,6 +108,7 @@ class SpeechRecognitionController(
             _state.value = _state.value.copy(
                 isStarting = false,
                 isListening = false,
+                isStopping = false,
                 errorMessage = fullMessage,
                 missingLanguageTag = null,
                 missingLanguageMessage = null
@@ -131,6 +134,7 @@ class SpeechRecognitionController(
                 _state.value = _state.value.copy(
                     isStarting = true,
                     isListening = false,
+                    isStopping = false,
                     partialTranscript = "",
                     errorMessage = null,
                     missingLanguageTag = null,
@@ -155,7 +159,7 @@ class SpeechRecognitionController(
                 runCatching { recognizer.cancel() }
                 cleanupRecognizer(recognizer)
                 val message = "Speech recognition timed out after ${maxDurationMs / 1000}s."
-                _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = false, errorMessage = message)
                 if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
             }
             val readyTimeout = Runnable {
@@ -165,7 +169,7 @@ class SpeechRecognitionController(
                     runCatching { recognizer.cancel() }
                     cleanupRecognizer(recognizer)
                     val message = "Android speech recognition did not become ready."
-                    _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                    _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = false, errorMessage = message)
                     logs.log(ActionLogType.ERROR, message, "SPEECH_RECOGNIZER_READY_TIMEOUT")
                     continuation.resumeWithException(IllegalStateException(message))
                 }
@@ -187,6 +191,7 @@ class SpeechRecognitionController(
                     _state.value = _state.value.copy(
                         isStarting = false,
                         isListening = true,
+                        isStopping = false,
                         partialTranscript = "",
                         errorMessage = null
                     )
@@ -223,7 +228,7 @@ class SpeechRecognitionController(
                         mapOf("speechStarted" to speechStarted, "peakRmsDb" to rounded(peakRmsDb))
                     )
                     if (speechStarted) {
-                        _state.value = _state.value.copy(isStarting = false, isListening = false)
+                        _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = true)
                     }
                     logs.log(ActionLogType.RECORDING_STOPPED, "Speech input ended")
                 }
@@ -286,6 +291,7 @@ class SpeechRecognitionController(
                         _state.value.copy(
                             isStarting = true,
                             isListening = false,
+                            isStopping = false,
                             partialTranscript = "",
                             errorMessage = null,
                             missingLanguageTag = null,
@@ -296,6 +302,7 @@ class SpeechRecognitionController(
                         _state.value.copy(
                             isStarting = false,
                             isListening = false,
+                            isStopping = false,
                             errorMessage = message,
                             missingLanguageTag = if (isLanguageError) languageTag else null,
                             missingLanguageMessage = if (isLanguageError) message else null,
@@ -318,7 +325,7 @@ class SpeechRecognitionController(
                     if (transcript.isBlank()) {
                         val message = "Android speech recognition returned an empty transcript."
                         finishDiagnostics("empty_results", mapOf("resultCount" to candidates.size))
-                        _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                        _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = false, errorMessage = message)
                         if (continuation.isActive) continuation.resumeWithException(IllegalStateException(message))
                         return
                     }
@@ -326,6 +333,7 @@ class SpeechRecognitionController(
                     _state.value = _state.value.copy(
                         isStarting = false,
                         isListening = false,
+                        isStopping = false,
                         partialTranscript = "",
                         finalTranscript = finalText,
                         errorMessage = null
@@ -359,6 +367,7 @@ class SpeechRecognitionController(
                     _state.value = _state.value.copy(
                         isStarting = false,
                         isListening = false,
+                        isStopping = false,
                         errorMessage = "Speech recognition cancelled"
                     )
                 }
@@ -381,7 +390,7 @@ class SpeechRecognitionController(
                     val message = failure.message ?: failure::class.java.simpleName
                     finishDiagnostics("startListening_failed", mapOf("message" to message))
                     cleanup()
-                    _state.value = _state.value.copy(isStarting = false, isListening = false, errorMessage = message)
+                    _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = false, errorMessage = message)
                     if (continuation.isActive) continuation.resumeWithException(failure)
                 }
         }
@@ -474,6 +483,7 @@ class SpeechRecognitionController(
                             _state.value = _state.value.copy(
                                 isStarting = true,
                                 isListening = false,
+                                isStopping = false,
                                 partialTranscript = "",
                                 errorMessage = null,
                                 providerLabel = VOSK_PROVIDER_LABEL
@@ -483,6 +493,7 @@ class SpeechRecognitionController(
                             _state.value = _state.value.copy(
                                 isStarting = false,
                                 isListening = true,
+                                isStopping = false,
                                 partialTranscript = "",
                                 errorMessage = null,
                                 providerLabel = VOSK_PROVIDER_LABEL
@@ -497,6 +508,7 @@ class SpeechRecognitionController(
                 _state.value = _state.value.copy(
                     isStarting = false,
                     isListening = false,
+                    isStopping = false,
                     partialTranscript = "",
                     finalTranscript = finalText,
                     errorMessage = null,
@@ -525,6 +537,7 @@ class SpeechRecognitionController(
                 _state.value = _state.value.copy(
                     isStarting = false,
                     isListening = false,
+                    isStopping = false,
                     errorMessage = if (cancelled) null else message,
                     providerLabel = VOSK_PROVIDER_LABEL
                 )
@@ -558,6 +571,7 @@ class SpeechRecognitionController(
                 _state.value = _state.value.copy(
                     isStarting = false,
                     isListening = false,
+                    isStopping = true,
                     partialTranscript = "",
                     errorMessage = null
                 )
@@ -571,6 +585,7 @@ class SpeechRecognitionController(
             _state.value = _state.value.copy(
                 isStarting = false,
                 isListening = false,
+                isStopping = true,
                 partialTranscript = "",
                 errorMessage = null
             )
@@ -594,6 +609,7 @@ class SpeechRecognitionController(
             _state.value = _state.value.copy(
                 isStarting = false,
                 isListening = false,
+                isStopping = false,
                 errorMessage = "Speech recognition cancelled"
             )
             logs.log(ActionLogType.CANCELLED, "Android speech recognition cancelled")

@@ -94,11 +94,29 @@ class WakeWordForegroundService : Service() {
 
     private fun startPushToTalk(diagnosticSessionId: String?) {
         val sessionId = diagnosticSessionId ?: app.speechDiagnosticsLogger.startSession("foreground_push_to_talk")
-        startForegroundSafely("DroidLM is listening for your push-to-talk command.")
+        val previousJob = commandJob
+        val hadActiveJob = previousJob?.isActive == true
+        startForegroundSafely(if (hadActiveJob) "DroidLM is processing your speech command." else "DroidLM is listening for your push-to-talk command.")
+        if (hadActiveJob) {
+            app.speechDiagnosticsLogger.record(
+                sessionId,
+                "push_to_talk_ignored_busy",
+                mapOf(
+                    "speechActive" to app.speechRecognitionController.state.value.isActive,
+                    "speechStopping" to app.speechRecognitionController.state.value.isStopping,
+                    "executionStatus" to app.executor.uiState.value.status
+                )
+            )
+            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Already processing speech")
+            return
+        }
         app.actionLogRepository.log(ActionLogType.WAKE_DETECTED, "Push-to-talk started")
-        app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_started", mapOf("hadPreviousJob" to (commandJob != null)))
-        commandJob?.cancel()
-        commandJob = scope.launch {
+        app.speechDiagnosticsLogger.record(
+            sessionId,
+            "push_to_talk_started",
+            mapOf("hadPreviousJob" to (previousJob != null), "hadActiveJob" to false)
+        )
+        val job = scope.launch {
             runCatching {
                 val settings = app.settingsRepository.settings.first()
                 app.speechDiagnosticsLogger.record(
@@ -142,6 +160,10 @@ class WakeWordForegroundService : Service() {
             } else {
                 startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.")
             }
+        }
+        commandJob = job
+        job.invokeOnCompletion {
+            if (commandJob === job) commandJob = null
         }
     }
 

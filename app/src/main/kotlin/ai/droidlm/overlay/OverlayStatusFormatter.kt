@@ -10,10 +10,12 @@ object OverlayStatusFormatter {
         partialTranscript: String,
         finalTranscript: String,
         executionStatus: String,
-        lastResult: String
+        lastResult: String,
+        isStopping: Boolean = false
     ): String = when {
         isStarting -> microphoneStartingLabel()
         isListening -> "Listening..."
+        isStopping -> "Processing speech..."
         executionStatus !in IDLE_STATUSES -> executionStatus.take(40)
         executionStatus == "Error" && lastResult.isNotBlank() -> compactResult(lastResult)
         finalTranscript.isNotBlank() -> "Heard: ${finalTranscript.take(40)}"

@@ -20,7 +20,7 @@ import org.robolectric.Shadows
 
 @RunWith(RobolectricTestRunner::class)
 class SpeechRecognitionControllerTest {
-    @Test fun stopCurrentFinalizesVoskTranscriptInsteadOfCancelling() = runTest {
+    @Test fun stopCurrentKeepsVoskActiveUntilTranscriptFinalizes() = runTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         Shadows.shadowOf(context).grantPermissions(Manifest.permission.RECORD_AUDIO)
         val logs = ActionLogRepository()
@@ -39,11 +39,16 @@ class SpeechRecognitionControllerTest {
         fakeVosk.ready.await()
 
         assertTrue(controller.stopCurrent())
+        assertTrue(controller.state.value.isStopping)
+        assertTrue(controller.state.value.isActive)
+
+        fakeVosk.completeTranscript("open google docs")
 
         assertEquals("open google docs", recognition.await())
         assertEquals(1, fakeVosk.stopCalls)
         assertEquals(0, fakeVosk.cancelCalls)
         assertFalse(controller.state.value.isListening)
+        assertFalse(controller.state.value.isStopping)
     }
 
     private class FakeVoskRecognizer(
@@ -57,6 +62,10 @@ class SpeechRecognitionControllerTest {
             private set
         var cancelCalls = 0
             private set
+
+        fun completeTranscript(value: String) {
+            transcript.complete(value)
+        }
 
         override fun supportsLanguage(languageTag: String): Boolean = true
 
@@ -74,7 +83,6 @@ class SpeechRecognitionControllerTest {
 
         override fun stopCurrent(): Boolean {
             stopCalls += 1
-            transcript.complete("open google docs")
             return true
         }
 

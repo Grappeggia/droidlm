@@ -572,6 +572,7 @@ class FloatingControlOverlayService : Service() {
                     "text" to recordText,
                     "speechStarting" to speech.isStarting,
                     "speechListening" to speech.isListening,
+                    "speechStopping" to speech.isStopping,
                     "executionStatus" to execution.status
                 )
             )
@@ -587,7 +588,8 @@ class FloatingControlOverlayService : Service() {
             partialTranscript = speech.partialTranscript,
             finalTranscript = speech.finalTranscript,
             executionStatus = execution.status,
-            lastResult = execution.lastResult
+            lastResult = execution.lastResult,
+            isStopping = speech.isStopping
         )
     }
 
