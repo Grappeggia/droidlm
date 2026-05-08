@@ -118,8 +118,16 @@ class DebugLogStore(
         }
     }
 
-    suspend fun createBundle(): File? = withContext(Dispatchers.IO) {
-        recordEvent("bundle_requested")
+    suspend fun createBundle(issueDescription: String? = null): File? = withContext(Dispatchers.IO) {
+        val issueDescriptionText = issueDescription?.let(::issueDescriptionText)
+        val issueDescriptionBytes = issueDescriptionText?.toByteArray(Charsets.UTF_8)?.size?.toLong() ?: 0L
+        recordEvent(
+            "bundle_requested",
+            mapOf(
+                "issueDescriptionProvided" to (issueDescription != null),
+                "issueDescriptionBytes" to issueDescriptionBytes
+            )
+        )
         val speechSnapshot = speechDiagnosticsLogger.exportSnapshot()
         val retainedFiles = captureDirectory
             .takeIf { it.isDirectory }
@@ -134,11 +142,12 @@ class DebugLogStore(
                 "speechSnapshotBytes" to (speechSnapshot?.length() ?: 0L),
                 "retainedFileCount" to retainedFiles.size,
                 "retainedBytes" to retainedFiles.sumOf { it.length() },
-                "categories" to categorySummary(retainedFiles)
+                "categories" to categorySummary(retainedFiles),
+                "issueDescriptionBytes" to issueDescriptionBytes
             )
         )
 
-        if (speechSnapshot == null && retainedFiles.isEmpty()) {
+        if (speechSnapshot == null && retainedFiles.isEmpty() && issueDescriptionText == null) {
             recordEvent("bundle_empty")
             return@withContext null
         }
@@ -147,7 +156,10 @@ class DebugLogStore(
         val zipFile = uniqueExportFile()
         var entries = 0
         ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
-            entries += addText(zip, "manifest.json", manifestJson(speechSnapshot, retainedFiles))
+            entries += addText(zip, "manifest.json", manifestJson(speechSnapshot, retainedFiles, issueDescriptionText))
+            if (issueDescriptionText != null) {
+                entries += addText(zip, ISSUE_DESCRIPTION_ENTRY, issueDescriptionText)
+            }
             if (speechSnapshot != null) {
                 entries += addFile(zip, speechSnapshot, "speech/${speechSnapshot.name}")
             }
@@ -219,8 +231,15 @@ class DebugLogStore(
         return 1
     }
 
-    private fun manifestJson(speechSnapshot: File?, retainedFiles: List<File>): String {
+    private fun manifestJson(speechSnapshot: File?, retainedFiles: List<File>, issueDescriptionText: String?): String {
         val files = mutableListOf<Map<String, Any?>>()
+        if (issueDescriptionText != null) {
+            files += mapOf(
+                "path" to ISSUE_DESCRIPTION_ENTRY,
+                "bytes" to issueDescriptionText.toByteArray(Charsets.UTF_8).size.toLong(),
+                "category" to "issue"
+            )
+        }
         if (speechSnapshot != null) {
             files += mapOf("path" to "speech/${speechSnapshot.name}", "bytes" to speechSnapshot.length(), "category" to "speech")
         }
@@ -236,6 +255,11 @@ class DebugLogStore(
                 "files" to files
             )
         ) + "\n"
+    }
+
+    private fun issueDescriptionText(issueDescription: String): String {
+        val description = issueDescription.trim().take(MAX_ISSUE_DESCRIPTION_CHARS).ifBlank { "No issue description provided." }
+        return "$description\n"
     }
 
     private fun categorySummary(files: List<File>): Map<String, Map<String, Any>> = files
@@ -280,5 +304,10 @@ class DebugLogStore(
 
     private fun utcFormatter(pattern: String): SimpleDateFormat = SimpleDateFormat(pattern, Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
+    }
+
+    private companion object {
+        const val ISSUE_DESCRIPTION_ENTRY = "issue-description.txt"
+        const val MAX_ISSUE_DESCRIPTION_CHARS = 4_000
     }
 }

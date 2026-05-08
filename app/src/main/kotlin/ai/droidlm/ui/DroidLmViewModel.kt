@@ -181,9 +181,9 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun shareDebugLogs() = viewModelScope.launch {
-        app.debugLogStore.recordEvent("share_requested")
-        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
+    fun shareDebugLogs(issueDescription: String) = viewModelScope.launch {
+        app.debugLogStore.recordEvent("share_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
+        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle(issueDescription) }
         if (file == null) {
             app.debugLogStore.recordEvent("share_empty")
             app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to share")

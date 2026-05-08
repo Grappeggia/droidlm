@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -68,6 +69,8 @@ import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private const val MAX_DEBUG_ISSUE_DESCRIPTION_CHARS = 4_000
 
 class MainActivity : ComponentActivity() {
     private val viewModel: DroidLmViewModel by viewModels()
@@ -674,6 +677,8 @@ private fun SettingsCard(
 
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
     var showPreviousPrompts by remember { mutableStateOf(false) }
+    var showDebugShareDialog by remember { mutableStateOf(false) }
+    var debugIssueDescription by remember { mutableStateOf("") }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
@@ -704,9 +709,48 @@ private fun SettingsCard(
         color = DroidLmColors.TextMuted
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = viewModel::shareDebugLogs) { Text("Share") }
+        OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Share") }
         OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
         OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }
+    }
+    if (showDebugShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showDebugShareDialog = false },
+            title = { Text("Describe the issue") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Add any details that would help diagnose what happened. This description will be saved inside the shared zip.",
+                        color = DroidLmColors.TextMuted
+                    )
+                    OutlinedTextField(
+                        value = debugIssueDescription,
+                        onValueChange = { debugIssueDescription = it.take(MAX_DEBUG_ISSUE_DESCRIPTION_CHARS) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("What were you experiencing?") },
+                        minLines = 4,
+                        maxLines = 8
+                    )
+                    Text(
+                        "${debugIssueDescription.length}/$MAX_DEBUG_ISSUE_DESCRIPTION_CHARS characters",
+                        color = DroidLmColors.TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.shareDebugLogs(debugIssueDescription)
+                        showDebugShareDialog = false
+                        debugIssueDescription = ""
+                    }
+                ) { Text("Share logs") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDebugShareDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
