@@ -237,16 +237,26 @@ stop_profile() {
 run_profile() {
   local profile="$1"
   shift
-  local name serial grpc_port
+  local name serial grpc_port relay_port relay_url
   name="$(profile_field "$profile" 1)"
   serial="$(serial_for_profile "$profile")"
   grpc_port="$(profile_field "$profile" 3)"
+  relay_port="${DROIDLM_E2E_RELAY_PORT:-8787}"
+  relay_url="${DROIDLM_E2E_RELAY_URL:-}"
   create_profile "$profile"
   boot_profile "$profile"
+  if [[ -z "$relay_url" && "${DROIDLM_E2E_ENABLE_RELAY_REVERSE:-true}" != "false" ]]; then
+    if "$ADB" -s "$serial" reverse "tcp:$relay_port" "tcp:$relay_port" >/dev/null 2>&1; then
+      relay_url="http://127.0.0.1:$relay_port"
+      log "Mapped $serial tcp:$relay_port to host; emulator relay URL: $relay_url"
+    else
+      log "Warning: could not configure adb reverse for $serial tcp:$relay_port"
+    fi
+  fi
   log "Running Gradle on $name ($serial): $*"
   (
     cd "$REPO_ROOT"
-    ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" "$GRADLEW" "$@" </dev/null
+    ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" "$GRADLEW" "$@" </dev/null
   )
 }
 

@@ -19,6 +19,7 @@ This matrix intentionally covers API spread, screen density/size, performance cl
 - KVM/hardware acceleration for practical E2E runtime.
 - `ffmpeg` for audio conversion tasks.
 - `OPENAI_API_KEY` in the environment or `.env.local` only when running TTS-backed mic-injection tests such as `connectedHoverMicAudioE2e`; cached audio can avoid a fresh TTS call.
+- `gcloud` with Application Default Credentials for live GCS debug-log upload tests against a local relay: `gcloud auth application-default login`.
 
 The script installs missing SDK system images automatically when possible:
 
@@ -57,6 +58,21 @@ Run the local debug APK install/upgrade regression check on the Android 10 Lenov
 ```bash
 scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 ```
+
+Run debug-log upload E2E against a relay on the host. The matrix runner maps emulator `127.0.0.1:8787` to the host with `adb reverse` and exports `DROIDLM_E2E_RELAY_URL` for the test:
+
+```bash
+(cd server && DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs uvicorn main:app --host 127.0.0.1 --port 8787)
+scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
+```
+
+For a deployed HTTPS relay, skip adb reverse and pass the URL directly:
+
+```bash
+DROIDLM_E2E_DEBUG_LOG_RELAY_URL=https://your-relay.example.com \
+scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
+```
+
 
 Run the Vosk/support-log instrumentation test on one profile:
 
