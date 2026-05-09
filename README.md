@@ -96,11 +96,11 @@ DroidLM supports several execution modes, all mediated by the same local validat
 
 - setup status for microphone, notification, accessibility, overlay, and speech recognition readiness;
 - push-to-talk and manual command entry;
-- settings for transcription, wake word, overlay behavior, execution mode, agent budgets, OCR, cloud vision, confirmations, and debug logging;
+- a focused settings surface for transcription, wake word, confirmations, OCR, cloud vision, and debug logging;
 - plan previews and confirmation cards;
-- execution status, action logs, prompt history, and debug-log export controls.
+- execution status, action logs, and debug-log export controls.
 
-`DroidLmViewModel` bridges Compose state to repositories and the executor. It exposes flows for settings, speech recognition state, logs, pending plans, confirmations, and planner key setup prompts.
+`DroidLmViewModel` bridges Compose state to repositories and the executor. It exposes flows for settings, speech recognition state, logs, pending plans, confirmations, and planner key setup prompts. The main settings UI intentionally stays simple and uncluttered, while advanced planning approvals remain contextual and overlay controls stay in setup/status flows instead of the core settings list.
 
 ### Settings and Secrets
 

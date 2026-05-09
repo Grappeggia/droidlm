@@ -3,7 +3,6 @@ package ai.droidlm.ui
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
-import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
@@ -34,7 +33,6 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val speechRecognitionState = app.speechRecognitionController.state
     val pendingPlan = app.executor.pendingPlan
     val plannerKeySetupRequest = app.executor.plannerKeySetupRequest
-    val promptHistory = app.promptHistoryRepository.prompts
     val overlayState = FloatingControlOverlayService.isRunningState
 
     private val _overlayPermissionGranted = MutableStateFlow(Settings.canDrawOverlays(app))
@@ -135,21 +133,12 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
-    fun updateAutoAcceptSafePlans(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateAutoAcceptSafePlans(value) }
-    fun clearPromptHistory() = app.promptHistoryRepository.clear()
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
-    fun updateExecutionMode(mode: ExecutionMode) = viewModelScope.launch { app.settingsRepository.updateExecutionMode(mode) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
     fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { app.settingsRepository.updateTranscriptionProvider(provider) }
     fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
     fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateShowPartialSpeechRecognition(value) }
-    fun updateHideOverlayDuringAutomation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateHideOverlayDuringAutomation(value) }
-    fun updateMaxSteps(value: Int) = viewModelScope.launch { app.settingsRepository.updateMaxAutonomousSteps(value) }
-    fun updateAgentLimits(maxTurns: Int, maxToolCalls: Int) = viewModelScope.launch {
-        app.settingsRepository.updateMaxAgentTurns(maxTurns)
-        app.settingsRepository.updateMaxAgentToolCalls(maxToolCalls)
-    }
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }
     fun updateCloudVision(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }

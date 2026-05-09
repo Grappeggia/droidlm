@@ -4,9 +4,7 @@ import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
-import ai.droidlm.prompts.PromptHistoryEntry
 import ai.droidlm.settings.DroidLmSettings
-import ai.droidlm.settings.ExecutionMode
 
 import ai.droidlm.ui.DroidLmViewModel
 import ai.droidlm.voice.SpeechRecognitionUiState
@@ -67,8 +65,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 private const val MAX_DEBUG_ISSUE_DESCRIPTION_CHARS = 4_000
@@ -123,7 +119,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
-    val promptHistory by viewModel.promptHistory.collectAsState()
     val overlayRunning by viewModel.overlayState.collectAsState()
     val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
@@ -274,7 +269,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
-                        listening = listening,
                         overlayRunning = overlayRunning,
                         overlayGranted = overlayGranted,
                         overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
@@ -285,13 +279,11 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         },
                         onStartOverlay = ::startOverlayWithPermission,
                         onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
-                        onOpenRecognizerAppSettings = viewModel::openRecognizerAppSettings,
                         onOpenOverlayPermission = ::requestOverlayPermission,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
                         speechRecognition = speechRecognition,
-                        promptHistory = promptHistory,
                     )
                 }
             } else {
@@ -471,7 +463,6 @@ private fun SettingsPage(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
-    listening: Boolean,
     overlayRunning: Boolean,
     overlayGranted: Boolean,
     overlayPermissionNeedsRetry: Boolean,
@@ -481,8 +472,6 @@ private fun SettingsPage(
     onRequestNotificationPermission: () -> Unit,
     onStartOverlay: () -> Unit,
     onOpenSpeechSettings: () -> Unit,
-    promptHistory: List<PromptHistoryEntry>,
-    onOpenRecognizerAppSettings: () -> Unit,
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
@@ -513,7 +502,7 @@ private fun SettingsPage(
         onClear = onClearOpenAiKey,
         onCancel = onDismissPlannerKeySetup
     )
-    SettingsCard(settings, speechRecognition, promptHistory, viewModel)
+    SettingsCard(settings, speechRecognition, viewModel)
     VersionFooter()
 }
 
@@ -778,7 +767,6 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 private fun SettingsCard(
     settings: DroidLmSettings,
     speechRecognition: SpeechRecognitionUiState,
-    promptHistory: List<PromptHistoryEntry>,
     viewModel: DroidLmViewModel
 ) = DroidCard {
     val saveDebugLogsLauncher = rememberLauncherForActivityResult(
@@ -787,46 +775,11 @@ private fun SettingsCard(
         uri?.let(viewModel::saveDebugLogsToUri)
     }
 
-    var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
-    var maxAgentTurns by remember(settings.maxAgentTurns) { mutableStateOf(settings.maxAgentTurns.toString()) }
-    var maxAgentToolCalls by remember(settings.maxAgentToolCalls) { mutableStateOf(settings.maxAgentToolCalls.toString()) }
-    var showPreviousPrompts by remember { mutableStateOf(false) }
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
-
-    Text("GPT planning", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Auto-accept safe GPT plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
-    Text("Risky or sensitive plans still require confirmation.", color = DroidLmColors.TextMuted)
-    Text("Execution mode: ${settings.executionMode.name.replace('_', ' ')}", color = DroidLmColors.TextMuted)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ExecutionMode.values().forEach { mode ->
-            val selected = settings.executionMode == mode
-            if (selected) {
-                Button(onClick = { viewModel.updateExecutionMode(mode) }) { Text(mode.name.replace('_', ' ')) }
-            } else {
-                OutlinedButton(onClick = { viewModel.updateExecutionMode(mode) }) { Text(mode.name.replace('_', ' ')) }
-            }
-        }
-    }
-    Text("Agent mode runs bounded multi-tool turns and stops on uncertainty, failures, or confirmations.", color = DroidLmColors.TextMuted)
-    OutlinedTextField(value = maxAgentTurns, onValueChange = { maxAgentTurns = it.filter(Char::isDigit) }, label = { Text("Max agent turns (1-8)") })
-    OutlinedTextField(value = maxAgentToolCalls, onValueChange = { maxAgentToolCalls = it.filter(Char::isDigit) }, label = { Text("Max agent tool calls (1-16)") })
-    OutlinedButton(onClick = { viewModel.updateAgentLimits(maxAgentTurns.toIntOrNull() ?: 4, maxAgentToolCalls.toIntOrNull() ?: 8) }) { Text("Save Agent Limits") }
-    OutlinedButton(onClick = { showPreviousPrompts = !showPreviousPrompts }) {
-        Text(if (showPreviousPrompts) "Hide previous prompts" else "Previous prompts")
-    }
-    if (showPreviousPrompts) {
-        PreviousPromptsPanel(promptHistory, viewModel::clearPromptHistory)
-    }
-
-    Text("Floating controls", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Hide overlay during automation", settings.hideOverlayDuringAutomation, viewModel::updateHideOverlayDuringAutomation)
-    OutlinedTextField(value = maxSteps, onValueChange = { maxSteps = it.filter(Char::isDigit) }, label = { Text("Max autonomous steps") })
-    OutlinedButton(onClick = { viewModel.updateMaxSteps(maxSteps.toIntOrNull() ?: 12) }) { Text("Save Max Steps") }
-
     ToggleRow("Require risky-action confirmation", settings.requireRiskConfirmation, viewModel::updateRiskConfirmation)
     ToggleRow("Enable on-device OCR", settings.onDeviceOcrEnabled, viewModel::updateOnDeviceOcr)
     ToggleRow("Enable cloud screenshot analysis", settings.cloudScreenshotAnalysisEnabled, viewModel::updateCloudVision)
@@ -884,20 +837,6 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun PreviousPromptsPanel(promptHistory: List<PromptHistoryEntry>, onClear: () -> Unit) = DroidCard(container = DroidLmColors.SurfaceAlt) {
-    Text("Previous prompts", fontWeight = FontWeight.SemiBold)
-    if (promptHistory.isEmpty()) {
-        Text("No previous prompts yet.", color = DroidLmColors.TextMuted)
-    } else {
-        promptHistory.forEach { entry ->
-            Text(promptTimestamp(entry.timestampMs), fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = DroidLmColors.TextMuted)
-            Text(entry.prompt)
-        }
-        OutlinedButton(onClick = onClear) { Text("Clear previous prompts") }
-    }
-}
-
-@Composable
 private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) {
     val languageTag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
     val languageName = displayLanguage(languageTag)
@@ -920,10 +859,6 @@ private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: Speech
         OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
     }
 }
-
-
-private fun promptTimestamp(timestampMs: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(timestampMs))
 
 
 @Composable

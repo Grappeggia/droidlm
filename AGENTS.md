@@ -4,6 +4,11 @@
 - Do not embed OpenAI API keys, Mobilerun API keys, release keystore files, keystore passwords, or signing credentials in Android source, resources, Gradle files, BuildConfig, scripts, release notes, commits, or APKs.
 - Keep SlopCode changes out of this repository; DroidLM release work should not modify `../slopcode`.
 
+## Code Best Practices
+
+- Keep the settings experience simple, intuitive, and uncluttered.
+- Favor sensible defaults and contextual flows over exposing advanced planning or floating-control tuning in the main settings UI.
+
 ## Build Verification
 
 - Build APKs locally before publishing.
