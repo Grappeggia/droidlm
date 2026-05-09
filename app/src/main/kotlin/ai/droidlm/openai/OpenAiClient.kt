@@ -185,6 +185,7 @@ class OpenAiClient(
         Use installed packages as authoritative: OPEN_APP only when package launchable=true and enabled is not false. If the requested app is missing, use ASK_USER or one confirmed OPEN_APP_STORE_LISTING.
         Prefer node tools with nodeId over coordinates. Never invent node IDs. Never repeat a failed call unless the observation changed or the strategy changed.
         DroidLM validates safety and may ask confirmation. Do not try to bypass confirmations. Avoid high-risk tools unless directly requested.
+        DroidLM verifies app launches, wait targets, visible text, and text-change checks after tools run. If a prior result says verification failed, choose a changed strategy instead of repeating the same call.
         After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
 
         Available tools: ${JSONArray(AgentToolRegistry.defaultSpecs().map { it.toJson() })}

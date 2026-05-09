@@ -2,9 +2,12 @@ package ai.droidlm.execution
 
 import ai.droidlm.agent.AgentBudgets
 import ai.droidlm.agent.AgentDecisionStatus
+import ai.droidlm.agent.AgentRecoveryCandidate
+import ai.droidlm.agent.AgentRecoveryPolicy
 import ai.droidlm.agent.AgentToolResult
 import ai.droidlm.agent.AgentToolRegistry
 import ai.droidlm.agent.AgentTurnRequest
+import ai.droidlm.agent.AgentVerifier
 import ai.droidlm.agent.ToolRisk
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
@@ -23,6 +26,7 @@ import ai.droidlm.logs.ActionLogType
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
+import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.prompts.PromptHistoryRepository
@@ -32,6 +36,7 @@ import ai.droidlm.safety.SafetyDecision
 import ai.droidlm.safety.SafetyClassifier
 import ai.droidlm.settings.ExecutionMode
 import ai.droidlm.settings.SettingsRepository
+import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.textedit.TextEditingController
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -100,6 +105,8 @@ class DroidLmExecutor(
     @Volatile private var cancelled = false
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
     private val agentToolRegistry = AgentToolRegistry()
+    private val agentVerifier = AgentVerifier()
+    private val agentRecoveryPolicy = AgentRecoveryPolicy()
 
     suspend fun executeTranscript(transcript: String): ActionResult {
         cancelled = false
@@ -393,6 +400,7 @@ class DroidLmExecutor(
         val history = mutableListOf<String>()
         val toolResults = mutableListOf<AgentToolResult>()
         val callsByTool = mutableMapOf<String, Int>()
+        val recoveryAttempts = mutableMapOf<String, Int>()
         var totalToolCalls = 0
         var consecutiveFailures = 0
         var lastResult = ActionResult.ok("Started agent loop")
@@ -469,12 +477,30 @@ class DroidLmExecutor(
                 val executionResult = agentToolRegistry.toExecution(call, state, packages, callsByTool)
                 if (executionResult.isFailure) {
                     val error = executionResult.exceptionOrNull()
-                    val failure = ActionResult.fail("Invalid agent tool ${call.name}: ${error?.message}", "AGENT_TOOL_VALIDATION_FAILED")
                     debugEvent(diagnosticSessionId, "agent_tool_validation_failed", mapOf("turn" to turn, "tool" to call.name, "message" to error?.message))
                     history += "${call.name}[${call.id}] validation failed: ${error?.message}"
-                    consecutiveFailures += 1
-                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
-                        return finish(failure)
+                    val recovery = agentRecoveryPolicy.recoverValidationFailure(call, error?.message)
+                    if (recovery != null && canAttemptRecovery(recovery, recoveryAttempts) && totalToolCalls < budgets.maxToolCallsTotal) {
+                        val recoveryResult = executeAgentRecovery(goal, settings, state, recovery, diagnosticSessionId, turn, call.id)
+                        totalToolCalls += 1
+                        recoveryAttempts[recovery.key] = (recoveryAttempts[recovery.key] ?: 0) + 1
+                        toolResults += recoveryResult
+                        history += recoveryResult.summary()
+                        lastResult = recoveryResult.result
+                        debugEvent(diagnosticSessionId, "agent_validation_recovery_result", mapOf("turn" to turn, "tool" to call.name, "recoveryKey" to recovery.key, "success" to recoveryResult.result.success, "errorCode" to recoveryResult.result.errorCode))
+                        if (lastResult.success) {
+                            consecutiveFailures = 0
+                        } else {
+                            consecutiveFailures += 1
+                            if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                                return finish(ActionResult.fail("Agent recovery failed after validation failure: ${lastResult.message}", "AGENT_RECOVERY_FAILED"))
+                            }
+                        }
+                    } else {
+                        consecutiveFailures += 1
+                        if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                            return finish(ActionResult.fail("Invalid agent tool ${call.name}: ${error?.message}", "AGENT_TOOL_VALIDATION_FAILED"))
+                        }
                     }
                     shouldObserveAgain = true
                     break
@@ -503,28 +529,61 @@ class DroidLmExecutor(
                     if (!confirmed) return finish(ActionResult.fail("Agent action cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
                 }
 
-                lastResult = executeAction(execution.action, goal, finishState = false, diagnosticSessionId = diagnosticSessionId)
+                val rawResult = executeAction(execution.action, goal, finishState = false, diagnosticSessionId = diagnosticSessionId)
                 totalToolCalls += 1
                 callsByTool[execution.spec.name] = (callsByTool[execution.spec.name] ?: 0) + 1
                 val requiresFreshObservation = agentToolRegistry.isFreshObservationRequired(execution.action, execution.spec)
-                val toolResult = AgentToolResult(call.id, execution.spec.name, lastResult, execution.spec.mutating, requiresFreshObservation)
+                val afterState = if (requiresFreshObservation || agentVerifier.needsFreshState(execution.action)) {
+                    runCatching { portalController.getState() }.getOrNull()
+                } else {
+                    null
+                }
+                val verification = agentVerifier.verify(execution.action, rawResult, state, afterState)
+                lastResult = if (rawResult.success && verification.failed) {
+                    ActionResult.fail("Agent verification failed: ${verification.message}", "AGENT_VERIFICATION_FAILED")
+                } else {
+                    rawResult
+                }
+                val toolResult = AgentToolResult(call.id, execution.spec.name, lastResult, execution.spec.mutating, requiresFreshObservation, verification)
                 toolResults += toolResult
                 history += toolResult.summary()
                 debugEvent(
                     diagnosticSessionId,
                     "agent_tool_result",
-                    mapOf("turn" to turn, "tool" to execution.spec.name, "callId" to call.id, "success" to lastResult.success, "errorCode" to lastResult.errorCode, "freshObservation" to requiresFreshObservation)
+                    mapOf(
+                        "turn" to turn,
+                        "tool" to execution.spec.name,
+                        "callId" to call.id,
+                        "success" to lastResult.success,
+                        "errorCode" to lastResult.errorCode,
+                        "freshObservation" to requiresFreshObservation,
+                        "verificationStatus" to verification.status.name,
+                        "verificationMessage" to verification.message
+                    )
                 )
-                if (lastResult.success) {
-                    consecutiveFailures = 0
-                } else {
-                    consecutiveFailures += 1
-                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
-                        return finish(ActionResult.fail("Agent stopped after ${budgets.maxConsecutiveFailures} consecutive failures: ${lastResult.message}", "AGENT_REPEATED_FAILURE"))
+                if (!lastResult.success) {
+                    val recovery = agentRecoveryPolicy.recoverVerificationFailure(execution.action, verification)
+                    if (recovery != null && canAttemptRecovery(recovery, recoveryAttempts) && totalToolCalls < budgets.maxToolCallsTotal) {
+                        val recoveryResult = executeAgentRecovery(goal, settings, afterState ?: state, recovery, diagnosticSessionId, turn, call.id)
+                        totalToolCalls += 1
+                        recoveryAttempts[recovery.key] = (recoveryAttempts[recovery.key] ?: 0) + 1
+                        toolResults += recoveryResult
+                        history += recoveryResult.summary()
+                        lastResult = recoveryResult.result
+                        debugEvent(diagnosticSessionId, "agent_verification_recovery_result", mapOf("turn" to turn, "tool" to execution.spec.name, "recoveryKey" to recovery.key, "success" to recoveryResult.result.success, "errorCode" to recoveryResult.result.errorCode))
+                    }
+                    if (lastResult.success) {
+                        consecutiveFailures = 0
+                    } else {
+                        consecutiveFailures += 1
+                        if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                            return finish(ActionResult.fail("Agent stopped after ${budgets.maxConsecutiveFailures} consecutive failures: ${lastResult.message}", "AGENT_REPEATED_FAILURE"))
+                        }
                     }
                     shouldObserveAgain = true
                     break
                 }
+                consecutiveFailures = 0
                 if (execution.action == DroidLmAction.Done) return finish(ActionResult.ok(lastResult.message))
                 if (requiresFreshObservation) {
                     if (decision.toolCalls.last() != call) {
@@ -539,6 +598,66 @@ class DroidLmExecutor(
             }
         }
         return finish(ActionResult.fail("Agent reached turn limit (${budgets.maxTurns})", "AGENT_MAX_TURNS"))
+    }
+
+
+    private fun canAttemptRecovery(recovery: AgentRecoveryCandidate, attempts: Map<String, Int>): Boolean =
+        (attempts[recovery.key] ?: 0) < 1
+
+    private suspend fun executeAgentRecovery(
+        goal: String,
+        settings: DroidLmSettings,
+        beforeState: PortalState?,
+        recovery: AgentRecoveryCandidate,
+        diagnosticSessionId: String?,
+        turn: Int,
+        failedCallId: String
+    ): AgentToolResult {
+        debugEvent(
+            diagnosticSessionId,
+            "agent_recovery_started",
+            mapOf("turn" to turn, "failedCallId" to failedCallId, "recoveryKey" to recovery.key, "action" to recovery.action.displayName(), "reason" to recovery.reason)
+        )
+        val safety = safetyClassifier.classify(goal, recovery.action, beforeState, settings.sensitiveAppScreenshotDenylist)
+        recordSafetyDecision(diagnosticSessionId, "agent_recovery_${turn}_$failedCallId", safety, settings.requireRiskConfirmation)
+        if (safety.blocked) {
+            val result = ActionResult.fail(safety.reason ?: "Recovery action blocked by safety policy", "AGENT_RECOVERY_SAFETY_BLOCKED")
+            return AgentToolResult("recovery_$failedCallId", "RECOVERY", result, mutating = true, requiresFreshObservationAfter = true)
+        }
+        val recoveryRisk = when (recovery.action) {
+            is DroidLmAction.OpenAppStoreListing -> ToolRisk.INSTALL_OR_STORE
+            is DroidLmAction.OpenUrl,
+            is DroidLmAction.OpenDeepLink,
+            is DroidLmAction.ShareToApp -> ToolRisk.EXTERNAL_SHARE
+            else -> ToolRisk.SAFE_NAVIGATION
+        }
+        val needsConfirmation = safety.needsConfirmationPrompt(settings.requireRiskConfirmation) || agentToolNeedsConfirmation(recoveryRisk, settings.requireRiskConfirmation)
+        if (needsConfirmation) {
+            val confirmed = requestConfirmation(
+                goal,
+                recovery.action,
+                safety.reason ?: recovery.reason,
+                diagnosticSessionId
+            )
+            if (!confirmed) {
+                val result = ActionResult.fail("Recovery action cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED")
+                return AgentToolResult("recovery_$failedCallId", "RECOVERY", result, mutating = true, requiresFreshObservationAfter = true)
+            }
+        }
+        val rawResult = executeAction(recovery.action, goal, finishState = false, diagnosticSessionId = diagnosticSessionId)
+        val afterState = runCatching { portalController.getState() }.getOrNull()
+        val verification = agentVerifier.verify(recovery.action, rawResult, beforeState, afterState)
+        val result = if (rawResult.success && verification.failed) {
+            ActionResult.fail("Recovery verification failed: ${verification.message}", "AGENT_RECOVERY_VERIFICATION_FAILED")
+        } else {
+            rawResult
+        }
+        debugEvent(
+            diagnosticSessionId,
+            "agent_recovery_result",
+            mapOf("turn" to turn, "failedCallId" to failedCallId, "recoveryKey" to recovery.key, "success" to result.success, "errorCode" to result.errorCode, "verificationStatus" to verification.status.name)
+        )
+        return AgentToolResult("recovery_$failedCallId", "RECOVERY", result, mutating = true, requiresFreshObservationAfter = true, verification = verification)
     }
 
 

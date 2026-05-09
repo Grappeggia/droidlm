@@ -102,9 +102,13 @@ data class AgentToolResult(
     val toolName: String,
     val result: ActionResult,
     val mutating: Boolean,
-    val requiresFreshObservationAfter: Boolean
+    val requiresFreshObservationAfter: Boolean,
+    val verification: AgentVerificationResult? = null
 ) {
-    fun summary(): String = "$toolName[$callId] -> ${result.success}: ${result.message}"
+    fun summary(): String {
+        val verificationSummary = verification?.let { " verification=${it.status.name.lowercase()}: ${it.message}" }.orEmpty()
+        return "$toolName[$callId] -> ${result.success}: ${result.message}$verificationSummary"
+    }
 
     fun toJson(): JSONObject = JSONObject()
         .put("callId", callId)
@@ -114,6 +118,7 @@ data class AgentToolResult(
         .put("errorCode", result.errorCode ?: JSONObject.NULL)
         .put("mutating", mutating)
         .put("requiresFreshObservationAfter", requiresFreshObservationAfter)
+        .put("verification", verification?.toJson() ?: JSONObject.NULL)
 }
 
 data class AgentTurnRequest(
