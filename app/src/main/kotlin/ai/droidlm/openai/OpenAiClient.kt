@@ -7,6 +7,7 @@ import ai.droidlm.agent.AgentToolRegistry
 import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.context.UiContextJson
 import ai.droidlm.diagnostics.DebugLogStore
+import ai.droidlm.diagnostics.NetworkDiagnostics
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.displayName
 import ai.droidlm.portal.AppPackage
@@ -19,14 +20,24 @@ import ai.droidlm.relay.RelayClient
 import ai.droidlm.relay.RelayPlanRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Connection
+import okhttp3.EventListener
+import okhttp3.Handshake
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 
 class OpenAiClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -35,10 +46,15 @@ class OpenAiClient(
         .writeTimeout(90, TimeUnit.SECONDS)
         .build(),
     private val endpoint: String = "https://api.openai.com/v1/chat/completions",
-    private val debugLogStore: DebugLogStore? = null
+    private val debugLogStore: DebugLogStore? = null,
+    private val networkDiagnostics: NetworkDiagnostics? = null
 ) {
     private val relayJsonParser = RelayClient()
     private val agentJsonParser = AgentJsonParser()
+    private val networkTraceRecorder = HttpNetworkTraceRecorder()
+    private val tracedClient: OkHttpClient = client.newBuilder()
+        .eventListenerFactory(networkTraceRecorder)
+        .build()
 
     suspend fun planPreview(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
@@ -217,8 +233,10 @@ class OpenAiClient(
         var parsedContent: JSONObject? = null
         var errorCode: String? = null
         var errorMessage: String? = null
+        var call: Call? = null
         val result = try {
-            client.newCall(request).execute().use { response ->
+            call = tracedClient.newCall(request)
+            call.execute().use { response ->
                 httpStatus = response.code
                 rawResponse = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
@@ -252,6 +270,7 @@ class OpenAiClient(
             errorCode = "OPENAI_CLIENT_ERROR"
             RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
         }
+        val networkTrace = networkTraceRecorder.snapshotAndRemove(call)
         retainLlmTrace(
             source = source,
             model = model,
@@ -264,7 +283,9 @@ class OpenAiClient(
             parsedContent = parsedContent,
             errorCode = errorCode,
             errorMessage = errorMessage,
-            success = result is RelayCallResult.Success
+            success = result is RelayCallResult.Success,
+            networkTrace = networkTrace,
+            connectivityFields = networkDiagnostics?.connectivityFields(endpoint)
         )
         result
     }
@@ -324,15 +345,23 @@ class OpenAiClient(
         parsedContent: JSONObject?,
         errorCode: String?,
         errorMessage: String?,
-        success: Boolean
+        success: Boolean,
+        networkTrace: Map<String, Any?>?,
+        connectivityFields: Map<String, Any?>?
     ) {
         val trace = JSONObject()
             .put("traceId", "llm-$startedAtMs-$source")
             .put("source", source)
+            .put("endpointMode", "direct_openai")
             .put("startedAtMs", startedAtMs)
             .put("durationMs", durationMs)
             .put("model", model)
             .put("endpoint", endpoint)
+            .put("timeoutConfig", mapToJson(timeoutConfigFields()))
+            .put("requestMetadata", mapToJson(requestMetadata(requestJson)))
+            .put("responseMetadata", mapToJson(responseMetadata(rawResponse, assistantContent, parsedContent)))
+            .put("connectivity", mapToJson(connectivityFields.orEmpty()))
+            .put("networkTrace", mapToJson(networkTrace.orEmpty()))
             .put("request", JSONObject(requestJson.toString()))
             .put(
                 "response",
@@ -350,6 +379,71 @@ class OpenAiClient(
                     )
             )
         debugLogStore?.retainText("llm", source, trace.toString(2), extension = "json")
+    }
+
+    private fun timeoutConfigFields(): Map<String, Any?> = mapOf(
+        "connectTimeoutMs" to tracedClient.connectTimeoutMillis,
+        "readTimeoutMs" to tracedClient.readTimeoutMillis,
+        "writeTimeoutMs" to tracedClient.writeTimeoutMillis,
+        "callTimeoutMs" to tracedClient.callTimeoutMillis,
+        "retryOnConnectionFailure" to tracedClient.retryOnConnectionFailure
+    )
+
+    private fun requestMetadata(requestJson: JSONObject): Map<String, Any?> {
+        val requestText = requestJson.toString()
+        val messages = requestJson.optJSONArray("messages") ?: JSONArray()
+        var promptChars = 0
+        val messageSummaries = mutableListOf<Map<String, Any?>>()
+        for (index in 0 until messages.length()) {
+            val message = messages.optJSONObject(index) ?: continue
+            val content = message.optString("content")
+            promptChars += content.length
+            messageSummaries += mapOf(
+                "index" to index,
+                "role" to message.optString("role"),
+                "contentChars" to content.length,
+                "contentTokenEstimate" to estimateTokens(content.length)
+            )
+        }
+        return mapOf(
+            "requestBytes" to requestText.toByteArray(Charsets.UTF_8).size,
+            "messageCount" to messages.length(),
+            "promptChars" to promptChars,
+            "promptTokenEstimate" to estimateTokens(promptChars),
+            "maxCompletionTokens" to requestJson.opt("max_completion_tokens"),
+            "maxTokens" to requestJson.opt("max_tokens"),
+            "responseFormat" to requestJson.optJSONObject("response_format")?.optString("type"),
+            "messages" to messageSummaries
+        )
+    }
+
+    private fun responseMetadata(rawResponse: String?, assistantContent: String?, parsedContent: JSONObject?): Map<String, Any?> = mapOf(
+        "rawResponseBytes" to (rawResponse?.toByteArray(Charsets.UTF_8)?.size ?: 0),
+        "assistantContentBytes" to (assistantContent?.toByteArray(Charsets.UTF_8)?.size ?: 0),
+        "assistantContentChars" to (assistantContent?.length ?: 0),
+        "parsedBytes" to (parsedContent?.toString()?.toByteArray(Charsets.UTF_8)?.size ?: 0)
+    )
+
+    private fun estimateTokens(chars: Int): Int = (chars + 3) / 4
+
+    private fun mapToJson(map: Map<String, Any?>): JSONObject {
+        val json = JSONObject()
+        map.forEach { (key, value) -> json.put(key, jsonValue(value)) }
+        return json
+    }
+
+    private fun jsonValue(value: Any?): Any = when (value) {
+        null -> JSONObject.NULL
+        is JSONObject -> value
+        is JSONArray -> value
+        is Map<*, *> -> {
+            val json = JSONObject()
+            value.forEach { (key, item) -> json.put(key.toString(), jsonValue(item)) }
+            json
+        }
+        is Iterable<*> -> JSONArray(value.map(::jsonValue))
+        is Array<*> -> JSONArray(value.map(::jsonValue))
+        else -> value
     }
 
     private fun extractAssistantJson(body: String): String {
@@ -464,6 +558,263 @@ class OpenAiClient(
 
     private data class ParsedChat<T>(val value: T, val debugJson: JSONObject)
     private data class ParsedAssistant<T>(val value: T, val debugJson: JSONObject, val assistantContent: String)
+
+    private class HttpNetworkTraceRecorder : EventListener.Factory {
+        private val traces = ConcurrentHashMap<Call, MutableNetworkTrace>()
+
+        override fun create(call: Call): EventListener {
+            val trace = MutableNetworkTrace(call.request().url.toString())
+            traces[call] = trace
+            return Listener(trace)
+        }
+
+        fun snapshotAndRemove(call: Call?): Map<String, Any?>? {
+            if (call == null) return null
+            return traces.remove(call)?.toMap()
+        }
+    }
+
+    private class Listener(private val trace: MutableNetworkTrace) : EventListener() {
+        override fun callStart(call: Call) {
+            trace.mark("callStart", mapOf("method" to call.request().method, "host" to call.request().url.host))
+        }
+
+        override fun dnsStart(call: Call, domainName: String) {
+            trace.dnsStarted(domainName)
+        }
+
+        override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<InetAddress>) {
+            trace.dnsEnded(domainName, inetAddressList)
+        }
+
+        override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+            trace.connectStarted(inetSocketAddress, proxy)
+        }
+
+        override fun secureConnectStart(call: Call) {
+            trace.tlsStarted()
+        }
+
+        override fun secureConnectEnd(call: Call, handshake: Handshake?) {
+            trace.tlsEnded(handshake)
+        }
+
+        override fun connectEnd(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy, protocol: Protocol?) {
+            trace.connectEnded(inetSocketAddress, proxy, protocol)
+        }
+
+        override fun connectFailed(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy, protocol: Protocol?, ioe: IOException) {
+            trace.connectFailed(inetSocketAddress, proxy, protocol, ioe)
+        }
+
+        override fun connectionAcquired(call: Call, connection: Connection) {
+            trace.connectionAcquired(connection)
+        }
+
+        override fun requestHeadersStart(call: Call) {
+            trace.spanStarted("requestHeaders")
+        }
+
+        override fun requestHeadersEnd(call: Call, request: Request) {
+            trace.spanEnded("requestHeaders", mapOf("headerCount" to request.headers.size))
+        }
+
+        override fun requestBodyStart(call: Call) {
+            trace.spanStarted("requestBody")
+        }
+
+        override fun requestBodyEnd(call: Call, byteCount: Long) {
+            trace.spanEnded("requestBody", mapOf("byteCount" to byteCount))
+        }
+
+        override fun responseHeadersStart(call: Call) {
+            trace.spanStarted("responseHeaders")
+        }
+
+        override fun responseHeadersEnd(call: Call, response: Response) {
+            trace.responseHeadersEnded(response)
+        }
+
+        override fun responseBodyStart(call: Call) {
+            trace.spanStarted("responseBody")
+        }
+
+        override fun responseBodyEnd(call: Call, byteCount: Long) {
+            trace.spanEnded("responseBody", mapOf("byteCount" to byteCount))
+        }
+
+        override fun callEnd(call: Call) {
+            trace.mark("callEnd", mapOf("durationMs" to trace.elapsedMs()))
+        }
+
+        override fun callFailed(call: Call, ioe: IOException) {
+            trace.failed("callFailed", ioe)
+        }
+    }
+
+    private class MutableNetworkTrace(private val url: String) {
+        private val startedNanos = System.nanoTime()
+        private val spanStarts = mutableMapOf<String, Long>()
+        private val durations = linkedMapOf<String, Long>()
+        private val events = mutableListOf<Map<String, Any?>>()
+        private val dnsAddresses = mutableListOf<String>()
+        private val remoteAddresses = mutableListOf<String>()
+        private var selectedRemoteAddress: String? = null
+        private var connectAttemptCount = 0
+        private var responseCode: Int? = null
+        private var responseBodyBytes: Long? = null
+        private var failureClass: String? = null
+        private var failureMessage: String? = null
+        private var failureCauseClass: String? = null
+        private var failureCauseMessage: String? = null
+
+        @Synchronized fun mark(name: String, fields: Map<String, Any?> = emptyMap()) {
+            events += mapOf("name" to name, "tMs" to elapsedMs()) + fields
+        }
+
+        @Synchronized fun dnsStarted(domainName: String) {
+            spanStarts["dns"] = System.nanoTime()
+            mark("dnsStart", mapOf("domainName" to domainName))
+        }
+
+        @Synchronized fun dnsEnded(domainName: String, addresses: List<InetAddress>) {
+            endDuration("dns")
+            dnsAddresses.clear()
+            dnsAddresses += addresses.mapNotNull { it.hostAddress }
+            mark("dnsEnd", mapOf("domainName" to domainName, "addresses" to dnsAddresses, "addressCount" to addresses.size))
+        }
+
+        @Synchronized fun connectStarted(address: InetSocketAddress, proxy: Proxy) {
+            connectAttemptCount += 1
+            spanStarts["connect"] = System.nanoTime()
+            remoteAddresses += socketAddress(address)
+            mark("connectStart", mapOf("attempt" to connectAttemptCount, "remoteAddress" to socketAddress(address), "proxy" to proxyFields(proxy)))
+        }
+
+        @Synchronized fun connectEnded(address: InetSocketAddress, proxy: Proxy, protocol: Protocol?) {
+            endDuration("connect")
+            selectedRemoteAddress = socketAddress(address)
+            mark("connectEnd", mapOf("remoteAddress" to socketAddress(address), "proxy" to proxyFields(proxy), "protocol" to protocol?.toString()))
+        }
+
+        @Synchronized fun connectFailed(address: InetSocketAddress, proxy: Proxy, protocol: Protocol?, error: IOException) {
+            endDuration("connect")
+            selectedRemoteAddress = socketAddress(address)
+            captureFailure(error)
+            mark(
+                "connectFailed",
+                mapOf(
+                    "remoteAddress" to socketAddress(address),
+                    "proxy" to proxyFields(proxy),
+                    "protocol" to protocol?.toString(),
+                    "errorClass" to error::class.java.name,
+                    "message" to error.message,
+                    "causeClass" to error.cause?.javaClass?.name,
+                    "causeMessage" to error.cause?.message
+                )
+            )
+        }
+
+        @Synchronized fun tlsStarted() {
+            spanStarts["tls"] = System.nanoTime()
+            mark("secureConnectStart")
+        }
+
+        @Synchronized fun tlsEnded(handshake: Handshake?) {
+            endDuration("tls")
+            mark(
+                "secureConnectEnd",
+                mapOf(
+                    "tlsVersion" to handshake?.tlsVersion?.javaName,
+                    "cipherSuite" to handshake?.cipherSuite?.javaName
+                )
+            )
+        }
+
+        @Synchronized fun connectionAcquired(connection: Connection) {
+            mark(
+                "connectionAcquired",
+                mapOf(
+                    "protocol" to connection.protocol().toString(),
+                    "routeSocketAddress" to connection.route().socketAddress.toString(),
+                    "routeProxy" to proxyFields(connection.route().proxy)
+                )
+            )
+        }
+
+        @Synchronized fun spanStarted(name: String) {
+            spanStarts[name] = System.nanoTime()
+            mark("${name}Start")
+        }
+
+        @Synchronized fun spanEnded(name: String, fields: Map<String, Any?> = emptyMap()) {
+            val durationMs = endDuration(name)
+            if (name == "responseBody") responseBodyBytes = fields["byteCount"] as? Long
+            mark("${name}End", mapOf("durationMs" to durationMs) + fields)
+        }
+
+        @Synchronized fun responseHeadersEnded(response: Response) {
+            responseCode = response.code
+            val durationMs = endDuration("responseHeaders")
+            mark("responseHeadersEnd", mapOf("durationMs" to durationMs, "httpStatus" to response.code, "headerCount" to response.headers.size))
+        }
+
+        @Synchronized fun failed(name: String, error: IOException) {
+            captureFailure(error)
+            mark(name, mapOf("errorClass" to error::class.java.name, "message" to error.message, "durationMs" to elapsedMs()))
+        }
+
+        @Synchronized fun toMap(): Map<String, Any?> = mapOf(
+            "url" to url,
+            "durationMs" to elapsedMs(),
+            "dnsDurationMs" to durations["dns"],
+            "dnsAddresses" to dnsAddresses,
+            "connectAttemptCount" to connectAttemptCount,
+            "connectDurationMs" to durations["connect"],
+            "remoteAddresses" to remoteAddresses,
+            "selectedRemoteAddress" to selectedRemoteAddress,
+            "tlsDurationMs" to durations["tls"],
+            "requestHeadersDurationMs" to durations["requestHeaders"],
+            "requestBodyDurationMs" to durations["requestBody"],
+            "responseHeadersDurationMs" to durations["responseHeaders"],
+            "responseBodyDurationMs" to durations["responseBody"],
+            "responseBodyBytes" to responseBodyBytes,
+            "httpStatus" to responseCode,
+            "failureClass" to failureClass,
+            "failureMessage" to failureMessage,
+            "failureCauseClass" to failureCauseClass,
+            "failureCauseMessage" to failureCauseMessage,
+            "events" to events.toList()
+        )
+
+        fun elapsedMs(): Long = (System.nanoTime() - startedNanos) / 1_000_000L
+
+        private fun endDuration(name: String): Long? {
+            val start = spanStarts.remove(name) ?: return null
+            val durationMs = (System.nanoTime() - start) / 1_000_000L
+            durations[name] = durationMs
+            return durationMs
+        }
+
+        private fun captureFailure(error: IOException) {
+            failureClass = error::class.java.name
+            failureMessage = error.message
+            failureCauseClass = error.cause?.javaClass?.name
+            failureCauseMessage = error.cause?.message
+        }
+
+        private fun socketAddress(address: InetSocketAddress): String =
+            "${address.hostString}/${address.address?.hostAddress ?: "unresolved"}:${address.port}"
+
+        private fun proxyFields(proxy: Proxy): Map<String, Any?> {
+            val address = proxy.address() as? InetSocketAddress
+            return mapOf(
+                "type" to proxy.type().name,
+                "host" to address?.hostString,
+                "port" to address?.port
+            )
+        }
+    }
 
     private fun usesMaxCompletionTokens(model: String): Boolean {
         val normalized = model.trim().lowercase()

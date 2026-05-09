@@ -138,6 +138,7 @@ class DroidLmExecutor(
 
     suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
+        val planningStartedAt = System.currentTimeMillis()
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
         if (isAmbiguousOpenCommand(stripped)) {
             debugEvent(diagnosticSessionId, "ambiguous_open_command", mapOf("transcript" to stripped))
@@ -149,8 +150,20 @@ class DroidLmExecutor(
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano", lastResult = "")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         logs.log(ActionLogType.PLANNER_STARTED, "GPT planning started", "promptLength=${stripped.length}")
+        val settingsStartedAt = System.currentTimeMillis()
         val settings = settingsRepository.settings.first()
+        val settingsLoadMs = System.currentTimeMillis() - settingsStartedAt
         if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
+            debugEvent(
+                diagnosticSessionId,
+                "planner_pipeline_handoff",
+                mapOf(
+                    "executionMode" to settings.executionMode.name,
+                    "endpointMode" to "direct_openai_agent_loop",
+                    "settingsLoadMs" to settingsLoadMs,
+                    "elapsedSincePlanStartMs" to (System.currentTimeMillis() - planningStartedAt)
+                )
+            )
             return runAgentLoop(stripped, diagnosticSessionId)
         }
         val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
@@ -161,6 +174,9 @@ class DroidLmExecutor(
                 "promptLength" to stripped.length,
                 "openAiKeyConfigured" to apiKey.isNotBlank(),
                 "model" to settings.openAiModel,
+                "executionMode" to settings.executionMode.name,
+                "endpointMode" to "direct_openai",
+                "settingsLoadMs" to settingsLoadMs,
                 "maxAutonomousSteps" to settings.maxAutonomousSteps,
                 "autoAcceptSafePlans" to settings.autoAcceptSafePlans
             )
@@ -171,15 +187,30 @@ class DroidLmExecutor(
                 retryTranscript = stripped
             )
             diagnostics.record(diagnosticSessionId, "planner_key_missing")
+            diagnostics.record(
+                diagnosticSessionId,
+                "planner_pipeline_finished",
+                mapOf(
+                    "success" to false,
+                    "errorCode" to "OPENAI_API_KEY_MISSING",
+                    "endpointMode" to "direct_openai",
+                    "totalDurationMs" to (System.currentTimeMillis() - planningStartedAt),
+                    "settingsLoadMs" to settingsLoadMs
+                )
+            )
             logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing or unreadable", "OPENAI_API_KEY_MISSING")
             return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
         }
+        val portalStateStartedAt = System.currentTimeMillis()
         val stateResult = runCatching { portalController.getState() }
+        val portalStateDurationMs = System.currentTimeMillis() - portalStateStartedAt
         stateResult
-            .onSuccess { state -> debugEvent(diagnosticSessionId, "portal_state_collected", portalStateFields(state)) }
-            .onFailure { error -> debugEvent(diagnosticSessionId, "portal_state_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+            .onSuccess { state -> debugEvent(diagnosticSessionId, "portal_state_collected", portalStateFields(state) + mapOf("durationMs" to portalStateDurationMs)) }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "portal_state_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "durationMs" to portalStateDurationMs)) }
         val state = stateResult.getOrNull()
+        val deviceContextStartedAt = System.currentTimeMillis()
         val deviceContextResult = runCatching { deviceContextAggregator.collect(stripped, state) }
+        val deviceContextDurationMs = System.currentTimeMillis() - deviceContextStartedAt
         deviceContextResult
             .onSuccess { context ->
                 debugEvent(
@@ -188,27 +219,59 @@ class DroidLmExecutor(
                     mapOf(
                         "packageCount" to context.packages.size,
                         "activePackage" to context.activeApp?.packageName,
-                        "extraKeyCount" to context.extras.length()
+                        "extraKeyCount" to context.extras.length(),
+                        "durationMs" to deviceContextDurationMs
                     )
                 )
             }
-            .onFailure { error -> debugEvent(diagnosticSessionId, "device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "durationMs" to deviceContextDurationMs)) }
         val deviceContext = deviceContextResult.getOrNull()
+        val packageResolutionStartedAt = System.currentTimeMillis()
         val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
+        val packageResolutionDurationMs = System.currentTimeMillis() - packageResolutionStartedAt
         val request = RelayPlanRequest(stripped, state, packages, emptyList(), settings.maxAutonomousSteps, activeApp, deviceContext)
         diagnostics.record(
             diagnosticSessionId,
             "openai_plan_request_started",
-            mapOf("model" to settings.openAiModel, "packageCount" to packages.size, "activePackage" to activeApp?.packageName)
+            mapOf(
+                "model" to settings.openAiModel,
+                "endpointMode" to "direct_openai",
+                "packageCount" to packages.size,
+                "activePackage" to activeApp?.packageName,
+                "portalStateDurationMs" to portalStateDurationMs,
+                "deviceContextDurationMs" to deviceContextDurationMs,
+                "packageResolutionDurationMs" to packageResolutionDurationMs,
+                "elapsedSincePlanStartMs" to (System.currentTimeMillis() - planningStartedAt)
+            )
         )
-        return when (val result = openAiClient.planPreview(apiKey, settings.openAiModel, request)) {
+        val openAiStartedAt = System.currentTimeMillis()
+        val result = openAiClient.planPreview(apiKey, settings.openAiModel, request)
+        val openAiDurationMs = System.currentTimeMillis() - openAiStartedAt
+        return when (result) {
             is RelayCallResult.Failure -> {
-                diagnostics.record(diagnosticSessionId, "openai_plan_failed", mapOf("errorCode" to result.errorCode, "message" to result.message.take(240)))
+                val totalDurationMs = System.currentTimeMillis() - planningStartedAt
+                diagnostics.record(diagnosticSessionId, "openai_plan_failed", mapOf("errorCode" to result.errorCode, "message" to result.message.take(240), "openAiDurationMs" to openAiDurationMs, "totalPlannerDurationMs" to totalDurationMs))
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "planner_pipeline_finished",
+                    mapOf(
+                        "success" to false,
+                        "errorCode" to result.errorCode,
+                        "endpointMode" to "direct_openai",
+                        "totalDurationMs" to totalDurationMs,
+                        "settingsLoadMs" to settingsLoadMs,
+                        "portalStateDurationMs" to portalStateDurationMs,
+                        "deviceContextDurationMs" to deviceContextDurationMs,
+                        "packageResolutionDurationMs" to packageResolutionDurationMs,
+                        "openAiDurationMs" to openAiDurationMs
+                    )
+                )
                 logs.log(ActionLogType.ERROR, "GPT planning failed: ${result.message}", result.errorCode)
                 finish(ActionResult.fail(userFacingPlannerMessage(result), result.errorCode))
             }
             is RelayCallResult.Success -> {
+                val totalDurationMs = System.currentTimeMillis() - planningStartedAt
                 val plan = result.value
                 val pending = PendingPlan(stripped, plan, diagnosticSessionId)
                 _pendingPlan.value = pending
@@ -220,7 +283,23 @@ class DroidLmExecutor(
                 diagnostics.record(
                     diagnosticSessionId,
                     "openai_plan_succeeded",
-                    mapOf("model" to plan.model, "riskLevel" to plan.riskLevel, "stepCount" to plan.steps.size, "requiresConfirmation" to plan.requiresConfirmation)
+                    mapOf("model" to plan.model, "riskLevel" to plan.riskLevel, "stepCount" to plan.steps.size, "requiresConfirmation" to plan.requiresConfirmation, "openAiDurationMs" to openAiDurationMs, "totalPlannerDurationMs" to totalDurationMs)
+                )
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "planner_pipeline_finished",
+                    mapOf(
+                        "success" to true,
+                        "endpointMode" to "direct_openai",
+                        "totalDurationMs" to totalDurationMs,
+                        "settingsLoadMs" to settingsLoadMs,
+                        "portalStateDurationMs" to portalStateDurationMs,
+                        "deviceContextDurationMs" to deviceContextDurationMs,
+                        "packageResolutionDurationMs" to packageResolutionDurationMs,
+                        "openAiDurationMs" to openAiDurationMs,
+                        "stepCount" to plan.steps.size,
+                        "requiresConfirmation" to plan.requiresConfirmation
+                    )
                 )
                 logs.log(ActionLogType.PLANNER_RESULT, "GPT plan ready: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}; steps=${plan.steps.size}")
                 if (settings.autoAcceptSafePlans && plan.isSafe) {

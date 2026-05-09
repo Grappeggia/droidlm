@@ -7,6 +7,7 @@ import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.context.GoogleDriveContextProvider
 import ai.droidlm.context.GoogleSheetsContextProvider
 import ai.droidlm.diagnostics.DebugLogStore
+import ai.droidlm.diagnostics.NetworkDiagnostics
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
@@ -78,7 +79,7 @@ class DroidLMApp : Application() {
         speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
         debugLogStore = DebugLogStore(this, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
         relayClient = RelayClient()
-        openAiClient = OpenAiClient(debugLogStore = debugLogStore)
+        openAiClient = OpenAiClient(debugLogStore = debugLogStore, networkDiagnostics = NetworkDiagnostics(this))
         portalController = AccessibilityPortalController(this, actionLogRepository)
         appInventoryRepository = AppInventoryRepository(this)
         ocrEngine = MlKitOcrEngine()

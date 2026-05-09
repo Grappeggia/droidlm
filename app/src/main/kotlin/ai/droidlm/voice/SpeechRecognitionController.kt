@@ -90,18 +90,22 @@ class SpeechRecognitionController(
         diagnostics.record(
             sessionId,
             "recognize_command_start",
-            recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf("voskFallbackSupported" to fallbackSupported)
+            recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf(
+                "voskFallbackSupported" to fallbackSupported,
+                "requestedProvider" to if (preferOffline) "offline_preferred" else "android_speech",
+                "selectedProvider" to if (preferOffline && fallbackSupported) VOSK_PROVIDER_LABEL else "Android SpeechRecognizer"
+            )
         )
         if (preferOffline && fallbackSupported) {
             val message = "Using built-in offline English speech because offline Android speech may not be installed."
-            diagnostics.record(sessionId, "prefer_offline_vosk_direct", mapOf("language" to languageTag))
+            diagnostics.record(sessionId, "prefer_offline_vosk_direct", mapOf("language" to languageTag, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
             return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             val message = "No Android speech recognizer is available on this device."
             diagnostics.record(diagnosticSessionId, "recognizer_unavailable")
             if (fallbackSupported) {
-                diagnostics.record(sessionId, "android_recognizer_unavailable_falling_back_to_vosk", mapOf("message" to message))
+                diagnostics.record(sessionId, "android_recognizer_unavailable_falling_back_to_vosk", mapOf("message" to message, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
                 return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
             }
             val fullMessage = "$message Install or enable a speech recognition service."
@@ -117,6 +121,18 @@ class SpeechRecognitionController(
         }
 
         try {
+            diagnostics.record(
+                sessionId,
+                "android_speech_selected",
+                mapOf(
+                    "selectedProvider" to "Android SpeechRecognizer",
+                    "language" to languageTag,
+                    "preferOffline" to preferOffline,
+                    "fallbackSupported" to fallbackSupported,
+                    "recognizerService" to voiceRecognitionService(),
+                    "recognizerPackage" to voiceRecognitionPackage()
+                )
+            )
         suspendCancellableCoroutine { continuation ->
             val recognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
             activeRecognizer = recognizer
@@ -187,7 +203,7 @@ class SpeechRecognitionController(
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     readyForSpeech = true
-                    diagnostics.record(sessionId, "onReadyForSpeech")
+                    diagnostics.record(sessionId, "onReadyForSpeech", mapOf("elapsedMs" to (System.currentTimeMillis() - startedAtMs), "provider" to "Android SpeechRecognizer"))
                     _state.value = _state.value.copy(
                         isStarting = false,
                         isListening = true,
@@ -200,7 +216,7 @@ class SpeechRecognitionController(
 
                 override fun onBeginningOfSpeech() {
                     speechStarted = true
-                    diagnostics.record(sessionId, "onBeginningOfSpeech", mapOf("retryCount" to retryCount))
+                    diagnostics.record(sessionId, "onBeginningOfSpeech", mapOf("retryCount" to retryCount, "elapsedMs" to (System.currentTimeMillis() - startedAtMs), "provider" to "Android SpeechRecognizer"))
                     logs.log(ActionLogType.RECORDING_STARTED, "Speech input detected")
                 }
 
@@ -212,7 +228,7 @@ class SpeechRecognitionController(
                         diagnostics.record(
                             sessionId,
                             "onRmsChanged",
-                            mapOf("rmsDb" to rounded(rmsdB), "peakRmsDb" to rounded(peakRmsDb))
+                            mapOf("rmsDb" to rounded(rmsdB), "peakRmsDb" to rounded(peakRmsDb), "speechStarted" to speechStarted)
                         )
                     }
                 }
@@ -225,7 +241,7 @@ class SpeechRecognitionController(
                     diagnostics.record(
                         sessionId,
                         "onEndOfSpeech",
-                        mapOf("speechStarted" to speechStarted, "peakRmsDb" to rounded(peakRmsDb))
+                        mapOf("speechStarted" to speechStarted, "peakRmsDb" to rounded(peakRmsDb), "elapsedMs" to (System.currentTimeMillis() - startedAtMs), "provider" to "Android SpeechRecognizer")
                     )
                     if (speechStarted) {
                         _state.value = _state.value.copy(isStarting = false, isListening = false, isStopping = true)
@@ -281,7 +297,7 @@ class SpeechRecognitionController(
 
                     val willFallback = shouldFallbackToVosk(error, languageTag)
                     if (willFallback) {
-                        diagnostics.record(sessionId, "android_speech_fallback_pending", mapOf("code" to error, "message" to message))
+                        diagnostics.record(sessionId, "android_speech_fallback_pending", mapOf("code" to error, "message" to message, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
                     } else {
                         finishDiagnostics("error", mapOf("code" to error, "message" to message))
                     }
@@ -315,11 +331,19 @@ class SpeechRecognitionController(
 
                 override fun onResults(results: Bundle?) {
                     val candidates = transcriptCandidates(results)
+                    val confidences = confidenceScores(results)
                     val transcript = candidates.firstOrNull().orEmpty()
                     diagnostics.record(
                         sessionId,
                         "onResults",
-                        transcriptFields(transcript, candidates.size) + mapOf("peakRmsDb" to rounded(peakRmsDb))
+                        transcriptFields(transcript, candidates.size) + mapOf(
+                            "alternatives" to candidates.take(MAX_TRANSCRIPT_ALTERNATIVES),
+                            "confidenceScores" to confidences,
+                            "topConfidence" to confidences.firstOrNull(),
+                            "peakRmsDb" to rounded(peakRmsDb),
+                            "elapsedMs" to (System.currentTimeMillis() - startedAtMs),
+                            "provider" to "Android SpeechRecognizer"
+                        )
                     )
                     cleanup()
                     if (transcript.isBlank()) {
@@ -340,14 +364,15 @@ class SpeechRecognitionController(
                     )
                     logs.log(ActionLogType.RECORDING_STOPPED, "Android speech recognition stopped")
                     logs.log(ActionLogType.TRANSCRIPTION_RESULT, transcript)
-                    finishDiagnostics("results", transcriptFields(transcript, candidates.size))
+                    finishDiagnostics("results", transcriptFields(transcript, candidates.size) + mapOf("alternatives" to candidates.take(MAX_TRANSCRIPT_ALTERNATIVES), "confidenceScores" to confidences, "provider" to "Android SpeechRecognizer"))
                     if (continuation.isActive) continuation.resume(transcript)
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
                     val candidates = transcriptCandidates(partialResults)
+                    val confidences = confidenceScores(partialResults)
                     val partial = candidates.firstOrNull().orEmpty()
-                    diagnostics.record(sessionId, "onPartialResults", transcriptFields(partial, candidates.size))
+                    diagnostics.record(sessionId, "onPartialResults", transcriptFields(partial, candidates.size) + mapOf("alternatives" to candidates.take(MAX_TRANSCRIPT_ALTERNATIVES), "confidenceScores" to confidences, "provider" to "Android SpeechRecognizer"))
                     if (partial.isNotBlank()) {
                         _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null)
                     }
@@ -384,7 +409,7 @@ class SpeechRecognitionController(
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MINIMUM_INPUT_MS)
             }
             updateStartingState()
-            diagnostics.record(sessionId, "startListening")
+            diagnostics.record(sessionId, "startListening", recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf("provider" to "Android SpeechRecognizer", "partialResults" to true, "maxResults" to 3))
             runCatching { recognizer.startListening(intent) }
                 .onFailure { failure ->
                     val message = failure.message ?: failure::class.java.simpleName
@@ -644,6 +669,12 @@ class SpeechRecognitionController(
             .filter { it.isNotBlank() }
     }
 
+    private fun confidenceScores(results: Bundle?): List<Float> =
+        results
+            ?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+            ?.map { rounded(it) }
+            .orEmpty()
+
     private fun transcriptFields(transcript: String, resultCount: Int): Map<String, Any?> = mapOf(
         "resultCount" to resultCount,
         "transcriptLength" to transcript.length,
@@ -817,6 +848,7 @@ class SpeechRecognitionController(
         const val READY_TIMEOUT_MS = 10_000L
         const val RECOGNIZER_RESTART_DELAY_MS = 250L
         const val RMS_LOG_INTERVAL_MS = 500L
+        const val MAX_TRANSCRIPT_ALTERNATIVES = 3
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
         const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
     }

@@ -20,6 +20,7 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
 import java.util.Locale
+import kotlin.math.log10
 import kotlin.math.sqrt
 
 open class VoskOfflineSpeechRecognizer(
@@ -32,6 +33,11 @@ open class VoskOfflineSpeechRecognizer(
         val onStarting: () -> Unit = {},
         val onReady: () -> Unit = {},
         val onPartial: (String) -> Unit = {}
+    )
+
+    private data class AudioRecordHandle(
+        val recorder: AudioRecord,
+        val fields: Map<String, Any?>
     )
 
     @Volatile private var activeAudioRecord: AudioRecord? = null
@@ -96,17 +102,49 @@ open class VoskOfflineSpeechRecognizer(
         }
 
         callbacks.onStarting()
-        diagnostics.record(diagnosticSessionId, "vosk_model_loading", mapOf("language" to languageTag, "assetModel" to ASSET_MODEL_NAME))
+        val modelCachedBefore = isModelCached()
+        val modelReadyMarkerExistsBefore = modelReadyMarkerFile().isFile
+        val modelLoadStartedAt = System.currentTimeMillis()
+        diagnostics.record(
+            diagnosticSessionId,
+            "vosk_model_loading",
+            mapOf(
+                "language" to languageTag,
+                "assetModel" to ASSET_MODEL_NAME,
+                "modelCachedBefore" to modelCachedBefore,
+                "modelReadyMarkerExistsBefore" to modelReadyMarkerExistsBefore,
+                "coldStart" to !modelCachedBefore
+            )
+        )
         val model = loadModel()
-        diagnostics.record(diagnosticSessionId, "vosk_model_ready", mapOf("model" to ASSET_MODEL_NAME))
+        diagnostics.record(
+            diagnosticSessionId,
+            "vosk_model_ready",
+            mapOf(
+                "model" to ASSET_MODEL_NAME,
+                "modelCachedBefore" to modelCachedBefore,
+                "modelReadyMarkerExistsBefore" to modelReadyMarkerExistsBefore,
+                "coldStart" to !modelCachedBefore,
+                "loadDurationMs" to (System.currentTimeMillis() - modelLoadStartedAt)
+            )
+        )
 
-        val recorder = createAudioRecord()
+        val audioRecord = createAudioRecord()
+        val recorder = audioRecord.recorder
+        diagnostics.record(diagnosticSessionId, "vosk_audio_record_created", audioRecord.fields)
         val recognizer = Recognizer(model, SAMPLE_RATE.toFloat())
         val acceptedSegments = mutableListOf<String>()
         var lastPartial = ""
         var peakRms = 0.0
+        var rmsSum = 0.0
+        var rmsCount = 0
+        var noiseRmsSum = 0.0
+        var noiseRmsCount = 0
+        var speechRmsSum = 0.0
+        var speechRmsCount = 0
         var lastRmsLogAt = 0L
         var speechStarted = false
+        var firstSpeechAt: Long? = null
         var lastSpeechAt: Long? = null
         val startedAt = System.currentTimeMillis()
         var capturedBytes = 0L
@@ -154,25 +192,36 @@ open class VoskOfflineSpeechRecognizer(
                 val rms = pcmRms(buffer, read)
                 if (rms > peakRms) peakRms = rms
                 val now = System.currentTimeMillis()
+                rmsSum += rms
+                rmsCount += 1
+                if (speechStarted || rms >= SPEECH_RMS_THRESHOLD) {
+                    speechRmsSum += rms
+                    speechRmsCount += 1
+                } else {
+                    noiseRmsSum += rms
+                    noiseRmsCount += 1
+                }
                 if (now - lastRmsLogAt >= RMS_LOG_INTERVAL_MS) {
                     lastRmsLogAt = now
                     diagnostics.record(
                         diagnosticSessionId,
                         "vosk_rms",
-                        mapOf("rms" to rounded(rms), "peakRms" to rounded(peakRms), "speechStarted" to speechStarted)
+                        mapOf("rms" to rounded(rms), "peakRms" to rounded(peakRms), "speechStarted" to speechStarted, "speechRmsThreshold" to SPEECH_RMS_THRESHOLD)
                     )
                 }
                 if (rms >= SPEECH_RMS_THRESHOLD) {
+                    if (!speechStarted) firstSpeechAt = now
                     speechStarted = true
                     lastSpeechAt = now
                 }
 
                 if (recognizer.acceptWaveForm(buffer, read)) {
-                    val text = parseText(recognizer.result)
+                    val segmentJson = recognizer.result
+                    val text = parseText(segmentJson)
                     if (text.isNotBlank()) {
                         acceptedSegments += text
                         callbacks.onPartial(text)
-                        diagnostics.record(diagnosticSessionId, "vosk_segment", transcriptFields(text))
+                        diagnostics.record(diagnosticSessionId, "vosk_segment", transcriptFields(text) + confidenceFields(segmentJson))
                     }
                 } else {
                     val partial = parsePartial(recognizer.partialResult)
@@ -192,7 +241,8 @@ open class VoskOfflineSpeechRecognizer(
                 if (cancelRequested || stopAfterTail || silentLongEnough || noSpeechTimeout) break
             }
 
-            val finalText = parseText(recognizer.finalResult)
+            val finalResultJson = recognizer.finalResult
+            val finalText = parseText(finalResultJson)
             val transcript = (acceptedSegments + finalText)
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
@@ -200,12 +250,27 @@ open class VoskOfflineSpeechRecognizer(
                 .ifBlank { lastPartial }
                 .trim()
             val durationMs = System.currentTimeMillis() - startedAt
+            val lastSpeechAtSnapshot = lastSpeechAt
             diagnostics.record(
                 diagnosticSessionId,
                 "vosk_final",
-                transcriptFields(transcript) + mapOf(
+                transcriptFields(transcript) + confidenceFields(finalResultJson) + rmsSummaryFields(
+                    rmsSum = rmsSum,
+                    rmsCount = rmsCount,
+                    noiseRmsSum = noiseRmsSum,
+                    noiseRmsCount = noiseRmsCount,
+                    speechRmsSum = speechRmsSum,
+                    speechRmsCount = speechRmsCount
+                ) + mapOf(
+                    "provider" to VOSK_PROVIDER_LABEL,
                     "durationMs" to durationMs,
                     "speechStarted" to speechStarted,
+                    "firstSpeechMs" to firstSpeechAt?.let { it - startedAt },
+                    "lastSpeechMs" to lastSpeechAtSnapshot?.let { it - startedAt },
+                    "tailSilenceMs" to lastSpeechAtSnapshot?.let { System.currentTimeMillis() - it },
+                    "speechRmsThreshold" to SPEECH_RMS_THRESHOLD,
+                    "initialNoSpeechTimeoutMs" to INITIAL_NO_SPEECH_TIMEOUT_MS,
+                    "silenceAfterSpeechMs" to SILENCE_AFTER_SPEECH_MS,
                     "stopRequested" to stopRequested,
                     "cancelRequested" to cancelRequested,
                     "peakRms" to rounded(peakRms),
@@ -221,7 +286,7 @@ open class VoskOfflineSpeechRecognizer(
             logs.log(ActionLogType.RECORDING_STOPPED, "Built-in offline speech stopped after ${durationMs}ms")
             transcript
         } catch (error: Throwable) {
-            diagnostics.record(diagnosticSessionId, "vosk_error", mapOf("message" to error.message, "errorClass" to error::class.java.name))
+            diagnostics.record(diagnosticSessionId, "vosk_error", mapOf("message" to error.message, "errorClass" to error::class.java.name, "recordingAgeMs" to activeRecordingAgeMs(), "capturedBytes" to capturedBytes, "audioDurationMs" to pcmDurationMs(capturedBytes)))
             throw error
         } finally {
             runCatching { audioCaptureOutput?.close() }
@@ -251,8 +316,11 @@ open class VoskOfflineSpeechRecognizer(
         if (!supportsLanguage(languageTag)) {
             throw IllegalStateException("Built-in offline speech currently supports English only.")
         }
-        diagnostics.record(diagnosticSessionId, "vosk_file_model_loading", mapOf("bytes" to pcm.size, "sampleRate" to sampleRate))
+        val modelCachedBefore = isModelCached()
+        val modelLoadStartedAt = System.currentTimeMillis()
+        diagnostics.record(diagnosticSessionId, "vosk_file_model_loading", mapOf("bytes" to pcm.size, "sampleRate" to sampleRate, "audioDurationMs" to pcmDurationMs(pcm.size.toLong()), "modelCachedBefore" to modelCachedBefore, "coldStart" to !modelCachedBefore))
         val recognizer = Recognizer(loadModel(), sampleRate)
+        diagnostics.record(diagnosticSessionId, "vosk_file_model_ready", mapOf("model" to ASSET_MODEL_NAME, "loadDurationMs" to (System.currentTimeMillis() - modelLoadStartedAt), "modelCachedBefore" to modelCachedBefore, "coldStart" to !modelCachedBefore))
         try {
             var offset = 0
             val segments = mutableListOf<String>()
@@ -264,9 +332,10 @@ open class VoskOfflineSpeechRecognizer(
                 }
                 offset += length
             }
-            val finalText = parseText(recognizer.finalResult)
+            val finalResultJson = recognizer.finalResult
+            val finalText = parseText(finalResultJson)
             val transcript = (segments + finalText).filter { it.isNotBlank() }.joinToString(" ").trim()
-            diagnostics.record(diagnosticSessionId, "vosk_file_final", transcriptFields(transcript))
+            diagnostics.record(diagnosticSessionId, "vosk_file_final", transcriptFields(transcript) + confidenceFields(finalResultJson) + mapOf("provider" to VOSK_PROVIDER_LABEL, "audioDurationMs" to pcmDurationMs(pcm.size.toLong())))
             transcript
         } finally {
             runCatching { recognizer.close() }
@@ -300,7 +369,7 @@ open class VoskOfflineSpeechRecognizer(
     }
 
     @SuppressLint("MissingPermission")
-    private fun createAudioRecord(): AudioRecord {
+    private fun createAudioRecord(): AudioRecordHandle {
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -308,7 +377,7 @@ open class VoskOfflineSpeechRecognizer(
         )
         require(minBuffer > 0) { "Could not initialize microphone buffer for built-in offline speech." }
         val bufferSize = maxOf(minBuffer, BUFFER_BYTES * 2)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                 .setAudioFormat(
@@ -330,6 +399,19 @@ open class VoskOfflineSpeechRecognizer(
                 bufferSize
             )
         }
+        val fields = mapOf(
+            "audioSource" to "VOICE_RECOGNITION",
+            "sampleRate" to SAMPLE_RATE,
+            "channelMask" to "CHANNEL_IN_MONO",
+            "encoding" to "PCM_16BIT",
+            "minBufferBytes" to minBuffer,
+            "bufferSizeBytes" to bufferSize,
+            "recorderState" to recorder.state,
+            "recorderSampleRate" to recorder.sampleRate,
+            "recorderChannelCount" to recorder.channelCount,
+            "recorderAudioFormat" to recorder.audioFormat
+        )
+        return AudioRecordHandle(recorder, fields)
     }
 
     private fun parseText(json: String): String = runCatching { JSONObject(json).optString("text").trim() }.getOrDefault("")
@@ -356,6 +438,56 @@ open class VoskOfflineSpeechRecognizer(
         (bytes * 1000L) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
 
 
+    private fun isModelCached(): Boolean = synchronized(modelLock) { cachedModel != null }
+
+    private fun modelReadyMarkerFile(): File = File(context.filesDir, "vosk/$ASSET_MODEL_NAME/$READY_MARKER")
+
+    private fun rmsSummaryFields(
+        rmsSum: Double,
+        rmsCount: Int,
+        noiseRmsSum: Double,
+        noiseRmsCount: Int,
+        speechRmsSum: Double,
+        speechRmsCount: Int
+    ): Map<String, Any?> {
+        val averageRms = average(rmsSum, rmsCount)
+        val averageNoiseRms = average(noiseRmsSum, noiseRmsCount)
+        val averageSpeechRms = average(speechRmsSum, speechRmsCount)
+        val snrDb = if (averageNoiseRms != null && averageNoiseRms > 0.0 && averageSpeechRms != null && averageSpeechRms > 0.0) {
+            20.0 * log10(averageSpeechRms / averageNoiseRms)
+        } else {
+            null
+        }
+        return mapOf(
+            "rmsSampleCount" to rmsCount,
+            "averageRms" to averageRms?.let(::rounded),
+            "noiseRmsSampleCount" to noiseRmsCount,
+            "averageNoiseRms" to averageNoiseRms?.let(::rounded),
+            "speechRmsSampleCount" to speechRmsCount,
+            "averageSpeechRms" to averageSpeechRms?.let(::rounded),
+            "snrDb" to snrDb?.let(::rounded)
+        )
+    }
+
+    private fun average(sum: Double, count: Int): Double? = if (count <= 0) null else sum / count
+
+    private fun confidenceFields(json: String): Map<String, Any?> {
+        val values = runCatching {
+            val result = JSONObject(json).optJSONArray("result") ?: return@runCatching emptyList<Double>()
+            (0 until result.length()).mapNotNull { index ->
+                result.optJSONObject(index)?.takeIf { it.has("conf") }?.optDouble("conf")
+            }
+        }.getOrDefault(emptyList())
+        return mapOf(
+            "confidenceAvailable" to values.isNotEmpty(),
+            "confidenceCount" to values.size,
+            "averageConfidence" to average(values.sum(), values.size)?.let(::rounded),
+            "minConfidence" to values.minOrNull()?.let(::rounded),
+            "maxConfidence" to values.maxOrNull()?.let(::rounded)
+        )
+    }
+
+
     private fun transcriptFields(transcript: String): Map<String, Any?> = mapOf(
         "transcriptLength" to transcript.length,
         "transcript" to transcript.take(MAX_TRANSCRIPT_DIAGNOSTIC_CHARS)
@@ -375,6 +507,7 @@ open class VoskOfflineSpeechRecognizer(
         const val SILENCE_AFTER_SPEECH_MS = 1_400L
         const val SPEECH_RMS_THRESHOLD = 350.0
         const val RMS_LOG_INTERVAL_MS = 500L
+        const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
     }
 }

@@ -146,6 +146,7 @@ class DebugLogStore(
                 "issueDescriptionBytes" to issueDescriptionBytes
             )
         )
+        recordEvent("bundle_privacy_metadata", privacyMetadata(speechSnapshot, retainedFiles, issueDescriptionText))
 
         if (speechSnapshot == null && retainedFiles.isEmpty() && issueDescriptionText == null) {
             recordEvent("bundle_empty")
@@ -237,24 +238,55 @@ class DebugLogStore(
             files += mapOf(
                 "path" to ISSUE_DESCRIPTION_ENTRY,
                 "bytes" to issueDescriptionText.toByteArray(Charsets.UTF_8).size.toLong(),
-                "category" to "issue"
+                "category" to "issue",
+                "sensitivity" to sensitivityForCategory("issue")
             )
         }
         if (speechSnapshot != null) {
-            files += mapOf("path" to "speech/${speechSnapshot.name}", "bytes" to speechSnapshot.length(), "category" to "speech")
+            files += mapOf("path" to "speech/${speechSnapshot.name}", "bytes" to speechSnapshot.length(), "category" to "speech", "sensitivity" to sensitivityForCategory("speech"))
         }
         retainedFiles.sortedBy { it.path }.forEach { file ->
             val relativePath = file.relativeTo(captureDirectory).path.replace(File.separatorChar, '/')
-            files += mapOf("path" to relativePath, "bytes" to file.length(), "category" to relativePath.substringBefore('/'))
+            val category = relativePath.substringBefore('/')
+            files += mapOf("path" to relativePath, "bytes" to file.length(), "category" to category, "sensitivity" to sensitivityForCategory(category))
         }
+        val privacy = privacyMetadata(speechSnapshot, retainedFiles, issueDescriptionText)
         return jsonValue(
             linkedMapOf(
                 "createdAt" to utcTimestamp(System.currentTimeMillis()),
                 "fileCount" to files.size,
                 "totalBytes" to files.sumOf { (it["bytes"] as? Long) ?: 0L },
+                "privacy" to privacy,
                 "files" to files
             )
         ) + "\n"
+    }
+
+    private fun privacyMetadata(speechSnapshot: File?, retainedFiles: List<File>, issueDescriptionText: String?): Map<String, Any?> {
+        val categories = retainedFiles.map { file -> file.relativeTo(captureDirectory).path.substringBefore(File.separator) }.toSet()
+        return mapOf(
+            "includesIssueDescription" to (issueDescriptionText != null),
+            "includesSpeechDiagnostics" to (speechSnapshot != null),
+            "includesRawAudio" to categories.contains("audio"),
+            "includesScreenshots" to categories.contains("screenshots"),
+            "includesLlmTraces" to categories.contains("llm"),
+            "rawAudioFiles" to retainedFiles.count { it.relativeTo(captureDirectory).path.substringBefore(File.separator) == "audio" },
+            "screenshotFiles" to retainedFiles.count { it.relativeTo(captureDirectory).path.substringBefore(File.separator) == "screenshots" },
+            "llmTraceFiles" to retainedFiles.count { it.relativeTo(captureDirectory).path.substringBefore(File.separator) == "llm" },
+            "categorySensitivity" to categories.plus(listOfNotNull(if (speechSnapshot != null) "speech" else null, if (issueDescriptionText != null) "issue" else null))
+                .sorted()
+                .associateWith(::sensitivityForCategory),
+            "apiKeysIncluded" to false
+        )
+    }
+
+    private fun sensitivityForCategory(category: String): String = when (category) {
+        "audio" -> "raw_microphone_audio"
+        "screenshots" -> "screen_pixels"
+        "llm" -> "llm_request_response_trace"
+        "speech" -> "speech_diagnostics_spoken_text_device_state"
+        "issue" -> "user_provided_issue_text"
+        else -> "retained_debug_file"
     }
 
     private fun issueDescriptionText(issueDescription: String): String {
