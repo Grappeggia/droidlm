@@ -1,5 +1,10 @@
 package ai.droidlm.openai
 
+import ai.droidlm.agent.AgentBudgets
+import ai.droidlm.agent.AgentDecision
+import ai.droidlm.agent.AgentJsonParser
+import ai.droidlm.agent.AgentToolRegistry
+import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.context.UiContextJson
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.intent.DroidLmAction
@@ -33,6 +38,7 @@ class OpenAiClient(
     private val debugLogStore: DebugLogStore? = null
 ) {
     private val relayJsonParser = RelayClient()
+    private val agentJsonParser = AgentJsonParser()
 
     suspend fun planPreview(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
@@ -53,6 +59,17 @@ class OpenAiClient(
         return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request) { assistantContent ->
             val action = relayJsonParser.parsePlanActionJson(assistantContent)
             ParsedChat(action, action.toDebugJson())
+        }
+    }
+
+    suspend fun nextAgentTurn(apiKey: String, model: String, requestBody: AgentTurnRequest): RelayCallResult<AgentDecision> {
+        if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
+        val resolvedModel = model.ifBlank { DEFAULT_MODEL }
+        val payload = buildChatPayload(resolvedModel, agentTurnPrompt(requestBody), maxTokens = 1200)
+        val request = buildChatRequest(apiKey, payload)
+        return executeTracedChat("agent-turn", apiKey, resolvedModel, payload, request) { assistantContent ->
+            val decision = agentJsonParser.parseDecision(assistantContent)
+            ParsedChat(decision, decision.toJson())
         }
     }
 
@@ -152,6 +169,37 @@ class OpenAiClient(
         Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
         History: ${JSONArray(request.history)}
     """.trimIndent()
+
+    private fun agentTurnPrompt(request: AgentTurnRequest): String = """
+        You are DroidLM's constrained Android agent runtime.
+        Return only JSON with this exact shape:
+        {
+          "status": "CALL_TOOLS|ASK_USER|DONE|NO_OP",
+          "message": "brief user-visible status",
+          "toolCalls": [
+            {"id":"call_1","name":"OPEN_APP","args":{"packageName":"installed.launchable.package","appName":"Installed App","reason":"why"},"reason":"why"}
+          ]
+        }
+        You may request at most ${request.budgets.maxToolCallsPerTurn} tool calls this turn and ${request.remainingToolCalls} more tool calls for the whole run. Prefer one tool call unless the next calls are clearly safe and do not depend on a changed UI.
+        Use DONE only after the observed UI or tool results show the goal is complete. Use ASK_USER for ambiguity. Use NO_OP when no useful safe action is possible.
+        Use installed packages as authoritative: OPEN_APP only when package launchable=true and enabled is not false. If the requested app is missing, use ASK_USER or one confirmed OPEN_APP_STORE_LISTING.
+        Prefer node tools with nodeId over coordinates. Never invent node IDs. Never repeat a failed call unless the observation changed or the strategy changed.
+        DroidLM validates safety and may ask confirmation. Do not try to bypass confirmations. Avoid high-risk tools unless directly requested.
+        After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
+
+        Available tools: ${JSONArray(AgentToolRegistry.defaultSpecs().map { it.toJson() })}
+        Goal: ${request.goal}
+        Turn: ${request.turnIndex}/${request.budgets.maxTurns}
+        Budgets: ${request.budgets.toJson()}
+        Remaining tool calls: ${request.remainingToolCalls}
+        Active app: ${request.activeApp?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
+        UI state: ${request.uiState?.toJson() ?: JSONObject()}
+        Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
+        History: ${JSONArray(request.history)}
+        Last tool results: ${JSONArray(request.lastResults.map { it.toJson() })}
+    """.trimIndent()
+
 
     private suspend fun <T> executeTracedChat(
         source: String,
@@ -367,6 +415,21 @@ class OpenAiClient(
         extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
         return json
     }
+
+    private fun AgentBudgets.toJson(): JSONObject = JSONObject()
+        .put("maxTurns", maxTurns)
+        .put("maxToolCallsTotal", maxToolCallsTotal)
+        .put("maxToolCallsPerTurn", maxToolCallsPerTurn)
+        .put("maxMutatingToolCallsPerTurn", maxMutatingToolCallsPerTurn)
+        .put("maxConsecutiveFailures", maxConsecutiveFailures)
+        .put("maxRuntimeMs", maxRuntimeMs)
+
+    private fun ai.droidlm.agent.AgentToolSpec.toJson(): JSONObject = JSONObject()
+        .put("name", name)
+        .put("risk", risk.name)
+        .put("mutating", mutating)
+        .put("requiresFreshObservationAfter", requiresFreshObservationAfter)
+        .put("maxCallsPerRun", maxCallsPerRun)
 
     private fun PlanPreview.toDebugJson(): JSONObject = JSONObject()
         .put("model", model)

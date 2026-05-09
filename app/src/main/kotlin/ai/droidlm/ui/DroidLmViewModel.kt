@@ -136,6 +136,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateShowPartialSpeechRecognition(value) }
     fun updateHideOverlayDuringAutomation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateHideOverlayDuringAutomation(value) }
     fun updateMaxSteps(value: Int) = viewModelScope.launch { app.settingsRepository.updateMaxAutonomousSteps(value) }
+    fun updateAgentLimits(maxTurns: Int, maxToolCalls: Int) = viewModelScope.launch {
+        app.settingsRepository.updateMaxAgentTurns(maxTurns)
+        app.settingsRepository.updateMaxAgentToolCalls(maxToolCalls)
+    }
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }
     fun updateCloudVision(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }

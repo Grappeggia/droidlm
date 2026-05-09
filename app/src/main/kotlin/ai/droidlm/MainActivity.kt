@@ -6,6 +6,7 @@ import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.prompts.PromptHistoryEntry
 import ai.droidlm.settings.DroidLmSettings
+import ai.droidlm.settings.ExecutionMode
 
 import ai.droidlm.ui.DroidLmViewModel
 import ai.droidlm.voice.SpeechRecognitionUiState
@@ -676,6 +677,8 @@ private fun SettingsCard(
     }
 
     var maxSteps by remember(settings.maxAutonomousSteps) { mutableStateOf(settings.maxAutonomousSteps.toString()) }
+    var maxAgentTurns by remember(settings.maxAgentTurns) { mutableStateOf(settings.maxAgentTurns.toString()) }
+    var maxAgentToolCalls by remember(settings.maxAgentToolCalls) { mutableStateOf(settings.maxAgentToolCalls.toString()) }
     var showPreviousPrompts by remember { mutableStateOf(false) }
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
@@ -686,6 +689,21 @@ private fun SettingsCard(
     Text("GPT planning", fontWeight = FontWeight.SemiBold)
     ToggleRow("Auto-accept safe GPT plans", settings.autoAcceptSafePlans, viewModel::updateAutoAcceptSafePlans)
     Text("Risky or sensitive plans still require confirmation.", color = DroidLmColors.TextMuted)
+    Text("Execution mode: ${settings.executionMode.name.replace('_', ' ')}", color = DroidLmColors.TextMuted)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ExecutionMode.values().forEach { mode ->
+            val selected = settings.executionMode == mode
+            if (selected) {
+                Button(onClick = { viewModel.updateExecutionMode(mode) }) { Text(mode.name.replace('_', ' ')) }
+            } else {
+                OutlinedButton(onClick = { viewModel.updateExecutionMode(mode) }) { Text(mode.name.replace('_', ' ')) }
+            }
+        }
+    }
+    Text("Agent mode runs bounded multi-tool turns and stops on uncertainty, failures, or confirmations.", color = DroidLmColors.TextMuted)
+    OutlinedTextField(value = maxAgentTurns, onValueChange = { maxAgentTurns = it.filter(Char::isDigit) }, label = { Text("Max agent turns (1-8)") })
+    OutlinedTextField(value = maxAgentToolCalls, onValueChange = { maxAgentToolCalls = it.filter(Char::isDigit) }, label = { Text("Max agent tool calls (1-16)") })
+    OutlinedButton(onClick = { viewModel.updateAgentLimits(maxAgentTurns.toIntOrNull() ?: 4, maxAgentToolCalls.toIntOrNull() ?: 8) }) { Text("Save Agent Limits") }
     OutlinedButton(onClick = { showPreviousPrompts = !showPreviousPrompts }) {
         Text(if (showPreviousPrompts) "Hide previous prompts" else "Previous prompts")
     }

@@ -8,6 +8,7 @@ enum class WakeWordProvider {
 enum class ExecutionMode {
     LOCAL_RULE_FIRST,
     LOCAL_LLM_LOOP,
+    AGENT_LOOP,
     MOBILERUN_CLOUD_TASK
 }
 
@@ -38,6 +39,8 @@ data class DroidLmSettings(
     val mobilerunDeviceId: String = "",
     val mobilerunLlmModel: String = "",
     val maxAutonomousSteps: Int = 12,
+    val maxAgentTurns: Int = 4,
+    val maxAgentToolCalls: Int = 8,
     val requireRiskConfirmation: Boolean = true,
     val onDeviceOcrEnabled: Boolean = true,
     val cloudScreenshotAnalysisEnabled: Boolean = false,

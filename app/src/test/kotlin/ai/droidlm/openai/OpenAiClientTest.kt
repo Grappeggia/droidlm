@@ -1,5 +1,8 @@
 package ai.droidlm.openai
 
+import ai.droidlm.agent.AgentBudgets
+import ai.droidlm.agent.AgentDecisionStatus
+import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayPlanRequest
 import kotlinx.coroutines.test.runTest
@@ -108,6 +111,27 @@ class OpenAiClientTest {
             assertTrue(prompt.contains("OPEN_APP_STORE_LISTING"))
             assertTrue(prompt.contains("launchable=true"))
             assertFalse(prompt.contains("com.google.android.apps.docs.editors.sheets\",\"reason\":\"why"))
+        }
+    }
+
+    @Test fun agentTurnPromptUsesToolBudgets() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(chatCompletion("{\"status\":\"CALL_TOOLS\",\"message\":\"open\",\"toolCalls\":[{\"id\":\"c1\",\"name\":\"OPEN_APP\",\"args\":{\"packageName\":\"com.google.android.apps.docs\"}}]}"))
+            server.start()
+
+            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+                .nextAgentTurn(
+                    "sk-test",
+                    "gpt-5.4-nano",
+                    AgentTurnRequest("open drive", 1, AgentBudgets(maxTurns = 4, maxToolCallsTotal = 8), 8, null, emptyList(), emptyList())
+                )
+
+            assertTrue(result is RelayCallResult.Success)
+            assertEquals(AgentDecisionStatus.CALL_TOOLS, (result as RelayCallResult.Success).value.status)
+            val prompt = JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("messages").getJSONObject(1).getString("content")
+            assertTrue(prompt.contains("Available tools"))
+            assertTrue(prompt.contains("Remaining tool calls: 8"))
+            assertTrue(prompt.contains("OPEN_APP"))
         }
     }
 

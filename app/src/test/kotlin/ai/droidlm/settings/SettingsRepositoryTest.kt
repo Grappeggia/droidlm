@@ -35,4 +35,17 @@ class SettingsRepositoryTest {
         repository.updateDebugLoggingEnabled(true)
         assertTrue(repository.settings.first().debugLoggingEnabled)
     }
+
+    @Test fun agentLimitsAreClampedConservatively() = runTest {
+        val repository = SettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+
+        repository.updateExecutionMode(ExecutionMode.AGENT_LOOP)
+        repository.updateMaxAgentTurns(99)
+        repository.updateMaxAgentToolCalls(99)
+        val settings = repository.settings.first()
+
+        assertTrue(settings.executionMode == ExecutionMode.AGENT_LOOP)
+        assertTrue(settings.maxAgentTurns == 8)
+        assertTrue(settings.maxAgentToolCalls == 16)
+    }
 }

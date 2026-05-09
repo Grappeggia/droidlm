@@ -1,5 +1,11 @@
 package ai.droidlm.execution
 
+import ai.droidlm.agent.AgentBudgets
+import ai.droidlm.agent.AgentDecisionStatus
+import ai.droidlm.agent.AgentToolResult
+import ai.droidlm.agent.AgentToolRegistry
+import ai.droidlm.agent.AgentTurnRequest
+import ai.droidlm.agent.ToolRisk
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.diagnostics.DebugLogStore
@@ -93,6 +99,7 @@ class DroidLmExecutor(
 
     @Volatile private var cancelled = false
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
+    private val agentToolRegistry = AgentToolRegistry()
 
     suspend fun executeTranscript(transcript: String): ActionResult {
         cancelled = false
@@ -136,6 +143,9 @@ class DroidLmExecutor(
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         logs.log(ActionLogType.PLANNER_STARTED, "GPT planning started", "promptLength=${stripped.length}")
         val settings = settingsRepository.settings.first()
+        if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
+            return runAgentLoop(stripped, diagnosticSessionId)
+        }
         val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
         diagnostics.record(
             diagnosticSessionId,
@@ -312,11 +322,12 @@ class DroidLmExecutor(
         return when (settings.executionMode) {
             ExecutionMode.LOCAL_RULE_FIRST -> finish(
                 ActionResult.fail(
-                    "This command needs advanced planning. Enable Local LLM Loop or Mobilerun Cloud mode.",
+                    "This command needs advanced planning. Enable Agent Loop, Local LLM Loop, or Mobilerun Cloud mode.",
                     "PLANNING_DISABLED"
                 )
             )
             ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps)
+            ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, null)
             ExecutionMode.MOBILERUN_CLOUD_TASK -> runMobilerunTask(goal)
         }
     }
@@ -362,6 +373,174 @@ class DroidLmExecutor(
         }
         return finish(ActionResult.fail("Reached max autonomous step limit ($maxSteps)", "MAX_STEPS_REACHED"))
     }
+
+    private suspend fun runAgentLoop(goal: String, diagnosticSessionId: String?): ActionResult {
+        val settings = settingsRepository.settings.first()
+        val budgets = AgentBudgets(
+            maxTurns = settings.maxAgentTurns,
+            maxToolCallsTotal = settings.maxAgentToolCalls
+        ).normalized()
+        val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
+        if (apiKey.isBlank()) {
+            _plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                message = "Agent mode requires an OpenAI API key saved on this device.",
+                retryTranscript = goal
+            )
+            return finish(ActionResult.fail("OpenAI API key is required for agent mode", "OPENAI_API_KEY_MISSING"))
+        }
+
+        val startedAt = System.currentTimeMillis()
+        val history = mutableListOf<String>()
+        val toolResults = mutableListOf<AgentToolResult>()
+        val callsByTool = mutableMapOf<String, Int>()
+        var totalToolCalls = 0
+        var consecutiveFailures = 0
+        var lastResult = ActionResult.ok("Started agent loop")
+        debugEvent(
+            diagnosticSessionId,
+            "agent_loop_started",
+            mapOf(
+                "maxTurns" to budgets.maxTurns,
+                "maxToolCallsTotal" to budgets.maxToolCallsTotal,
+                "maxToolCallsPerTurn" to budgets.maxToolCallsPerTurn,
+                "maxMutatingToolCallsPerTurn" to budgets.maxMutatingToolCallsPerTurn,
+                "maxRuntimeMs" to budgets.maxRuntimeMs
+            )
+        )
+
+        for (turn in 1..budgets.maxTurns) {
+            ensureNotCancelled()?.let { return finish(it) }
+            if (totalToolCalls >= budgets.maxToolCallsTotal) {
+                return finish(ActionResult.fail("Agent reached total tool-call limit ${budgets.maxToolCallsTotal}", "AGENT_TOTAL_TOOL_LIMIT"))
+            }
+            if (System.currentTimeMillis() - startedAt > budgets.maxRuntimeMs) {
+                return finish(ActionResult.fail("Agent stopped after ${budgets.maxRuntimeMs / 1000}s runtime limit", "AGENT_RUNTIME_LIMIT"))
+            }
+            _uiState.value = _uiState.value.copy(status = "Agent turn $turn/${budgets.maxTurns} (${totalToolCalls}/${budgets.maxToolCallsTotal} tools)")
+            val state = runCatching { portalController.getState() }.getOrNull()
+            val deviceContext = runCatching { deviceContextAggregator.collect(goal, state, history) }.getOrNull()
+            val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
+            val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
+            debugEvent(
+                diagnosticSessionId,
+                "agent_turn_started",
+                mapOf("turn" to turn, "toolCalls" to totalToolCalls, "historySize" to history.size, "packageCount" to packages.size, "activePackage" to activeApp?.packageName)
+            )
+            val request = AgentTurnRequest(
+                goal = goal,
+                turnIndex = turn,
+                budgets = budgets,
+                remainingToolCalls = budgets.maxToolCallsTotal - totalToolCalls,
+                uiState = state,
+                packages = packages,
+                history = history.takeLast(12),
+                activeApp = activeApp,
+                deviceContext = deviceContext,
+                lastResults = toolResults.takeLast(5)
+            )
+            val decision = when (val agentResult = openAiClient.nextAgentTurn(apiKey, settings.openAiModel, request)) {
+                is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(agentResult), agentResult.errorCode))
+                is RelayCallResult.Success -> agentResult.value
+            }
+            debugEvent(
+                diagnosticSessionId,
+                "agent_turn_decision",
+                mapOf("turn" to turn, "status" to decision.status.name, "messageLength" to decision.message.length, "toolCallCount" to decision.toolCalls.size)
+            )
+            when (decision.status) {
+                AgentDecisionStatus.DONE -> return finish(ActionResult.ok(decision.message.ifBlank { "Task complete" }))
+                AgentDecisionStatus.ASK_USER -> return finish(ActionResult.fail(decision.message.ifBlank { "Please clarify the request" }, "AGENT_ASK_USER"))
+                AgentDecisionStatus.NO_OP -> return finish(ActionResult.fail(decision.message.ifBlank { "Agent found no safe action" }, "AGENT_NO_OP"))
+                AgentDecisionStatus.CALL_TOOLS -> Unit
+            }
+            if (decision.toolCalls.isEmpty()) {
+                return finish(ActionResult.fail("Agent requested no tools", "AGENT_EMPTY_TOOL_CALLS"))
+            }
+            if (decision.toolCalls.size > budgets.maxToolCallsPerTurn) {
+                return finish(ActionResult.fail("Agent requested ${decision.toolCalls.size} tools, over per-turn limit ${budgets.maxToolCallsPerTurn}", "AGENT_TURN_TOOL_LIMIT"))
+            }
+            if (totalToolCalls + decision.toolCalls.size > budgets.maxToolCallsTotal) {
+                return finish(ActionResult.fail("Agent exceeded total tool-call limit ${budgets.maxToolCallsTotal}", "AGENT_TOTAL_TOOL_LIMIT"))
+            }
+
+            var mutatingCallsThisTurn = 0
+            var shouldObserveAgain = false
+            for (call in decision.toolCalls) {
+                val executionResult = agentToolRegistry.toExecution(call, state, packages, callsByTool)
+                if (executionResult.isFailure) {
+                    val error = executionResult.exceptionOrNull()
+                    val failure = ActionResult.fail("Invalid agent tool ${call.name}: ${error?.message}", "AGENT_TOOL_VALIDATION_FAILED")
+                    debugEvent(diagnosticSessionId, "agent_tool_validation_failed", mapOf("turn" to turn, "tool" to call.name, "message" to error?.message))
+                    history += "${call.name}[${call.id}] validation failed: ${error?.message}"
+                    consecutiveFailures += 1
+                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                        return finish(failure)
+                    }
+                    shouldObserveAgain = true
+                    break
+                }
+                val execution = executionResult.getOrThrow()
+                if (execution.spec.mutating) {
+                    mutatingCallsThisTurn += 1
+                    if (mutatingCallsThisTurn > budgets.maxMutatingToolCallsPerTurn) {
+                        return finish(ActionResult.fail("Agent exceeded mutating tool-call limit ${budgets.maxMutatingToolCallsPerTurn} for one turn", "AGENT_MUTATING_TOOL_LIMIT"))
+                    }
+                }
+
+                val safety = safetyClassifier.classify(goal, execution.action, state, settings.sensitiveAppScreenshotDenylist)
+                recordSafetyDecision(diagnosticSessionId, "agent_turn_${turn}_${call.id}", safety, settings.requireRiskConfirmation)
+                if (safety.blocked) {
+                    return finish(ActionResult.fail(safety.reason ?: "Agent action blocked by safety policy", "AGENT_SAFETY_BLOCKED"))
+                }
+                val needsConfirmation = safety.needsConfirmationPrompt(settings.requireRiskConfirmation) || agentToolNeedsConfirmation(execution.spec.risk, settings.requireRiskConfirmation)
+                if (needsConfirmation) {
+                    val confirmed = requestConfirmation(
+                        goal,
+                        execution.action,
+                        safety.reason ?: "Agent requested ${execution.spec.risk.name.lowercase()} tool ${execution.spec.name}",
+                        diagnosticSessionId
+                    )
+                    if (!confirmed) return finish(ActionResult.fail("Agent action cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
+                }
+
+                lastResult = executeAction(execution.action, goal, finishState = false, diagnosticSessionId = diagnosticSessionId)
+                totalToolCalls += 1
+                callsByTool[execution.spec.name] = (callsByTool[execution.spec.name] ?: 0) + 1
+                val requiresFreshObservation = agentToolRegistry.isFreshObservationRequired(execution.action, execution.spec)
+                val toolResult = AgentToolResult(call.id, execution.spec.name, lastResult, execution.spec.mutating, requiresFreshObservation)
+                toolResults += toolResult
+                history += toolResult.summary()
+                debugEvent(
+                    diagnosticSessionId,
+                    "agent_tool_result",
+                    mapOf("turn" to turn, "tool" to execution.spec.name, "callId" to call.id, "success" to lastResult.success, "errorCode" to lastResult.errorCode, "freshObservation" to requiresFreshObservation)
+                )
+                if (lastResult.success) {
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures += 1
+                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                        return finish(ActionResult.fail("Agent stopped after ${budgets.maxConsecutiveFailures} consecutive failures: ${lastResult.message}", "AGENT_REPEATED_FAILURE"))
+                    }
+                    shouldObserveAgain = true
+                    break
+                }
+                if (execution.action == DroidLmAction.Done) return finish(ActionResult.ok(lastResult.message))
+                if (requiresFreshObservation) {
+                    if (decision.toolCalls.last() != call) {
+                        debugEvent(diagnosticSessionId, "agent_turn_truncated_for_observation", mapOf("turn" to turn, "afterTool" to execution.spec.name))
+                    }
+                    shouldObserveAgain = true
+                    break
+                }
+            }
+            if (!shouldObserveAgain && lastResult.success && totalToolCalls >= budgets.maxToolCallsTotal) {
+                return finish(ActionResult.fail("Agent reached total tool-call limit ${budgets.maxToolCallsTotal}", "AGENT_TOTAL_TOOL_LIMIT"))
+            }
+        }
+        return finish(ActionResult.fail("Agent reached turn limit (${budgets.maxTurns})", "AGENT_MAX_TURNS"))
+    }
+
 
     private suspend fun runMobilerunTask(goal: String): ActionResult {
         _uiState.value = _uiState.value.copy(status = "Running Mobilerun Cloud task")
@@ -569,6 +748,11 @@ class DroidLmExecutor(
     private fun isAmbiguousOpenCommand(transcript: String): Boolean {
         val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
         return normalized in setOf("open", "launch", "start")
+    }
+
+    private fun agentToolNeedsConfirmation(risk: ToolRisk, requireRiskConfirmation: Boolean): Boolean {
+        if (!requireRiskConfirmation) return risk in setOf(ToolRisk.EXTERNAL_SHARE, ToolRisk.INSTALL_OR_STORE, ToolRisk.PERMISSION_OR_CREDENTIAL)
+        return risk in setOf(ToolRisk.SENSITIVE, ToolRisk.EXTERNAL_SHARE, ToolRisk.INSTALL_OR_STORE, ToolRisk.PERMISSION_OR_CREDENTIAL)
     }
 
 
