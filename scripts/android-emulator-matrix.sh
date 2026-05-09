@@ -245,7 +245,7 @@ run_profile() {
   relay_url="${DROIDLM_E2E_RELAY_URL:-}"
   create_profile "$profile"
   boot_profile "$profile"
-  if [[ -z "$relay_url" && "${DROIDLM_E2E_ENABLE_RELAY_REVERSE:-true}" != "false" ]]; then
+  if [[ -z "$relay_url" && "${DROIDLM_E2E_ENABLE_RELAY_REVERSE:-false}" == "true" ]]; then
     if "$ADB" -s "$serial" reverse "tcp:$relay_port" "tcp:$relay_port" >/dev/null 2>&1; then
       relay_url="http://127.0.0.1:$relay_port"
       log "Mapped $serial tcp:$relay_port to host; emulator relay URL: $relay_url"

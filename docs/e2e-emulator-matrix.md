@@ -59,17 +59,17 @@ Run the local debug APK install/upgrade regression check on the Android 10 Lenov
 scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 ```
 
-Run debug-log upload E2E against a relay on the host. The matrix runner maps emulator `127.0.0.1:8787` to the host with `adb reverse` and exports `DROIDLM_E2E_RELAY_URL` for the test:
+Run debug-log upload E2E against a relay on the host. The matrix runner can map emulator `127.0.0.1:8787` to the host with `adb reverse` and export `DROIDLM_E2E_RELAY_URL` for the test:
 
 ```bash
 (cd server && DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs uvicorn main:app --host 127.0.0.1 --port 8787)
-scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
+DROIDLM_E2E_ENABLE_RELAY_REVERSE=true scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
 ```
 
 For a deployed HTTPS relay, skip adb reverse and pass the URL directly:
 
 ```bash
-DROIDLM_E2E_DEBUG_LOG_RELAY_URL=https://your-relay.example.com \
+DROIDLM_E2E_RELAY_URL=https://your-relay.example.com \
 scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
 ```
 
