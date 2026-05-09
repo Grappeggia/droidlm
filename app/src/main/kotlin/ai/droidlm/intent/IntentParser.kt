@@ -31,6 +31,7 @@ class IntentParser {
         if (normalized in setOf("open settings", "launch settings", "open android settings", "settings")) {
             return DroidLmAction.OpenSettings()
         }
+        if (normalized in setOf("open", "launch", "start")) return DroidLmAction.NoOp("Please say which app to open")
 
         parseOpenApp(normalized, installedPackages)?.let { return it }
 
@@ -41,16 +42,22 @@ class IntentParser {
         }
     }
 
-    private fun parseOpenApp(normalized: String, installedPackages: List<AppPackage>): DroidLmAction.OpenApp? {
+    private fun parseOpenApp(normalized: String, installedPackages: List<AppPackage>): DroidLmAction? {
         val prefixes = listOf("open my ", "open the ", "open ", "launch my ", "launch the ", "launch ", "start my ", "start the ", "start ")
         val prefix = prefixes.firstOrNull { normalized.startsWith(it) } ?: return null
         val rawName = normalized.removePrefix(prefix).removeSuffix(" app").trim()
-        if (rawName.isBlank()) return null
+        if (rawName.isBlank()) return DroidLmAction.NoOp("Please say which app to open")
         if (rawName == "settings") return null
         explicitAliases[rawName]?.let { alias ->
+            if (installedPackages.isNotEmpty() && !installedPackages.hasLaunchablePackage(alias.packageName)) {
+                return DroidLmAction.OpenAppStoreListing(alias.label, alias.packageName, "User asked to open ${alias.label}, but it is not installed or launchable")
+            }
             return DroidLmAction.OpenApp(alias.label, alias.packageName, "User asked to open ${alias.label}")
         }
         val match = resolveInstalledPackage(rawName, installedPackages) ?: return null
+        if (match.launchable == false) {
+            return DroidLmAction.OpenAppStoreListing(match.label ?: rawName, match.packageName, "User asked to open ${match.label ?: rawName}, but it is not launchable")
+        }
         return DroidLmAction.OpenApp(match.label ?: rawName, match.packageName, "User asked to open ${match.label ?: rawName}")
     }
 
@@ -130,6 +137,9 @@ class IntentParser {
         if (normalized == "delete selected text" || normalized == "delete selection") return DroidLmAction.DeleteSelectedText
         return null
     }
+
+    private fun List<AppPackage>.hasLaunchablePackage(packageName: String): Boolean =
+        any { it.packageName == packageName && it.launchable != false && it.enabled != false }
 
     private fun resolveInstalledPackage(appName: String, installedPackages: List<AppPackage>): AppPackage? {
         val cleaned = appName.lowercase()

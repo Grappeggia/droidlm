@@ -36,32 +36,46 @@ class AccessibilityPortalController(
     @Suppress("DEPRECATION")
     override suspend fun listPackages(): List<AppPackage> = withContext(Dispatchers.Default) {
         context.packageManager.getInstalledApplications(0)
-            .map { info ->
-                AppPackage(
-                    packageName = info.packageName,
-                    label = runCatching { context.packageManager.getApplicationLabel(info).toString() }.getOrNull(),
-                    isSystemApp = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                )
-            }
+            .map { info -> info.toAppPackage() }
             .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
     }
 
     override suspend fun openApp(packageName: String): ActionResult = withContext(Dispatchers.Main) {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-        if (launchIntent == null) {
-            ActionResult.fail("No launchable activity found for $packageName", "APP_NOT_FOUND")
-        } else {
-            runCatching {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-            }.fold(
-                onSuccess = {
-                    logs.log(ActionLogType.ACTION_RESULT, "Launched $packageName")
-                    ActionResult.ok("Launched $packageName")
-                },
-                onFailure = { ActionResult.fail("Failed to launch $packageName: ${it.message}", "LAUNCH_FAILED") }
-            )
+        val packageManager = context.packageManager
+        val info = runCatching { packageManager.getApplicationInfo(packageName, 0) }.getOrNull()
+            ?: return@withContext ActionResult.fail("App is not installed: $packageName", "APP_NOT_INSTALLED")
+        if (!info.enabled) {
+            return@withContext ActionResult.fail("App is disabled: $packageName", "APP_DISABLED")
         }
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            ?: return@withContext ActionResult.fail("App has no launchable activity: $packageName", "APP_NOT_LAUNCHABLE")
+        runCatching {
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(launchIntent)
+        }.fold(
+            onSuccess = {
+                logs.log(ActionLogType.ACTION_RESULT, "Launched $packageName")
+                ActionResult.ok("Launched $packageName")
+            },
+            onFailure = { ActionResult.fail("Failed to launch $packageName: ${it.message}", "LAUNCH_FAILED") }
+        )
+    }
+
+    override suspend fun openAppStoreListing(packageName: String, appName: String?): ActionResult = withContext(Dispatchers.Main) {
+        if (packageName.isBlank()) return@withContext ActionResult.fail("Package name is blank", "INVALID_PACKAGE")
+        val displayName = appName?.takeIf { it.isNotBlank() } ?: packageName
+        val marketUri = Uri.parse("market://details?id=$packageName")
+        val webUri = Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
+        val marketIntent = Intent(Intent.ACTION_VIEW, marketUri)
+            .setPackage("com.android.vending")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val webIntent = Intent(Intent.ACTION_VIEW, webUri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(marketIntent) }
+            .recoverCatching { context.startActivity(webIntent) }
+            .fold(
+                onSuccess = { ActionResult.ok("Opened Play Store listing for $displayName") },
+                onFailure = { ActionResult.fail("Failed to open app store listing for $displayName: ${it.message}", "OPEN_APP_STORE_FAILED") }
+            )
     }
 
     override suspend fun openSettings(): ActionResult = withContext(Dispatchers.Main) {
@@ -188,6 +202,20 @@ class AccessibilityPortalController(
         }.fold(
             onSuccess = { ActionResult.ok(successMessage) },
             onFailure = { ActionResult.fail("Failed to open $normalized: ${it.message}", "OPEN_VIEW_FAILED") }
+        )
+    }
+
+    private fun ApplicationInfo.toAppPackage(): AppPackage {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+        val launchActivity = launchIntent?.component?.flattenToShortString()
+            ?: launchIntent?.resolveActivity(context.packageManager)?.flattenToShortString()
+        return AppPackage(
+            packageName = packageName,
+            label = runCatching { context.packageManager.getApplicationLabel(this).toString() }.getOrNull(),
+            isSystemApp = (flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+            enabled = enabled,
+            launchable = launchIntent != null,
+            launchActivity = launchActivity
         )
     }
 

@@ -60,6 +60,14 @@ class RelayClientTest {
         assertTrue(action is DroidLmAction.OpenApp)
     }
 
+    @Test fun planActionJsonParsesAppStoreListing() {
+        val action = RelayClient().parsePlanActionJson("{\"action\":\"OPEN_APP_STORE_LISTING\",\"appName\":\"Google Sheets\",\"packageName\":\"com.google.android.apps.docs.editors.sheets\",\"reason\":\"install\",\"requiresConfirmation\":true}")
+        assertTrue(action is DroidLmAction.OpenAppStoreListing)
+        action as DroidLmAction.OpenAppStoreListing
+        assertEquals("Google Sheets", action.appName)
+        assertEquals("com.google.android.apps.docs.editors.sheets", action.packageName)
+    }
+
     @Test fun planActionJsonParsesDocumentReplacement() {
         val action = RelayClient().parsePlanActionJson(
             "{\"action\":\"REPLACE_CURRENT_DOCUMENT_TEXT\",\"fileUri\":\"file:///tmp/doc.txt\",\"targetText\":\"draft\",\"replacementText\":\"final\",\"reason\":\"test\"}"

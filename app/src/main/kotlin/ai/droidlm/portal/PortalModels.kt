@@ -26,7 +26,10 @@ data class ScreenshotResult(
 data class AppPackage(
     val packageName: String,
     val label: String?,
-    val isSystemApp: Boolean = false
+    val isSystemApp: Boolean = false,
+    val enabled: Boolean? = null,
+    val launchable: Boolean? = null,
+    val launchActivity: String? = null
 )
 
 data class PortalState(

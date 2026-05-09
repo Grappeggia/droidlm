@@ -21,7 +21,7 @@ class AppInventoryRepositoryTest {
             nowProvider = { now },
             packageLoader = {
                 loads += 1
-                listOf(AppPackage("pkg.$loads", "App $loads"))
+                listOf(AppPackage("pkg.$loads", "App $loads", enabled = true, launchable = true))
             }
         )
 
@@ -42,7 +42,7 @@ class AppInventoryRepositoryTest {
             context = context,
             packageLoader = {
                 loads += 1
-                listOf(AppPackage("pkg.$loads", "App $loads"))
+                listOf(AppPackage("pkg.$loads", "App $loads", enabled = true, launchable = true))
             }
         )
 
@@ -50,6 +50,28 @@ class AppInventoryRepositoryTest {
         AppInventoryRepository.invalidate(context)
         assertEquals("pkg.2", repository.getInstalledApps().single().packageName)
         assertEquals(2, loads)
+    }
+
+    @Test fun cacheWithoutLaunchabilityMetadataIsRefreshed() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        clearInventoryCache(context)
+        context.getSharedPreferences("app_inventory", Context.MODE_PRIVATE)
+            .edit()
+            .putString("apps_json", "[{\"packageName\":\"old.pkg\",\"label\":\"Old\",\"isSystemApp\":false}]")
+            .putLong("last_refresh_ms", 1_000L)
+            .commit()
+        var loads = 0
+        val repository = AppInventoryRepository(
+            context = context,
+            nowProvider = { 1_100L },
+            packageLoader = {
+                loads += 1
+                listOf(AppPackage("new.pkg", "New", enabled = true, launchable = true))
+            }
+        )
+
+        assertEquals("new.pkg", repository.getInstalledApps().single().packageName)
+        assertEquals(1, loads)
     }
 
     private fun clearInventoryCache(context: Context) {

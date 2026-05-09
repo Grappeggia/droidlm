@@ -37,6 +37,9 @@ open class VoskOfflineSpeechRecognizer(
     @Volatile private var activeAudioRecord: AudioRecord? = null
     @Volatile private var stopRequested = false
     @Volatile private var cancelRequested = false
+    @Volatile private var activeDiagnosticSessionId: String? = null
+    @Volatile private var activeStartedAtMs: Long = 0L
+    @Volatile private var activeCapturedBytes: Long = 0L
 
     private val modelLock = Any()
     private var cachedModel: Model? = null
@@ -48,9 +51,17 @@ open class VoskOfflineSpeechRecognizer(
     }
 
     open fun stopCurrent(): Boolean {
-        val recorder = activeAudioRecord ?: return false
+        activeAudioRecord ?: return false
         stopRequested = true
-        runCatching { recorder.stop() }
+        diagnostics.record(
+            activeDiagnosticSessionId,
+            "vosk_stop_requested",
+            mapOf(
+                "recordingAgeMs" to activeRecordingAgeMs(),
+                "capturedBytes" to activeCapturedBytes,
+                "audioDurationMs" to pcmDurationMs(activeCapturedBytes)
+            )
+        )
         return true
     }
 
@@ -58,6 +69,15 @@ open class VoskOfflineSpeechRecognizer(
         val recorder = activeAudioRecord ?: return false
         cancelRequested = true
         stopRequested = true
+        diagnostics.record(
+            activeDiagnosticSessionId,
+            "vosk_cancel_requested",
+            mapOf(
+                "recordingAgeMs" to activeRecordingAgeMs(),
+                "capturedBytes" to activeCapturedBytes,
+                "audioDurationMs" to pcmDurationMs(activeCapturedBytes)
+            )
+        )
         runCatching { recorder.stop() }
         return true
     }
@@ -89,6 +109,10 @@ open class VoskOfflineSpeechRecognizer(
         var speechStarted = false
         var lastSpeechAt: Long? = null
         val startedAt = System.currentTimeMillis()
+        var capturedBytes = 0L
+        var readCount = 0
+        var zeroReadCount = 0
+        var negativeReadCount = 0
         val audioCaptureFile = debugLogStore?.createRetainedFile("audio", "pcm", "vosk")
         val audioCaptureOutput = audioCaptureFile?.let { runCatching { it.outputStream() }.getOrNull() }
         audioCaptureFile?.let {
@@ -104,6 +128,9 @@ open class VoskOfflineSpeechRecognizer(
         stopRequested = false
         cancelRequested = false
         activeAudioRecord = recorder
+        activeDiagnosticSessionId = diagnosticSessionId
+        activeStartedAtMs = startedAt
+        activeCapturedBytes = 0L
 
         try {
             recorder.startRecording()
@@ -112,11 +139,18 @@ open class VoskOfflineSpeechRecognizer(
             diagnostics.record(diagnosticSessionId, "vosk_ready", mapOf("sampleRate" to SAMPLE_RATE))
 
             val buffer = ByteArray(BUFFER_BYTES)
-            while (!stopRequested && System.currentTimeMillis() - startedAt < maxDurationMs) {
+            while (System.currentTimeMillis() - startedAt < maxDurationMs) {
                 val read = runCatching { recorder.read(buffer, 0, buffer.size) }.getOrDefault(0)
-                if (read <= 0) continue
+                if (read <= 0) {
+                    if (read == 0) zeroReadCount += 1 else negativeReadCount += 1
+                    val elapsed = System.currentTimeMillis() - startedAt
+                    if (cancelRequested || (stopRequested && elapsed >= MIN_STOP_DURATION_MS)) break
+                    continue
+                }
+                readCount += 1
+                capturedBytes += read.toLong()
+                activeCapturedBytes = capturedBytes
                 runCatching { audioCaptureOutput?.write(buffer, 0, read) }
-
                 val rms = pcmRms(buffer, read)
                 if (rms > peakRms) peakRms = rms
                 val now = System.currentTimeMillis()
@@ -154,7 +188,8 @@ open class VoskOfflineSpeechRecognizer(
                 val elapsed = now - startedAt
                 val silentLongEnough = speechStarted && elapsed >= MIN_DURATION_MS && lastSpeechAt?.let { now - it >= SILENCE_AFTER_SPEECH_MS } == true
                 val noSpeechTimeout = !speechStarted && elapsed >= INITIAL_NO_SPEECH_TIMEOUT_MS
-                if (silentLongEnough || noSpeechTimeout) break
+                val stopAfterTail = stopRequested && elapsed >= MIN_STOP_DURATION_MS
+                if (cancelRequested || stopAfterTail || silentLongEnough || noSpeechTimeout) break
             }
 
             val finalText = parseText(recognizer.finalResult)
@@ -171,8 +206,14 @@ open class VoskOfflineSpeechRecognizer(
                 transcriptFields(transcript) + mapOf(
                     "durationMs" to durationMs,
                     "speechStarted" to speechStarted,
+                    "stopRequested" to stopRequested,
                     "cancelRequested" to cancelRequested,
-                    "peakRms" to rounded(peakRms)
+                    "peakRms" to rounded(peakRms),
+                    "readCount" to readCount,
+                    "zeroReadCount" to zeroReadCount,
+                    "negativeReadCount" to negativeReadCount,
+                    "capturedBytes" to capturedBytes,
+                    "audioDurationMs" to pcmDurationMs(capturedBytes)
                 )
             )
             if (cancelRequested) throw IllegalStateException("Built-in offline speech cancelled.")
@@ -186,12 +227,15 @@ open class VoskOfflineSpeechRecognizer(
             runCatching { audioCaptureOutput?.close() }
             audioCaptureFile?.let { file ->
                 if (file.length() > 0L) {
-                    diagnostics.record(diagnosticSessionId, "debug_audio_capture_saved", mapOf("file" to file.name, "bytes" to file.length()))
+                    diagnostics.record(diagnosticSessionId, "debug_audio_capture_saved", mapOf("file" to file.name, "bytes" to file.length(), "audioDurationMs" to pcmDurationMs(file.length())))
                 } else {
                     file.delete()
                 }
             }
             activeAudioRecord = null
+            activeDiagnosticSessionId = null
+            activeStartedAtMs = 0L
+            activeCapturedBytes = 0L
             runCatching { recorder.stop() }
             runCatching { recorder.release() }
             runCatching { recognizer.close() }
@@ -305,6 +349,13 @@ open class VoskOfflineSpeechRecognizer(
         return if (count == 0) 0.0 else sqrt(sum / count)
     }
 
+    private fun activeRecordingAgeMs(): Long =
+        activeStartedAtMs.takeIf { it > 0L }?.let { System.currentTimeMillis() - it } ?: 0L
+
+    private fun pcmDurationMs(bytes: Long): Long =
+        (bytes * 1000L) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+
     private fun transcriptFields(transcript: String): Map<String, Any?> = mapOf(
         "transcriptLength" to transcript.length,
         "transcript" to transcript.take(MAX_TRANSCRIPT_DIAGNOSTIC_CHARS)
@@ -316,8 +367,10 @@ open class VoskOfflineSpeechRecognizer(
         const val ASSET_MODEL_NAME = "vosk-model-en-us-0.22-lgraph"
         const val READY_MARKER = ".droidlm-model-ready"
         const val SAMPLE_RATE = 16_000
+        const val BYTES_PER_SAMPLE = 2
         const val BUFFER_BYTES = 4_096
         const val MIN_DURATION_MS = 1_000L
+        const val MIN_STOP_DURATION_MS = 1_500L
         const val INITIAL_NO_SPEECH_TIMEOUT_MS = 8_000L
         const val SILENCE_AFTER_SPEECH_MS = 1_400L
         const val SPEECH_RMS_THRESHOLD = 350.0

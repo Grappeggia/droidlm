@@ -14,6 +14,8 @@ interface PortalController {
     suspend fun listPackages(): List<AppPackage>
 
     suspend fun openApp(packageName: String): ActionResult
+    suspend fun openAppStoreListing(packageName: String, appName: String? = null): ActionResult =
+        openDeepLink("market://details?id=$packageName")
     suspend fun openSettings(): ActionResult
 
     suspend fun tap(x: Int, y: Int): ActionResult

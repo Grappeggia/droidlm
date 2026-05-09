@@ -32,6 +32,20 @@ class IntentParserTest {
         assertEquals("com.google.android.apps.docs.editors.sheets", (action as DroidLmAction.OpenApp).packageName)
     }
 
+    @Test fun sheetsAliasOpensStoreWhenNotLaunchable() {
+        val action = parser.parse(
+            "launch sheets",
+            installedPackages = listOf(AppPackage("com.google.android.apps.docs", "Drive", launchable = true))
+        )
+        assertTrue(action is DroidLmAction.OpenAppStoreListing)
+        assertEquals("com.google.android.apps.docs.editors.sheets", (action as DroidLmAction.OpenAppStoreListing).packageName)
+    }
+
+    @Test fun bareOpenAsksForAppName() {
+        val action = parser.parse("open")
+        assertTrue(action is DroidLmAction.NoOp)
+    }
+
     @Test fun goHomeRecognized() {
         assertEquals(DroidLmAction.PressHome, parser.parse("hey Droid L M go home"))
     }

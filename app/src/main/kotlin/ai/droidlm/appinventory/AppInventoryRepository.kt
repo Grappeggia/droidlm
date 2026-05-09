@@ -22,15 +22,24 @@ class AppInventoryRepository(
         val cachedJson = preferences.getString(KEY_APPS_JSON, null)
         val lastRefresh = preferences.getLong(KEY_LAST_REFRESH_MS, 0L)
         if (!forceRefresh && cachedJson != null && now - lastRefresh < CACHE_TTL_MS) {
-            parseApps(cachedJson)
+            val cachedApps = parseApps(cachedJson)
+            if (cachedApps.isNotEmpty() && cachedApps.all { it.enabled != null && it.launchable != null }) {
+                cachedApps
+            } else {
+                loadAndCacheApps(now)
+            }
         } else {
-            val apps = packageLoader() ?: queryInstalledApps()
-            preferences.edit()
-                .putString(KEY_APPS_JSON, appsToJson(apps).toString())
-                .putLong(KEY_LAST_REFRESH_MS, now)
-                .apply()
-            apps
+            loadAndCacheApps(now)
         }
+    }
+
+    private fun loadAndCacheApps(now: Long): List<AppPackage> {
+        val apps = packageLoader() ?: queryInstalledApps()
+        preferences.edit()
+            .putString(KEY_APPS_JSON, appsToJson(apps).toString())
+            .putLong(KEY_LAST_REFRESH_MS, now)
+            .apply()
+        return apps
     }
 
     suspend fun activeAppFor(state: PortalState?): ActiveApp? {
@@ -48,15 +57,24 @@ class AppInventoryRepository(
     }
 
     @Suppress("DEPRECATION")
-    private fun queryInstalledApps(): List<AppPackage> = context.packageManager.getInstalledApplications(0)
-        .map { info ->
-            AppPackage(
-                packageName = info.packageName,
-                label = runCatching { context.packageManager.getApplicationLabel(info).toString() }.getOrNull(),
-                isSystemApp = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-            )
-        }
-        .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
+    private fun queryInstalledApps(): List<AppPackage> {
+        val packageManager = context.packageManager
+        return packageManager.getInstalledApplications(0)
+            .map { info ->
+                val launchIntent = packageManager.getLaunchIntentForPackage(info.packageName)
+                val launchActivity = launchIntent?.component?.flattenToShortString()
+                    ?: launchIntent?.resolveActivity(packageManager)?.flattenToShortString()
+                AppPackage(
+                    packageName = info.packageName,
+                    label = runCatching { packageManager.getApplicationLabel(info).toString() }.getOrNull(),
+                    isSystemApp = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                    enabled = info.enabled,
+                    launchable = launchIntent != null,
+                    launchActivity = launchActivity
+                )
+            }
+            .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
+    }
 
     private fun parseApps(json: String): List<AppPackage> = runCatching {
         val array = JSONArray(json)
@@ -65,7 +83,10 @@ class AppInventoryRepository(
                 AppPackage(
                     packageName = obj.optString("packageName"),
                     label = obj.optString("label").takeIf { it.isNotBlank() },
-                    isSystemApp = obj.optBoolean("isSystemApp", false)
+                    isSystemApp = obj.optBoolean("isSystemApp", false),
+                    enabled = obj.optNullableBoolean("enabled"),
+                    launchable = obj.optNullableBoolean("launchable"),
+                    launchActivity = obj.optString("launchActivity").takeIf { it.isNotBlank() }
                 )
             }
         }.filter { it.packageName.isNotBlank() }
@@ -76,7 +97,13 @@ class AppInventoryRepository(
             .put("packageName", app.packageName)
             .put("label", app.label)
             .put("isSystemApp", app.isSystemApp)
+            .put("enabled", app.enabled)
+            .put("launchable", app.launchable)
+            .put("launchActivity", app.launchActivity)
     })
+
+    private fun JSONObject.optNullableBoolean(name: String): Boolean? =
+        if (has(name) && !isNull(name)) optBoolean(name) else null
 
     companion object {
         private const val PREFERENCES_NAME = "app_inventory"

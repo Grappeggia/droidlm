@@ -105,6 +105,9 @@ class OpenAiClientTest {
             assertTrue(prompt.contains("SCROLL"))
             assertTrue(prompt.contains("TAP_TEXT"))
             assertTrue(prompt.contains("WAIT_FOR_UI"))
+            assertTrue(prompt.contains("OPEN_APP_STORE_LISTING"))
+            assertTrue(prompt.contains("launchable=true"))
+            assertFalse(prompt.contains("com.google.android.apps.docs.editors.sheets\",\"reason\":\"why"))
         }
     }
 

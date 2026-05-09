@@ -44,6 +44,15 @@ class SafetyClassifier {
             )
         }
 
+        if (plannedAction is DroidLmAction.OpenAppStoreListing) {
+            return SafetyDecision(
+                requiresConfirmation = true,
+                category = "app install",
+                reason = "Opening an app store listing may lead to installing an app and needs confirmation",
+                mandatoryConfirmation = true
+            )
+        }
+
         if (plannedAction is DroidLmAction.AnalyzeScreenshot) {
             val activePackage = currentState?.packageName.orEmpty().lowercase()
             val sensitive = isSensitivePackage(activePackage, sensitiveDenylist)

@@ -125,6 +125,10 @@ class DroidLmExecutor(
     suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        if (isAmbiguousOpenCommand(stripped)) {
+            debugEvent(diagnosticSessionId, "ambiguous_open_command", mapOf("transcript" to stripped))
+            return finish(ActionResult.fail("I only heard '${stripped}'. Please say which app to open, like 'open Google Sheets'.", "AMBIGUOUS_OPEN_APP"))
+        }
         debugEvent(diagnosticSessionId, "voice_plan_started", mapOf("transcriptLength" to stripped.length, "hasSessionId" to (diagnosticSessionId != null)))
         promptHistoryRepository.record(stripped, "voice_prompt")
         _plannerKeySetupRequest.value = null
@@ -379,7 +383,8 @@ class DroidLmExecutor(
                 val confirmed = requestConfirmation(transcript, action, action.reason, diagnosticSessionId)
                 if (confirmed) ActionResult.ok("Confirmation accepted") else ActionResult.fail("Confirmation rejected", "CONFIRMATION_REJECTED")
             }
-            is DroidLmAction.OpenApp -> portalController.openApp(action.packageName)
+            is DroidLmAction.OpenApp -> openAppWithRecovery(action, transcript, diagnosticSessionId)
+            is DroidLmAction.OpenAppStoreListing -> portalController.openAppStoreListing(action.packageName, action.appName)
             is DroidLmAction.OpenSettings -> portalController.openSettings()
             DroidLmAction.PressHome -> portalController.pressHome()
             DroidLmAction.PressBack -> portalController.pressBack()
@@ -460,6 +465,42 @@ class DroidLmExecutor(
         return if (finishState) finish(result) else result
     }
 
+    private suspend fun openAppWithRecovery(
+        action: DroidLmAction.OpenApp,
+        transcript: String,
+        diagnosticSessionId: String?
+    ): ActionResult {
+        val launchResult = portalController.openApp(action.packageName)
+        val launchErrorCode = launchResult.errorCode
+        if (launchResult.success || launchErrorCode == null || launchErrorCode !in MISSING_OR_UNLAUNCHABLE_APP_ERRORS) return launchResult
+
+        debugEvent(
+            diagnosticSessionId,
+            "open_app_recovery_available",
+            mapOf(
+                "appName" to action.appName,
+                "packageName" to action.packageName,
+                "launchErrorCode" to launchResult.errorCode,
+                "launchMessage" to launchResult.message
+            )
+        )
+        val appName = action.appName?.takeIf { it.isNotBlank() } ?: action.packageName
+        val storeAction = DroidLmAction.OpenAppStoreListing(
+            appName = appName,
+            packageName = action.packageName,
+            reason = "$appName is not installed or launchable; open its app store listing"
+        )
+        val accepted = requestConfirmation(
+            transcript = transcript,
+            action = storeAction,
+            reason = "$appName is not installed or cannot be launched on this device.",
+            diagnosticSessionId = diagnosticSessionId,
+            promptOverride = "$appName is not installed or cannot be launched. Open its Play Store listing?"
+        )
+        if (!accepted) return ActionResult.fail("App store listing was not opened because confirmation was not accepted", "CONFIRMATION_REJECTED")
+        return portalController.openAppStoreListing(action.packageName, appName)
+    }
+
     private suspend fun runOcrScreen(diagnosticSessionId: String? = null): ActionResult {
         debugEvent(diagnosticSessionId, "ocr_screen_started")
         val screenshot = portalController.takeScreenshot()
@@ -493,7 +534,7 @@ class DroidLmExecutor(
         return textEditingController.setSelection(target, 0, text.length)
     }
 
-    private suspend fun requestConfirmation(transcript: String, action: DroidLmAction, reason: String, diagnosticSessionId: String? = null): Boolean {
+    private suspend fun requestConfirmation(transcript: String, action: DroidLmAction, reason: String, diagnosticSessionId: String? = null, promptOverride: String? = null): Boolean {
         val deferred = CompletableDeferred<Boolean>()
         confirmationDeferred = deferred
         val pending = PendingConfirmation(
@@ -501,7 +542,7 @@ class DroidLmExecutor(
             transcript = transcript,
             actionLabel = ActionUiFormatter.full(action),
             reason = reason,
-            prompt = if (action is DroidLmAction.AskConfirmation) action.confirmationPrompt else "Confirm this DroidLM action?"
+            prompt = promptOverride ?: if (action is DroidLmAction.AskConfirmation) action.confirmationPrompt else "Confirm this DroidLM action?"
         )
         _pendingConfirmation.value = pending
         logs.log(ActionLogType.CONFIRMATION_REQUIRED, reason)
@@ -525,8 +566,19 @@ class DroidLmExecutor(
         }
     }
 
+    private fun isAmbiguousOpenCommand(transcript: String): Boolean {
+        val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
+        return normalized in setOf("open", "launch", "start")
+    }
+
+
     private fun ensureNotCancelled(): ActionResult? =
         if (cancelled) ActionResult.fail("Task was cancelled", "CANCELLED") else null
+
+    private companion object {
+        val MISSING_OR_UNLAUNCHABLE_APP_ERRORS = setOf("APP_NOT_INSTALLED", "APP_DISABLED", "APP_NOT_LAUNCHABLE", "APP_NOT_FOUND")
+    }
+
 
     private fun SafetyDecision.needsConfirmationPrompt(requireRiskConfirmation: Boolean): Boolean =
         requiresConfirmation && (requireRiskConfirmation || mandatoryConfirmation)

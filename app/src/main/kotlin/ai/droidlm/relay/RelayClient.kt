@@ -268,6 +268,11 @@ class RelayClient(
                 packageName = obj.getString("packageName"),
                 reason = obj.optString("reason", "Open app")
             )
+            "OPEN_APP_STORE_LISTING" -> DroidLmAction.OpenAppStoreListing(
+                appName = obj.optString("appName").takeIf { it.isNotBlank() },
+                packageName = obj.getString("packageName"),
+                reason = obj.optString("reason", "Open app store listing")
+            )
             "OPEN_SETTINGS" -> DroidLmAction.OpenSettings(obj.optString("reason", "Open settings"))
             "TAP" -> DroidLmAction.Tap(obj.requireInt("x", "TAP"), obj.requireInt("y", "TAP"), obj.optString("reason", "Tap"))
             "TAP_NODE" -> DroidLmAction.TapNode(obj.requireString("nodeId", "TAP_NODE"), obj.optString("reason", "Tap node"))
@@ -549,6 +554,9 @@ class RelayClient(
         .put("packageName", packageName)
         .put("label", label)
         .put("isSystemApp", isSystemApp)
+        .put("enabled", enabled)
+        .put("launchable", launchable)
+        .put("launchActivity", launchActivity)
 
     private fun parseAnchorPosition(value: String): AnchorPosition =
         if (value.equals("BEFORE", ignoreCase = true)) AnchorPosition.BEFORE else AnchorPosition.AFTER

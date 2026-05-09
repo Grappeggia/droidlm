@@ -24,6 +24,16 @@ class SafetyClassifierTest {
         assertFalse(classifier.classify("open drive", DroidLmAction.OpenApp("Drive", "com.google.android.apps.docs", "test")).requiresConfirmation)
     }
 
+    @Test fun appStoreListingRequiresMandatoryConfirmation() {
+        val decision = classifier.classify(
+            "open google sheets",
+            DroidLmAction.OpenAppStoreListing("Google Sheets", "com.google.android.apps.docs.editors.sheets", "missing app")
+        )
+
+        assertTrue(decision.requiresConfirmation)
+        assertTrue(decision.mandatoryConfirmation)
+    }
+
     @Test fun screenshotAnalysisAlwaysRequiresMandatoryConfirmation() {
         val action = DroidLmAction.AnalyzeScreenshot("read screen", "vision")
         val decision = classifier.classify("analyze screenshot", action, sensitiveDenylist = "bank,password")

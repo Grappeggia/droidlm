@@ -6,6 +6,7 @@ object ActionUiFormatter {
         is DroidLmAction.NeedLlmPlanning -> "Plan with AI"
         is DroidLmAction.AskConfirmation -> semanticLabel(action.confirmationPrompt, reason, fallbackLabel) ?: "Ask for confirmation"
         is DroidLmAction.OpenApp -> "Open ${appName(action)}"
+        is DroidLmAction.OpenAppStoreListing -> "Open app store for ${action.appName?.takeIf { it.isNotBlank() } ?: action.packageName}"
         is DroidLmAction.OpenSettings -> "Open Android Settings"
         DroidLmAction.PressHome -> "Press Home"
         DroidLmAction.PressBack -> "Press Back"
@@ -66,6 +67,7 @@ object ActionUiFormatter {
 
     fun compact(action: DroidLmAction, fallbackLabel: String? = null, reason: String? = null): String = when (action) {
         is DroidLmAction.OpenApp -> "Open ${shortAppName(appName(action))}"
+        is DroidLmAction.OpenAppStoreListing -> "Open app store"
         is DroidLmAction.OpenSettings -> "Open Settings"
         DroidLmAction.PressHome -> "Home"
         DroidLmAction.PressBack -> "Back"

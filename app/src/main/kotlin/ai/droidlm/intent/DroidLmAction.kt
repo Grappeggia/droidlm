@@ -40,6 +40,7 @@ sealed class DroidLmAction {
     data class NeedLlmPlanning(val reason: String) : DroidLmAction()
     data class AskConfirmation(val reason: String, val confirmationPrompt: String) : DroidLmAction()
     data class OpenApp(val appName: String?, val packageName: String, val reason: String) : DroidLmAction()
+    data class OpenAppStoreListing(val appName: String?, val packageName: String, val reason: String) : DroidLmAction()
     data class OpenSettings(val reason: String = "User asked to open Android Settings") : DroidLmAction()
     data object PressHome : DroidLmAction()
     data object PressBack : DroidLmAction()
@@ -223,6 +224,7 @@ fun DroidLmAction.displayName(): String = when (this) {
     is DroidLmAction.NeedLlmPlanning -> "NEED_LLM_PLANNING"
     is DroidLmAction.AskConfirmation -> "ASK_CONFIRMATION"
     is DroidLmAction.OpenApp -> "OPEN_APP ${appName ?: packageName}"
+    is DroidLmAction.OpenAppStoreListing -> "OPEN_APP_STORE_LISTING ${appName ?: packageName}"
     is DroidLmAction.OpenSettings -> "OPEN_SETTINGS"
     DroidLmAction.PressHome -> "GLOBAL_HOME"
     DroidLmAction.PressBack -> "GLOBAL_BACK"
