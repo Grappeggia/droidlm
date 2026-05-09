@@ -36,6 +36,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 
@@ -263,7 +264,7 @@ class OpenAiClient(
             }
         } catch (error: IOException) {
             errorMessage = error.message ?: "Network error"
-            errorCode = if (errorMessage?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
+            errorCode = if (error is SocketTimeoutException || errorMessage?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
             RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
         } catch (error: Throwable) {
             errorMessage = error.message ?: error::class.java.name

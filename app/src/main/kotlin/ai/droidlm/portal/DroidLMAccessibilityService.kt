@@ -1,4 +1,5 @@
 package ai.droidlm.portal
+import ai.droidlm.DroidLMApp
 
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.ImeActionType
@@ -11,6 +12,7 @@ import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.os.SystemClock
 import android.os.Bundle
 import android.text.InputType
 import android.view.Display
@@ -24,20 +26,46 @@ import kotlin.coroutines.resume
 
 class DroidLMAccessibilityService : AccessibilityService() {
     private val nodeCache = LinkedHashMap<String, AccessibilityNodeInfo>()
+    private var accessibilityEventCount = 0L
+    private var lastAccessibilityEventLogAtMs = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         currentService.set(this)
+        recordLifecycle("accessibility_service_connected", mapOf("sdk" to Build.VERSION.SDK_INT))
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        accessibilityEventCount += 1
+        val now = SystemClock.elapsedRealtime()
+        if (accessibilityEventCount == 1L || accessibilityEventCount % 25L == 0L || now - lastAccessibilityEventLogAtMs >= 5_000L) {
+            lastAccessibilityEventLogAtMs = now
+            recordLifecycle(
+                "accessibility_event_observed",
+                mapOf(
+                    "count" to accessibilityEventCount,
+                    "type" to event?.eventType,
+                    "package" to event?.packageName?.toString(),
+                    "className" to event?.className?.toString(),
+                    "textCount" to (event?.text?.size ?: 0)
+                )
+            )
+        }
+    }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        recordLifecycle("accessibility_service_interrupted")
+    }
 
     override fun onDestroy() {
         if (currentService.get() === this) currentService.set(null)
+        recordLifecycle("accessibility_service_destroyed", mapOf("cachedNodeCount" to nodeCache.size, "eventCount" to accessibilityEventCount))
         nodeCache.clear()
         super.onDestroy()
+    }
+
+    private fun recordLifecycle(event: String, fields: Map<String, Any?> = emptyMap()) {
+        runCatching { DroidLMApp.from(this).speechDiagnosticsLogger.record(null, event, fields) }
     }
 
     fun captureState(includeAllWindows: Boolean): PortalState {

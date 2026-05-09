@@ -77,8 +77,9 @@ class DroidLMApp : Application() {
         actionLogRepository = ActionLogRepository()
         promptHistoryRepository = PromptHistoryRepository(this)
         speechDiagnosticsLogger = SpeechDiagnosticsLogger(this, settingsRepository, actionLogRepository)
+        speechDiagnosticsLogger.record(null, "app_created", mapOf("packageName" to packageName))
         debugLogStore = DebugLogStore(this, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
-        relayClient = RelayClient()
+        relayClient = RelayClient(diagnostics = speechDiagnosticsLogger)
         openAiClient = OpenAiClient(debugLogStore = debugLogStore, networkDiagnostics = NetworkDiagnostics(this))
         portalController = AccessibilityPortalController(this, actionLogRepository)
         appInventoryRepository = AppInventoryRepository(this)
@@ -90,11 +91,12 @@ class DroidLMApp : Application() {
                 GoogleDocsContextProvider(),
                 GoogleSheetsContextProvider(),
                 GoogleDriveContextProvider()
-            )
+            ),
+            diagnostics = speechDiagnosticsLogger
         )
         workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
         safetyClassifier = SafetyClassifier()
-        mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository)
+        mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository, speechDiagnosticsLogger)
         executor = DroidLmExecutor(
             settingsRepository = settingsRepository,
             openAiClient = openAiClient,

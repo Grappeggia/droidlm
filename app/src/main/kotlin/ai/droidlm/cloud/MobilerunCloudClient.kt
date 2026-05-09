@@ -1,5 +1,6 @@
 package ai.droidlm.cloud
 
+import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.settings.SettingsRepository
@@ -35,6 +36,7 @@ data class MobilerunTaskResult(
 class MobilerunCloudClient(
     private val settingsRepository: SettingsRepository,
     private val logs: ActionLogRepository,
+    private val diagnostics: SpeechDiagnosticsLogger? = null,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(130, TimeUnit.SECONDS)
@@ -44,9 +46,24 @@ class MobilerunCloudClient(
         val settings = settingsRepository.settings.first()
         val apiKey = settingsRepository.getMobilerunApiKey()
         if (apiKey.isNullOrBlank() || settings.mobilerunDeviceId.isBlank()) {
+            diagnostics?.record(
+                null,
+                "mobilerun_task_not_configured",
+                mapOf("apiKeyConfigured" to !apiKey.isNullOrBlank(), "deviceIdConfigured" to settings.mobilerunDeviceId.isNotBlank())
+            )
             emit(MobilerunTaskEvent("error", "Mobilerun API key or device ID is missing"))
             return@flow
         }
+        diagnostics?.record(
+            null,
+            "mobilerun_task_started",
+            mapOf(
+                "taskLength" to task.length,
+                "deviceIdConfigured" to settings.mobilerunDeviceId.isNotBlank(),
+                "maxSteps" to settings.maxAutonomousSteps,
+                "endpointHost" to "api.mobilerun.ai"
+            )
+        )
         val body = JSONObject()
             .put("task", task)
             .put("deviceId", settings.mobilerunDeviceId)
@@ -62,7 +79,18 @@ class MobilerunCloudClient(
             .header("Accept", "text/event-stream")
             .post(body)
             .build()
+        val startedAt = System.currentTimeMillis()
         val result = executeRaw(request)
+        diagnostics?.record(
+            null,
+            if (result.success) "mobilerun_task_stream_succeeded" else "mobilerun_task_stream_failed",
+            mapOf(
+                "durationMs" to (System.currentTimeMillis() - startedAt),
+                "responseBytes" to result.message.toByteArray(Charsets.UTF_8).size,
+                "eventLineCount" to result.message.lineSequence().count { it.startsWith("data:") },
+                "messageLength" to result.message.length
+            )
+        )
         if (result.success) {
             result.message.lineSequence()
                 .filter { it.startsWith("data:") }

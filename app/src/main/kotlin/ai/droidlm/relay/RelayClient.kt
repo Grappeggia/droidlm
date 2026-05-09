@@ -1,6 +1,7 @@
 package ai.droidlm.relay
 
 import ai.droidlm.context.UiContextJson
+import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.intent.AnchorPosition
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DroidLmAction
@@ -115,7 +116,8 @@ class RelayClient(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(90, TimeUnit.SECONDS)
-        .build()
+        .build(),
+    private val diagnostics: SpeechDiagnosticsLogger? = null
 ) {
     suspend fun health(baseUrl: String): RelayCallResult<Boolean> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
@@ -469,13 +471,24 @@ class RelayClient(
     }
 
     private suspend fun <T> execute(request: Request, parser: (String) -> T): RelayCallResult<T> = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
+        val endpoint = request.url.encodedPath
+        diagnostics?.record(
+            null,
+            "relay_request_started",
+            mapOf("method" to request.method, "host" to request.url.host, "endpoint" to endpoint)
+        )
         suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
+            continuation.invokeOnCancellation {
+                diagnostics?.record(null, "relay_request_cancelled", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt)))
+                call.cancel()
+            }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     if (!continuation.isCancelled) {
                         val code = if (e.message?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
+                        diagnostics?.record(null, "relay_request_failed", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "errorCode" to code, "errorClass" to e::class.java.name, "message" to e.message))
                         continuation.resume(RelayCallResult.Failure(e.message ?: "Network error", code, e))
                     }
                 }
@@ -485,18 +498,26 @@ class RelayClient(
                         val body = it.body?.string().orEmpty()
                         if (!it.isSuccessful) {
                             val relayError = parseRelayError(body)
+                            val code = relayError.second ?: "HTTP_${it.code}"
+                            diagnostics?.record(null, "relay_request_http_failed", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "httpCode" to it.code, "errorCode" to code, "responseBytes" to body.toByteArray(Charsets.UTF_8).size))
                             continuation.resume(
                                 RelayCallResult.Failure(
                                     relayError.first ?: "Relay returned HTTP ${it.code}: $body",
-                                    relayError.second ?: "HTTP_${it.code}"
+                                    code
                                 )
                             )
                             return
                         }
                         runCatching { parser(body) }
                             .fold(
-                                onSuccess = { value -> continuation.resume(RelayCallResult.Success(value)) },
-                                onFailure = { error -> continuation.resume(RelayCallResult.Failure("Invalid relay JSON: ${error.message}", "INVALID_JSON", error)) }
+                                onSuccess = { value ->
+                                    diagnostics?.record(null, "relay_request_succeeded", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "httpCode" to it.code, "responseBytes" to body.toByteArray(Charsets.UTF_8).size))
+                                    continuation.resume(RelayCallResult.Success(value))
+                                },
+                                onFailure = { error ->
+                                    diagnostics?.record(null, "relay_response_parse_failed", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "errorClass" to error::class.java.name, "message" to error.message, "responseBytes" to body.toByteArray(Charsets.UTF_8).size))
+                                    continuation.resume(RelayCallResult.Failure("Invalid relay JSON: ${error.message}", "INVALID_JSON", error))
+                                }
                             )
                     }
                 }

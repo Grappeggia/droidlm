@@ -39,6 +39,12 @@ class SpeechDiagnosticsLogger(
     private val logDirectory = File(context.cacheDir, "droidlm-diagnostics")
     private val logFile = File(logDirectory, "speech-diagnostics.jsonl")
     private val pendingWrites = mutableListOf<Job>()
+    private val disabledDropCount = AtomicLong(0)
+    private val writeFailureCount = AtomicLong(0)
+    private val trimCount = AtomicLong(0)
+    private val trimmedLineCount = AtomicLong(0)
+    @Volatile private var lastWriteFailure: String? = null
+    @Volatile private var lastTrimAtMs: Long? = null
 
     @Volatile private var enabled = false
 
@@ -83,7 +89,10 @@ class SpeechDiagnosticsLogger(
     }
 
     fun record(sessionId: String?, event: String, fields: Map<String, Any?> = emptyMap()) {
-        if (!enabled) return
+        if (!enabled) {
+            disabledDropCount.incrementAndGet()
+            return
+        }
         val line = diagnosticLine(sessionId, event, fields)
         Log.d(LOG_TAG, line)
         enqueueWrite(line)
@@ -104,6 +113,21 @@ class SpeechDiagnosticsLogger(
             actionLogs.log(ActionLogType.ACTION_RESULT, "Speech diagnostics cleared")
         }
     }
+
+    fun healthSnapshot(): Map<String, Any?> = mapOf(
+        "enabled" to enabled,
+        "pendingWriteCount" to synchronized(this) { pendingWrites.size },
+        "logFileExists" to logFile.exists(),
+        "logFileBytes" to if (logFile.exists()) logFile.length() else 0L,
+        "logLineEstimate" to runCatching { if (logFile.exists()) logFile.useLines { lines -> lines.count() } else 0 }.getOrDefault(-1),
+        "disabledDropCount" to disabledDropCount.get(),
+        "writeFailureCount" to writeFailureCount.get(),
+        "lastWriteFailure" to lastWriteFailure,
+        "trimCount" to trimCount.get(),
+        "trimmedLineCount" to trimmedLineCount.get(),
+        "lastTrimAtMs" to lastTrimAtMs,
+        "activeSessionCount" to sessionStarts.size
+    )
 
     fun exportFileName(): String = "droidlm-speech-diagnostics-${utcTimestampForFile(System.currentTimeMillis())}.jsonl"
 
@@ -140,7 +164,8 @@ class SpeechDiagnosticsLogger(
             "wallTime" to utcTimestamp(nowMs),
             "wallTimeMs" to nowMs,
             "seq" to eventSequence.incrementAndGet(),
-            "event" to event
+            "event" to event,
+            "sensitivity" to sensitivityForEvent(event)
         )
         if (sessionId != null) {
             val start = sessionStarts[sessionId]
@@ -155,7 +180,14 @@ class SpeechDiagnosticsLogger(
 
     @Synchronized
     private fun enqueueWrite(line: String) {
-        val job = scope.launch { appendLine(line) }
+        val job = scope.launch {
+            runCatching { appendLine(line) }
+                .onFailure { error ->
+                    writeFailureCount.incrementAndGet()
+                    lastWriteFailure = "${error::class.java.name}: ${error.message}"
+                    Log.w(LOG_TAG, "Failed to write diagnostics line", error)
+                }
+        }
         pendingWrites += job
         job.invokeOnCompletion {
             synchronized(this@SpeechDiagnosticsLogger) {
@@ -183,7 +215,23 @@ class SpeechDiagnosticsLogger(
         if (logFile.length() <= MAX_LOG_BYTES) return
         val lines = logFile.readLines()
         val retained = lines.takeLast(MAX_LOG_LINES)
+        trimCount.incrementAndGet()
+        trimmedLineCount.addAndGet((lines.size - retained.size).coerceAtLeast(0).toLong())
+        lastTrimAtMs = System.currentTimeMillis()
         logFile.writeText(retained.joinToString(separator = "\n", postfix = "\n"))
+    }
+
+    private fun sensitivityForEvent(event: String): String = when {
+        event.contains("audio", ignoreCase = true) && event.contains("raw", ignoreCase = true) -> "raw_audio"
+        event.contains("debug_audio", ignoreCase = true) -> "raw_audio"
+        event.contains("screenshot", ignoreCase = true) -> "screen_pixels_or_preview"
+        event.contains("ocr", ignoreCase = true) -> "screen_text_preview"
+        event.contains("transcript", ignoreCase = true) || event.contains("speech", ignoreCase = true) || event.contains("vosk", ignoreCase = true) -> "spoken_text"
+        event.contains("llm", ignoreCase = true) || event.contains("openai", ignoreCase = true) || event.contains("relay", ignoreCase = true) || event.contains("mobilerun", ignoreCase = true) -> "llm_or_cloud_trace"
+        event.contains("context", ignoreCase = true) || event.contains("portal", ignoreCase = true) || event.contains("action", ignoreCase = true) -> "screen_metadata_preview"
+        event.contains("settings_snapshot", ignoreCase = true) -> "settings_metadata"
+        event.contains("permission", ignoreCase = true) || event.contains("lifecycle", ignoreCase = true) || event.contains("foreground", ignoreCase = true) || event.contains("overlay", ignoreCase = true) -> "device_state_metadata"
+        else -> "metadata"
     }
 
     private fun deviceFields(): Map<String, Any?> = mapOf(

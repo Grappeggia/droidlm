@@ -16,6 +16,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.json.JSONObject
 
 class DebugLogStore(
     context: Context,
@@ -147,6 +148,8 @@ class DebugLogStore(
             )
         )
         recordEvent("bundle_privacy_metadata", privacyMetadata(speechSnapshot, retainedFiles, issueDescriptionText))
+        val diagnosticsHealthJson = diagnosticsHealthJson()
+        val timelineIndexJson = timelineIndexJson(speechSnapshot, retainedFiles)
 
         if (speechSnapshot == null && retainedFiles.isEmpty() && issueDescriptionText == null) {
             recordEvent("bundle_empty")
@@ -157,7 +160,9 @@ class DebugLogStore(
         val zipFile = uniqueExportFile()
         var entries = 0
         ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
-            entries += addText(zip, "manifest.json", manifestJson(speechSnapshot, retainedFiles, issueDescriptionText))
+            entries += addText(zip, "manifest.json", manifestJson(speechSnapshot, retainedFiles, issueDescriptionText, diagnosticsHealthJson, timelineIndexJson))
+            entries += addText(zip, "diagnostics-health.json", diagnosticsHealthJson)
+            entries += addText(zip, "timeline-index.json", timelineIndexJson)
             if (issueDescriptionText != null) {
                 entries += addText(zip, ISSUE_DESCRIPTION_ENTRY, issueDescriptionText)
             }
@@ -175,7 +180,7 @@ class DebugLogStore(
             recordEvent("bundle_failed", mapOf("reason" to "no_entries"))
             null
         } else {
-            recordEvent("bundle_created", mapOf("zipName" to zipFile.name, "zipBytes" to zipFile.length(), "entryCount" to entries))
+            recordEvent("bundle_created", mapOf("zipName" to zipFile.name, "zipBytes" to zipFile.length(), "entryCount" to entries, "includesDiagnosticsHealth" to true, "includesTimelineIndex" to true))
             zipFile
         }
     }
@@ -232,8 +237,10 @@ class DebugLogStore(
         return 1
     }
 
-    private fun manifestJson(speechSnapshot: File?, retainedFiles: List<File>, issueDescriptionText: String?): String {
+    private fun manifestJson(speechSnapshot: File?, retainedFiles: List<File>, issueDescriptionText: String?, diagnosticsHealthJson: String, timelineIndexJson: String): String {
         val files = mutableListOf<Map<String, Any?>>()
+        files += mapOf("path" to "diagnostics-health.json", "bytes" to diagnosticsHealthJson.toByteArray(Charsets.UTF_8).size.toLong(), "category" to "diagnostics", "sensitivity" to sensitivityForCategory("diagnostics"))
+        files += mapOf("path" to "timeline-index.json", "bytes" to timelineIndexJson.toByteArray(Charsets.UTF_8).size.toLong(), "category" to "diagnostics", "sensitivity" to sensitivityForCategory("diagnostics"))
         if (issueDescriptionText != null) {
             files += mapOf(
                 "path" to ISSUE_DESCRIPTION_ENTRY,
@@ -262,6 +269,53 @@ class DebugLogStore(
         ) + "\n"
     }
 
+    private fun diagnosticsHealthJson(): String = jsonValue(
+        linkedMapOf(
+            "createdAt" to utcTimestamp(System.currentTimeMillis()),
+            "speechDiagnostics" to speechDiagnosticsLogger.healthSnapshot()
+        )
+    ) + "\n"
+
+    private fun timelineIndexJson(speechSnapshot: File?, retainedFiles: List<File>): String {
+        val timeline = mutableListOf<Map<String, Any?>>()
+        if (speechSnapshot != null && speechSnapshot.isFile) {
+            speechSnapshot.useLines { lines ->
+                lines.forEachIndexed { index, line ->
+                    runCatching { JSONObject(line) }.onSuccess { obj ->
+                        timeline += mapOf(
+                            "source" to "speech",
+                            "line" to (index + 1),
+                            "wallTime" to obj.optString("wallTime").takeIf { it.isNotBlank() },
+                            "wallTimeMs" to if (obj.has("wallTimeMs")) obj.optLong("wallTimeMs") else null,
+                            "event" to obj.optString("event").takeIf { it.isNotBlank() },
+                            "sessionId" to obj.optString("sessionId").takeIf { it.isNotBlank() },
+                            "sensitivity" to obj.optString("sensitivity").takeIf { it.isNotBlank() }
+                        )
+                    }
+                }
+            }
+        }
+        retainedFiles.sortedBy { it.path }.forEach { file ->
+            val relativePath = file.relativeTo(captureDirectory).path.replace(File.separatorChar, '/')
+            timeline += mapOf(
+                "source" to "retained_file",
+                "path" to relativePath,
+                "category" to relativePath.substringBefore('/'),
+                "lastModifiedMs" to file.lastModified(),
+                "bytes" to file.length(),
+                "sensitivity" to sensitivityForCategory(relativePath.substringBefore('/'))
+            )
+        }
+        val sorted = timeline.sortedWith(compareBy<Map<String, Any?>> { (it["wallTimeMs"] as? Long) ?: (it["lastModifiedMs"] as? Long) ?: Long.MAX_VALUE }.thenBy { it["source"].toString() })
+        return jsonValue(
+            linkedMapOf(
+                "createdAt" to utcTimestamp(System.currentTimeMillis()),
+                "eventCount" to sorted.size,
+                "events" to sorted
+            )
+        ) + "\n"
+    }
+
     private fun privacyMetadata(speechSnapshot: File?, retainedFiles: List<File>, issueDescriptionText: String?): Map<String, Any?> {
         val categories = retainedFiles.map { file -> file.relativeTo(captureDirectory).path.substringBefore(File.separator) }.toSet()
         return mapOf(
@@ -286,6 +340,7 @@ class DebugLogStore(
         "llm" -> "llm_request_response_trace"
         "speech" -> "speech_diagnostics_spoken_text_device_state"
         "issue" -> "user_provided_issue_text"
+        "diagnostics" -> "diagnostics_metadata_index"
         else -> "retained_debug_file"
     }
 

@@ -210,7 +210,7 @@ class DroidLmExecutor(
             .onFailure { error -> debugEvent(diagnosticSessionId, "portal_state_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "durationMs" to portalStateDurationMs)) }
         val state = stateResult.getOrNull()
         val deviceContextStartedAt = System.currentTimeMillis()
-        val deviceContextResult = runCatching { deviceContextAggregator.collect(stripped, state) }
+        val deviceContextResult = runCatching { deviceContextAggregator.collect(stripped, state, diagnosticSessionId = diagnosticSessionId) }
         val deviceContextDurationMs = System.currentTimeMillis() - deviceContextStartedAt
         deviceContextResult
             .onSuccess { context ->
@@ -428,7 +428,7 @@ class DroidLmExecutor(
             debugEvent(null, "local_loop_step_started", mapOf("step" to step, "maxSteps" to maxSteps, "historySize" to history.size))
             _uiState.value = _uiState.value.copy(status = "Planning step $step/$maxSteps")
             val state = portalController.getState()
-            val deviceContext = deviceContextAggregator.collect(goal, state, history)
+            val deviceContext = deviceContextAggregator.collect(goal, state, history, null)
             val packages = deviceContext.packages
             val activeApp = deviceContext.activeApp
             val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
@@ -506,7 +506,7 @@ class DroidLmExecutor(
             }
             _uiState.value = _uiState.value.copy(status = "Agent turn $turn/${budgets.maxTurns} (${totalToolCalls}/${budgets.maxToolCallsTotal} tools)")
             val state = runCatching { portalController.getState() }.getOrNull()
-            val deviceContext = runCatching { deviceContextAggregator.collect(goal, state, history) }.getOrNull()
+            val deviceContext = runCatching { deviceContextAggregator.collect(goal, state, history, diagnosticSessionId) }.getOrNull()
             val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
             val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
             debugEvent(
@@ -895,31 +895,48 @@ class DroidLmExecutor(
     }
 
     private suspend fun runOcrScreen(diagnosticSessionId: String? = null): ActionResult {
+        val startedAt = System.currentTimeMillis()
         debugEvent(diagnosticSessionId, "ocr_screen_started")
+        val screenshotStartedAt = System.currentTimeMillis()
         val screenshot = portalController.takeScreenshot()
-        debugEvent(diagnosticSessionId, "ocr_screenshot_result", mapOf("success" to screenshot.success, "hasBitmap" to (screenshot.bitmap != null), "errorCode" to screenshot.errorCode, "message" to screenshot.message))
+        debugEvent(
+            diagnosticSessionId,
+            "ocr_screenshot_result",
+            mapOf(
+                "success" to screenshot.success,
+                "hasBitmap" to (screenshot.bitmap != null),
+                "width" to screenshot.bitmap?.width,
+                "height" to screenshot.bitmap?.height,
+                "durationMs" to (System.currentTimeMillis() - screenshotStartedAt),
+                "errorCode" to screenshot.errorCode,
+                "message" to screenshot.message
+            )
+        )
         if (!screenshot.success || screenshot.bitmap == null) return ActionResult.fail(screenshot.message, screenshot.errorCode)
         debugLogStore?.retainScreenshot(screenshot.bitmap, "ocr-screen")
         logs.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for OCR")
         logs.log(ActionLogType.OCR_STARTED, "Running on-device OCR")
-        val deviceContextResult = runCatching { deviceContextAggregator.collect("Analyze screenshot", portalController.getState()) }
+        val deviceContextStartedAt = System.currentTimeMillis()
+        val deviceContextResult = runCatching { deviceContextAggregator.collect("Analyze screenshot", portalController.getState(), diagnosticSessionId = diagnosticSessionId) }
         deviceContextResult
-            .onSuccess { context -> debugEvent(diagnosticSessionId, "ocr_device_context_collected", mapOf("packageCount" to context.packages.size, "activePackage" to context.activeApp?.packageName)) }
-            .onFailure { error -> debugEvent(diagnosticSessionId, "ocr_device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name)) }
+            .onSuccess { context -> debugEvent(diagnosticSessionId, "ocr_device_context_collected", mapOf("packageCount" to context.packages.size, "activePackage" to context.activeApp?.packageName, "extraKeyCount" to context.extras.length(), "durationMs" to (System.currentTimeMillis() - deviceContextStartedAt))) }
+            .onFailure { error -> debugEvent(diagnosticSessionId, "ocr_device_context_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "durationMs" to (System.currentTimeMillis() - deviceContextStartedAt))) }
         val deviceContext = deviceContextResult.getOrNull()
+        val recognizeStartedAt = System.currentTimeMillis()
         return runCatching { ocrEngine.recognize(screenshot.bitmap, deviceContext) }
             .fold(
                 onSuccess = {
                     logs.log(ActionLogType.OCR_RESULT, "OCR detected ${it.lines.size} lines")
-                    debugEvent(diagnosticSessionId, "ocr_result", mapOf("lineCount" to it.lines.size, "elementCount" to it.elements.size, "source" to it.source.name))
+                    debugEvent(diagnosticSessionId, "ocr_result", mapOf("lineCount" to it.lines.size, "elementCount" to it.elements.size, "blockCount" to it.blocks.size, "fullTextLength" to it.fullText.length, "source" to it.source.name, "recognizeDurationMs" to (System.currentTimeMillis() - recognizeStartedAt), "totalDurationMs" to (System.currentTimeMillis() - startedAt)))
                     ActionResult.ok("OCR detected ${it.lines.size} lines")
                 },
                 onFailure = {
-                    debugEvent(diagnosticSessionId, "ocr_failed", mapOf("message" to it.message, "errorClass" to it::class.java.name))
+                    debugEvent(diagnosticSessionId, "ocr_failed", mapOf("message" to it.message, "errorClass" to it::class.java.name, "recognizeDurationMs" to (System.currentTimeMillis() - recognizeStartedAt), "totalDurationMs" to (System.currentTimeMillis() - startedAt)))
                     ActionResult.fail("OCR failed: ${it.message}", "OCR_FAILED")
                 }
             )
     }
+
 
     private suspend fun selectAllText(): ActionResult {
         val target = textEditingController.getFocusedEditable() ?: return ActionResult.fail("No editable field found", "NO_EDITABLE")

@@ -75,12 +75,28 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { DroidLMTheme { DroidLmScreen(viewModel) } }
+        recordLifecycle("main_activity_created", mapOf("restoredState" to (savedInstanceState != null)))
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessibility()
         viewModel.refreshOverlayPermission()
+        recordLifecycle("main_activity_resumed")
+    }
+
+    override fun onPause() {
+        recordLifecycle("main_activity_paused")
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        recordLifecycle("main_activity_destroyed", mapOf("finishing" to isFinishing, "changingConfigurations" to isChangingConfigurations))
+        super.onDestroy()
+    }
+
+    private fun recordLifecycle(event: String, fields: Map<String, Any?> = emptyMap()) {
+        runCatching { DroidLMApp.from(this).speechDiagnosticsLogger.record(null, event, fields) }
     }
 }
 
