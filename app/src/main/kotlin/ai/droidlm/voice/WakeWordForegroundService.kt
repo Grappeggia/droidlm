@@ -33,6 +33,7 @@ class WakeWordForegroundService : Service() {
         super.onCreate()
         app = application as DroidLMApp
         ensureNotificationChannel()
+        app.speechDiagnosticsLogger.record(null, "foreground_service_created", serviceLifecycleFields())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -41,14 +42,14 @@ class WakeWordForegroundService : Service() {
         app.speechDiagnosticsLogger.record(
             diagnosticSessionId,
             "foreground_onStartCommand",
-            mapOf("action" to (action ?: "default"), "startId" to startId, "flags" to flags)
+            serviceLifecycleFields(mapOf("action" to (action ?: "default"), "startId" to startId, "flags" to flags))
         )
         when (action) {
-            ACTION_START_LISTENING -> startListeningForeground()
-            ACTION_STOP_LISTENING -> stopListening()
-            ACTION_CANCEL -> cancelCurrent()
+            ACTION_START_LISTENING -> startListeningForeground(diagnosticSessionId)
+            ACTION_STOP_LISTENING -> stopListening(diagnosticSessionId)
+            ACTION_CANCEL -> cancelCurrent(diagnosticSessionId)
             ACTION_PUSH_TO_TALK -> startPushToTalk(diagnosticSessionId)
-            else -> startListeningForeground()
+            else -> startListeningForeground(diagnosticSessionId)
         }
         return START_STICKY
     }
@@ -56,31 +57,33 @@ class WakeWordForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        app.speechDiagnosticsLogger.record(null, "foreground_service_destroyed", serviceLifecycleFields(mapOf("hadCommandJob" to (commandJob != null), "commandJobActive" to (commandJob?.isActive == true))))
         commandJob?.cancel()
         scope.cancel()
         isRunningState.value = false
         super.onDestroy()
     }
 
-    private fun startListeningForeground() {
+    private fun startListeningForeground(diagnosticSessionId: String?) {
         isRunningState.value = true
-        startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.")
-        app.speechDiagnosticsLogger.record(null, "foreground_listening_started")
+        startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.", diagnosticSessionId)
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_listening_started", serviceLifecycleFields())
         app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Foreground listening service running")
     }
 
-    private fun stopListening() {
-        app.speechDiagnosticsLogger.record(null, "foreground_stop_listening_requested")
+    private fun stopListening(diagnosticSessionId: String?) {
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_stop_listening_requested", serviceLifecycleFields())
         if (app.speechRecognitionController.stopCurrent()) return
         isRunningState.value = false
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
         stopForegroundCompat()
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_stop_listening_completed", serviceLifecycleFields())
         stopSelf()
     }
 
-    private fun cancelCurrent() {
-        app.speechDiagnosticsLogger.record(null, "foreground_cancel_requested")
+    private fun cancelCurrent(diagnosticSessionId: String?) {
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_cancel_requested", serviceLifecycleFields())
         commandJob?.cancel()
         app.commandRecorder.cancelCurrent()
         app.speechRecognitionController.cancelCurrent()
@@ -88,6 +91,7 @@ class WakeWordForegroundService : Service() {
         app.actionLogRepository.log(ActionLogType.CANCELLED, "Current DroidLM task cancelled")
         if (!isRunningState.value) {
             stopForegroundCompat()
+            app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_cancel_stopping_service", serviceLifecycleFields())
             stopSelf()
         }
     }
@@ -96,7 +100,7 @@ class WakeWordForegroundService : Service() {
         val sessionId = diagnosticSessionId ?: app.speechDiagnosticsLogger.startSession("foreground_push_to_talk")
         val previousJob = commandJob
         val hadActiveJob = previousJob?.isActive == true
-        startForegroundSafely(if (hadActiveJob) "DroidLM is processing your speech command." else "DroidLM is listening for your push-to-talk command.")
+        startForegroundSafely(if (hadActiveJob) "DroidLM is processing your speech command." else "DroidLM is listening for your push-to-talk command.", sessionId)
         if (hadActiveJob) {
             app.speechDiagnosticsLogger.record(
                 sessionId,
@@ -122,7 +126,7 @@ class WakeWordForegroundService : Service() {
                 app.speechDiagnosticsLogger.record(
                     sessionId,
                     "push_to_talk_settings_loaded",
-                    mapOf("preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition)
+                    serviceLifecycleFields(mapOf("preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition))
                 )
                 app.executor.prepareForNewRecording()
                 app.actionLogRepository.log(ActionLogType.TRANSCRIPTION_REQUEST, "Starting push-to-talk speech recognition")
@@ -140,7 +144,7 @@ class WakeWordForegroundService : Service() {
                 app.speechDiagnosticsLogger.record(
                     sessionId,
                     if (result.success) "push_to_talk_planning_succeeded" else "push_to_talk_planning_failed",
-                    mapOf("message" to result.message, "errorCode" to result.errorCode)
+                    serviceLifecycleFields(mapOf("message" to result.message, "errorCode" to result.errorCode))
                 )
             }.onFailure { error ->
                 val cancelled = error.message?.contains("cancelled", ignoreCase = true) == true
@@ -156,18 +160,20 @@ class WakeWordForegroundService : Service() {
             }
             if (!isRunningState.value) {
                 stopForegroundCompat()
+                app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_service_stopping_after_job", serviceLifecycleFields())
                 stopSelf()
             } else {
-                startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.")
+                startForegroundSafely("DroidLM is listening for the wake phrase or push-to-talk.", sessionId)
             }
         }
         commandJob = job
         job.invokeOnCompletion {
+            app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_job_completed", serviceLifecycleFields(mapOf("cancelled" to it?.message?.contains("cancel", ignoreCase = true), "errorClass" to it?.javaClass?.name, "message" to it?.message)))
             if (commandJob === job) commandJob = null
         }
     }
 
-    private fun startForegroundSafely(content: String) {
+    private fun startForegroundSafely(content: String, diagnosticSessionId: String? = null) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(ai.droidlm.R.drawable.ic_droidlm)
             .setContentTitle("DroidLM")
@@ -177,15 +183,30 @@ class WakeWordForegroundService : Service() {
             .addAction(0, "Cancel task", pendingService(ACTION_CANCEL))
             .addAction(0, "Stop listening", pendingService(ACTION_STOP_LISTENING))
             .build()
+        val useMicrophoneType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasMicPermission()
+        app.speechDiagnosticsLogger.record(
+            diagnosticSessionId,
+            "foreground_notification_start_requested",
+            serviceLifecycleFields(mapOf("contentLength" to content.length, "useMicrophoneForegroundType" to useMicrophoneType))
+        )
         runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasMicPermission()) {
+            if (useMicrophoneType) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        }.onFailure {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        }.fold(
+            onSuccess = { app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_notification_started", serviceLifecycleFields(mapOf("usedMicrophoneForegroundType" to useMicrophoneType))) },
+            onFailure = { error ->
+                app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_notification_start_failed", serviceLifecycleFields(mapOf("usedMicrophoneForegroundType" to useMicrophoneType, "errorClass" to error::class.java.name, "message" to error.message)))
+                runCatching { startForeground(NOTIFICATION_ID, notification) }
+                    .onSuccess { app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_notification_fallback_started", serviceLifecycleFields()) }
+                    .onFailure { fallbackError ->
+                        app.speechDiagnosticsLogger.record(diagnosticSessionId, "foreground_notification_fallback_failed", serviceLifecycleFields(mapOf("errorClass" to fallbackError::class.java.name, "message" to fallbackError.message)))
+                        throw fallbackError
+                    }
+            }
+        )
     }
 
     private fun pendingService(action: String): PendingIntent {
@@ -206,6 +227,7 @@ class WakeWordForegroundService : Service() {
                     description = "Visible microphone/listening notification for DroidLM"
                 }
             )
+            app.speechDiagnosticsLogger.record(null, "foreground_notification_channel_ready", serviceLifecycleFields(mapOf("channelId" to CHANNEL_ID, "importance" to NotificationManager.IMPORTANCE_LOW)))
         }
     }
 
@@ -214,12 +236,27 @@ class WakeWordForegroundService : Service() {
 
     @Suppress("DEPRECATION")
     private fun stopForegroundCompat() {
+        app.speechDiagnosticsLogger.record(null, "foreground_stop_foreground_requested", serviceLifecycleFields())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             stopForeground(true)
         }
+        app.speechDiagnosticsLogger.record(null, "foreground_stop_foreground_completed", serviceLifecycleFields())
     }
+
+    private fun serviceLifecycleFields(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> = mapOf(
+        "runningState" to isRunningState.value,
+        "hasMicPermission" to hasMicPermission(),
+        "hasCommandJob" to (commandJob != null),
+        "commandJobActive" to (commandJob?.isActive == true),
+        "speechActive" to app.speechRecognitionController.state.value.isActive,
+        "speechStarting" to app.speechRecognitionController.state.value.isStarting,
+        "speechListening" to app.speechRecognitionController.state.value.isListening,
+        "speechStopping" to app.speechRecognitionController.state.value.isStopping,
+        "executionStatus" to app.executor.uiState.value.status,
+        "hasPendingPlan" to (app.executor.pendingPlan.value != null)
+    ) + extra
 
     companion object {
         const val ACTION_START_LISTENING = "ai.droidlm.action.START_LISTENING"

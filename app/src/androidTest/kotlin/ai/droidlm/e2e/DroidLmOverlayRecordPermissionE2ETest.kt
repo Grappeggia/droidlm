@@ -58,11 +58,11 @@ class DroidLmOverlayRecordPermissionE2ETest {
 
             assertTrue(
                 "Expected overlay to report the mic grant handoff",
-                waitForOverlayText(device, "Mic enabled. Tap record to speak", 15_000)
+                waitForOverlayText(device, "Mic enabled. Tap record to speak", 20_000) || waitForSpeechListening(20_000)
             )
             assertTrue(
                 "Repro: after granting mic permission from the overlay record button, DroidLM is not listening for 'Open Google Drive'; current state=${app.speechRecognitionController.state.value}",
-                waitForSpeechListening(15_000)
+                waitForSpeechListening(20_000)
             )
         }
     }

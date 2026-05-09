@@ -120,10 +120,17 @@ class FloatingControlOverlayService : Service() {
         super.onCreate()
         app = application as DroidLMApp
         windowManager = getSystemService(WindowManager::class.java)
+        app.speechDiagnosticsLogger.record(null, "overlay_service_created", overlayLifecycleFields())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        val action = intent?.action
+        app.speechDiagnosticsLogger.record(
+            null,
+            "overlay_onStartCommand",
+            overlayLifecycleFields(mapOf("action" to (action ?: "default"), "flags" to flags, "startId" to startId))
+        )
+        when (action) {
             ACTION_STOP -> stopOverlay()
             ACTION_TOGGLE_RECORD -> toggleRecord()
             ACTION_OPEN_APP -> openFullApp()
@@ -140,10 +147,16 @@ class FloatingControlOverlayService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        app.speechDiagnosticsLogger.record(
+            null,
+            "overlay_configuration_changed",
+            overlayLifecycleFields(mapOf("orientation" to newConfig.orientation, "screenLayout" to newConfig.screenLayout))
+        )
         overlayView?.post { applySafeOverlayPosition(persist = true) }
     }
 
     override fun onDestroy() {
+        app.speechDiagnosticsLogger.record(null, "overlay_service_destroyed", overlayLifecycleFields(mapOf("hadOverlayView" to (overlayView != null))))
         stopOverlay(removeSelf = false)
         scope.cancel()
         super.onDestroy()
@@ -151,6 +164,7 @@ class FloatingControlOverlayService : Service() {
 
     private fun showOverlay() {
         if (!Settings.canDrawOverlays(this)) {
+            app.speechDiagnosticsLogger.record(null, "overlay_show_denied", overlayLifecycleFields(mapOf("reason" to "overlay_permission_missing")))
             app.actionLogRepository.log(
                 ActionLogType.ERROR,
                 "Floating controls need Display over other apps permission",
@@ -160,6 +174,7 @@ class FloatingControlOverlayService : Service() {
             return
         }
         if (overlayView != null) {
+            app.speechDiagnosticsLogger.record(null, "overlay_show_existing", overlayLifecycleFields())
             overlayView?.post { applySafeOverlayPosition(persist = true) }
             return
         }
@@ -181,12 +196,43 @@ class FloatingControlOverlayService : Service() {
             val view = createOverlayView(layoutParams)
             view.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
             val clampedOnStart = clampLayoutParamsY(layoutParams, view.measuredHeight)
+            app.speechDiagnosticsLogger.record(
+                null,
+                "overlay_add_view_started",
+                overlayLifecycleFields(
+                    mapOf(
+                        "requestedX" to layoutParams.x,
+                        "requestedY" to settings.overlayY,
+                        "clampedY" to layoutParams.y,
+                        "clampedOnStart" to clampedOnStart,
+                        "overlayType" to overlayType(),
+                        "screenWidth" to displayWidth(),
+                        "screenHeight" to displayHeight(),
+                        "bottomInset" to bottomSystemInset()
+                    )
+                )
+            )
             params = layoutParams
             overlayView = view
-            windowManager.addView(view, layoutParams)
+            runCatching { windowManager.addView(view, layoutParams) }
+                .onFailure { error ->
+                    overlayView = null
+                    params = null
+                    app.speechDiagnosticsLogger.record(
+                        null,
+                        "overlay_add_view_failed",
+                        overlayLifecycleFields(mapOf("errorClass" to error::class.java.name, "message" to error.message))
+                    )
+                    throw error
+                }
             isRunningState.value = true
             app.settingsRepository.updateFloatingOverlayEnabled(true)
             if (clampedOnStart) app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y)
+            app.speechDiagnosticsLogger.record(
+                null,
+                "overlay_add_view_succeeded",
+                overlayLifecycleFields(mapOf("x" to layoutParams.x, "y" to layoutParams.y, "width" to view.measuredWidth, "height" to view.measuredHeight))
+            )
             app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Floating controls shown")
             observeState()
             refreshAccessibilityStatus()
@@ -341,11 +387,13 @@ class FloatingControlOverlayService : Service() {
                     isDraggingOverlay = false
                     isInDismissZone = false
                     if (droppedOnDismiss) {
+                        app.speechDiagnosticsLogger.record(null, "overlay_drag_dropped_on_dismiss", overlayLifecycleFields(mapOf("x" to layoutParams.x, "y" to layoutParams.y)))
                         app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Removed floating controls from dismiss target")
                         stopOverlay()
                         true
                     } else {
                         applySafeOverlayPosition(persist = false)
+                        app.speechDiagnosticsLogger.record(null, "overlay_drag_finished", overlayLifecycleFields(mapOf("x" to layoutParams.x, "y" to layoutParams.y)))
                         scope.launch { app.settingsRepository.updateOverlayPosition(layoutParams.x, layoutParams.y) }
                         false
                     }
@@ -639,15 +687,18 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun acceptPendingPlan() {
+        app.speechDiagnosticsLogger.record(null, "overlay_accept_pending_plan", overlayLifecycleFields(mapOf("hasPendingPlan" to (app.executor.pendingPlan.value != null))))
         scope.launch { app.executor.acceptPendingPlan(false) }
     }
 
     private fun rejectPendingPlan() {
+        app.speechDiagnosticsLogger.record(null, "overlay_reject_pending_plan", overlayLifecycleFields(mapOf("hasPendingPlan" to (app.executor.pendingPlan.value != null))))
         app.executor.rejectPendingPlan()
     }
 
 
     private fun showMicPermissionReady() {
+        app.speechDiagnosticsLogger.record(null, "overlay_mic_permission_ready_received", overlayLifecycleFields())
         showOverlay()
         scope.launch {
             accessibilityEnabled = true
@@ -661,6 +712,7 @@ class FloatingControlOverlayService : Service() {
                 if (speech.isListening) {
                     transientStatusMessage = OverlayStatusFormatter.microphoneReadyLabel()
                     updateOverlayText()
+                    app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_mic_permission_ready_listening", overlayLifecycleFields())
                     return@launch
                 }
                 if (speech.isStarting) {
@@ -671,14 +723,23 @@ class FloatingControlOverlayService : Service() {
             }
             transientStatusMessage = null
             updateOverlayText()
+            app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_mic_permission_ready_timeout", overlayLifecycleFields())
         }
     }
 
     private fun startPushToTalkService(diagnosticSessionId: String? = null) {
-        app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_start_push_to_talk_service")
-        ContextCompat.startForegroundService(
-            this,
-            WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK, diagnosticSessionId)
+        app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_start_push_to_talk_service", overlayLifecycleFields())
+        runCatching {
+            ContextCompat.startForegroundService(
+                this,
+                WakeWordForegroundService.intent(this, WakeWordForegroundService.ACTION_PUSH_TO_TALK, diagnosticSessionId)
+            )
+        }.fold(
+            onSuccess = { app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_start_push_to_talk_service_succeeded", overlayLifecycleFields()) },
+            onFailure = { error ->
+                app.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_start_push_to_talk_service_failed", overlayLifecycleFields(mapOf("errorClass" to error::class.java.name, "message" to error.message)))
+                throw error
+            }
         )
     }
 
@@ -688,16 +749,19 @@ class FloatingControlOverlayService : Service() {
 
 
     private fun openAccessibilitySettings() {
+        app.speechDiagnosticsLogger.record(null, "overlay_open_accessibility_settings_requested", overlayLifecycleFields())
         runCatching {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.fold(
             onSuccess = {
                 accessibilitySettingsOpened = true
                 updateOverlayText()
+                app.speechDiagnosticsLogger.record(null, "overlay_open_accessibility_settings_succeeded", overlayLifecycleFields())
                 app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Accessibility Settings from floating controls")
                 startAccessibilityPolling()
             },
             onFailure = { error ->
+                app.speechDiagnosticsLogger.record(null, "overlay_open_accessibility_settings_failed", overlayLifecycleFields(mapOf("errorClass" to error::class.java.name, "message" to error.message)))
                 app.actionLogRepository.log(ActionLogType.ERROR, "Failed to open Accessibility Settings: ${error.message}", "OPEN_ACCESSIBILITY_SETTINGS_FAILED")
                 openFullApp()
             }
@@ -707,6 +771,7 @@ class FloatingControlOverlayService : Service() {
     private fun refreshAccessibilityStatus() {
         scope.launch {
             accessibilityEnabled = app.portalController.isAccessibilityEnabled()
+            app.speechDiagnosticsLogger.record(null, "overlay_accessibility_status_refreshed", overlayLifecycleFields(mapOf("enabled" to accessibilityEnabled)))
             if (accessibilityEnabled) {
                 accessibilitySettingsOpened = false
                 accessibilityPollingJob?.cancel()
@@ -720,6 +785,7 @@ class FloatingControlOverlayService : Service() {
         accessibilityPollingJob = scope.launch {
             repeat(60) {
                 accessibilityEnabled = app.portalController.isAccessibilityEnabled()
+                app.speechDiagnosticsLogger.record(null, "overlay_accessibility_poll", overlayLifecycleFields(mapOf("enabled" to accessibilityEnabled, "attempt" to (it + 1))))
                 if (accessibilityEnabled) accessibilitySettingsOpened = false
                 updateOverlayText()
                 if (accessibilityEnabled) return@launch
@@ -730,6 +796,7 @@ class FloatingControlOverlayService : Service() {
 
 
     private fun openFullApp() {
+        app.speechDiagnosticsLogger.record(null, "overlay_open_full_app", overlayLifecycleFields())
         startActivity(
             Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -737,6 +804,7 @@ class FloatingControlOverlayService : Service() {
     }
 
     private fun stopOverlay(removeSelf: Boolean = true) {
+        app.speechDiagnosticsLogger.record(null, "overlay_stop_requested", overlayLifecycleFields(mapOf("removeSelf" to removeSelf, "hadOverlayView" to (overlayView != null))))
         stateJob?.cancel()
         stateJob = null
         accessibilityPollingJob?.cancel()
@@ -749,8 +817,30 @@ class FloatingControlOverlayService : Service() {
         params = null
         isRunningState.value = false
         scope.launch { app.settingsRepository.updateFloatingOverlayEnabled(false) }
+        app.speechDiagnosticsLogger.record(null, "overlay_stopped", overlayLifecycleFields(mapOf("removeSelf" to removeSelf)))
         if (removeSelf) stopSelf()
     }
+
+    private fun overlayLifecycleFields(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> = mapOf(
+        "overlayVisible" to (overlayView != null),
+        "dismissTargetVisible" to (dismissTargetView != null),
+        "runningState" to isRunningState.value,
+        "hasOverlayPermission" to Settings.canDrawOverlays(this),
+        "hasMicPermission" to hasMicPermission(),
+        "accessibilityEnabledCached" to accessibilityEnabled,
+        "accessibilitySettingsOpened" to accessibilitySettingsOpened,
+        "isDraggingOverlay" to isDraggingOverlay,
+        "isInDismissZone" to isInDismissZone,
+        "overlayX" to params?.x,
+        "overlayY" to params?.y,
+        "displayWidth" to runCatching { displayWidth() }.getOrNull(),
+        "displayHeight" to runCatching { displayHeight() }.getOrNull(),
+        "bottomInset" to runCatching { bottomSystemInset() }.getOrNull(),
+        "speechActive" to app.speechRecognitionController.state.value.isActive,
+        "speechListening" to app.speechRecognitionController.state.value.isListening,
+        "executionStatus" to app.executor.uiState.value.status,
+        "hasPendingPlan" to (app.executor.pendingPlan.value != null)
+    ) + extra
 
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY

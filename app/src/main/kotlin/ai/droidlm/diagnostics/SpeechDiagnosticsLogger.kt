@@ -2,8 +2,10 @@ package ai.droidlm.diagnostics
 
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.SettingsRepository
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -26,7 +29,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class SpeechDiagnosticsLogger(
     private val context: Context,
-    settingsRepository: SettingsRepository,
+    private val settingsRepository: SettingsRepository,
     private val actionLogs: ActionLogRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -71,6 +74,11 @@ class SpeechDiagnosticsLogger(
             event = "session_start",
             fields = mapOf("source" to source) + deviceFields() + fields
         )
+        scope.launch {
+            runCatching { settingsRepository.settings.first() }
+                .onSuccess { settings -> record(id, "settings_snapshot", settingsFields(settings)) }
+                .onFailure { error -> record(id, "settings_snapshot_failed", mapOf("errorClass" to error::class.java.name, "message" to error.message)) }
+        }
         return id
     }
 
@@ -80,6 +88,8 @@ class SpeechDiagnosticsLogger(
         Log.d(LOG_TAG, line)
         enqueueWrite(line)
     }
+
+    fun isEnabledNow(): Boolean = enabled
 
     fun endSession(sessionId: String?, reason: String, fields: Map<String, Any?> = emptyMap()) {
         record(sessionId, "session_end", mapOf("reason" to reason) + fields)
@@ -179,10 +189,51 @@ class SpeechDiagnosticsLogger(
     private fun deviceFields(): Map<String, Any?> = mapOf(
         "appPackage" to context.packageName,
         "appVersion" to appVersionName(),
+        "debuggable" to isDebuggable(),
         "sdk" to Build.VERSION.SDK_INT,
         "manufacturer" to Build.MANUFACTURER,
         "model" to Build.MODEL
     )
+
+    private fun settingsFields(settings: DroidLmSettings): Map<String, Any?> = mapOf(
+        "relayBaseUrlConfigured" to settings.relayBaseUrl.isNotBlank(),
+        "openAiApiKeyConfigured" to settings.openAiApiKeyConfigured,
+        "openAiModel" to settings.openAiModel,
+        "wakePhraseLength" to settings.wakePhrase.length,
+        "transcriptionProvider" to settings.transcriptionProvider.name,
+        "preferOfflineSpeechRecognition" to settings.preferOfflineSpeechRecognition,
+        "showPartialSpeechRecognition" to settings.showPartialSpeechRecognition,
+        "floatingOverlayEnabled" to settings.floatingOverlayEnabled,
+        "overlayX" to settings.overlayX,
+        "overlayY" to settings.overlayY,
+        "hideOverlayDuringAutomation" to settings.hideOverlayDuringAutomation,
+        "wakeWordProvider" to settings.wakeWordProvider.name,
+        "picovoiceAccessKeyConfigured" to settings.picovoiceAccessKeyConfigured,
+        "wakeWordModelAssetPathConfigured" to settings.wakeWordModelAssetPath.isNotBlank(),
+        "wakeSensitivity" to settings.wakeSensitivity,
+        "executionMode" to settings.executionMode.name,
+        "autoAcceptSafePlans" to settings.autoAcceptSafePlans,
+        "mobilerunApiKeyConfigured" to settings.mobilerunApiKeyConfigured,
+        "mobilerunDeviceIdConfigured" to settings.mobilerunDeviceId.isNotBlank(),
+        "mobilerunLlmModel" to settings.mobilerunLlmModel,
+        "maxAutonomousSteps" to settings.maxAutonomousSteps,
+        "maxAgentTurns" to settings.maxAgentTurns,
+        "maxAgentToolCalls" to settings.maxAgentToolCalls,
+        "requireRiskConfirmation" to settings.requireRiskConfirmation,
+        "onDeviceOcrEnabled" to settings.onDeviceOcrEnabled,
+        "cloudScreenshotAnalysisEnabled" to settings.cloudScreenshotAnalysisEnabled,
+        "debugLoggingEnabled" to settings.debugLoggingEnabled,
+        "onboardingCompletedVersion" to settings.onboardingCompletedVersion,
+        "sensitiveDenylistEntryCount" to splitListCount(settings.sensitiveAppScreenshotDenylist),
+        "sensitiveDenylistCustomized" to (settings.sensitiveAppScreenshotDenylist != DroidLmSettings.DEFAULT_SENSITIVE_DENYLIST),
+        "packageAllowlistEntryCount" to splitListCount(settings.packageAllowlist),
+        "packageDenylistEntryCount" to splitListCount(settings.packageDenylist)
+    )
+
+    private fun splitListCount(value: String): Int = value.split(',').count { it.trim().isNotBlank() }
+
+    private fun isDebuggable(): Boolean =
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     @Suppress("DEPRECATION")
     private fun appVersionName(): String = runCatching {
