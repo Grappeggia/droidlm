@@ -4,6 +4,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val baseVersionCode = 27
+val baseVersionName = "0.1.26"
+
 val releaseStoreFile = System.getenv("DROIDLM_RELEASE_STORE_FILE")
 val releaseStorePassword = System.getenv("DROIDLM_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = System.getenv("DROIDLM_RELEASE_KEY_ALIAS")
@@ -12,6 +15,13 @@ val debugIteration = providers.gradleProperty("droidlm.debugIteration")
     .orElse(providers.environmentVariable("DROIDLM_DEBUG_ITERATION"))
     .orNull
     ?.takeIf { it.isNotBlank() }
+val debugIterationNumber = debugIteration?.let { value ->
+    val number = value.toIntOrNull() ?: error("droidlm.debugIteration must be a number")
+    require(number in 1..999) { "droidlm.debugIteration must be between 1 and 999" }
+    number
+}
+val debugVersionCode = baseVersionCode * 1000 + (debugIterationNumber ?: 0)
+
 val hasReleaseSigning = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -27,8 +37,8 @@ android {
         applicationId = "ai.droidlm"
         minSdk = 29
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.1.26"
+        versionCode = baseVersionCode
+        versionName = baseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -75,6 +85,14 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(debugVersionCode)
+        }
     }
 }
 

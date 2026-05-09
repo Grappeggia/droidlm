@@ -671,6 +671,15 @@ gradle.projectsEvaluated {
     tasks.findByPath(":app:connectedDebugAndroidTest")?.mustRunAfter(tasks.findByPath(":ensureDriveForE2e"))
 }
 
+tasks.register("connectedDebugInstallUpgradeE2e", org.gradle.api.tasks.Exec::class) {
+    group = "verification"
+    description = "Runs local debug APK clean-install and upgrade checks on a connected emulator."
+    dependsOn(":app:assembleDebug")
+    environment("DROIDLM_INSTALL_E2E_LATEST_APK", layout.projectDirectory.file("app/build/outputs/apk/debug/app-debug.apk").asFile.absolutePath)
+    environment("DROIDLM_INSTALL_E2E_LATEST_TAG", "local-debug")
+    commandLine("bash", "scripts/debug-install-upgrade-e2e.sh")
+}
+
 tasks.register("connectedVoiceE2e") {
     group = "verification"
     description = "Runs DroidLM emulator voice invocation E2E tests. Requires a running emulator."

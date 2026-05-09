@@ -26,6 +26,7 @@ PROFILES=(
   "droidlm_api36_latest|5554|8554|pixel_7|system-images;android-36;google_apis;x86_64|1080|2400|420|6144|4|512|Latest flagship baseline"
   "droidlm_api35_midrange|5556|8556|pixel_6|system-images;android-35;google_apis;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone"
   "droidlm_api33_budget_720p|5558|8558|medium_phone|system-images;android-33;google_apis;x86_64|720|1600|320|2048|2|256|Budget 720p installed-base phone"
+  "droidlm_api29_lenovo_tb8505f|5560|8560|medium_tablet|system-images;android-29;google_apis;x86_64|800|1280|213|2048|2|256|Lenovo TB-8505F Android 10 tablet"
 )
 
 log() {
@@ -280,11 +281,13 @@ Profiles:
   droidlm_api36_latest
   droidlm_api35_midrange
   droidlm_api33_budget_720p
+  droidlm_api29_lenovo_tb8505f
 
 Examples:
   scripts/android-emulator-matrix.sh create all
   scripts/android-emulator-matrix.sh run all connectedVoiceE2e
   scripts/android-emulator-matrix.sh run droidlm_api33_budget_720p connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=ai.droidlm.e2e.DroidLmVoskOfflineE2ETest
+  scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 EOF
 }
 

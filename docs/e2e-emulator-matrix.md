@@ -1,6 +1,6 @@
 # DroidLM E2E Emulator Matrix
 
-DroidLM uses three Android emulator profiles to cover the most common Android device classes seen globally: latest high-end phones, mainstream midrange phones, and older/budget 720p phones.
+DroidLM uses emulator profiles to cover common Android device classes and targeted regressions: latest high-end phones, mainstream midrange phones, older/budget 720p phones, and Android 10 tablet install behavior.
 
 ## Device Coverage
 
@@ -9,8 +9,9 @@ DroidLM uses three Android emulator profiles to cover the most common Android de
 | `droidlm_api36_latest` | Latest Samsung/Pixel/high-end Android behavior | API 36 | 1080x2400 @ 420 dpi | 6 GB RAM, 4 cores |
 | `droidlm_api35_midrange` | Galaxy A-series, Redmi Note, Oppo/Vivo midrange | API 35 | 1080x2400 @ 420 dpi | 4 GB RAM, 2 cores |
 | `droidlm_api33_budget_720p` | Redmi A, Oppo A, Vivo Y, Tecno/Infinix-style budget phones | API 33 | 720x1600 @ 320 dpi | 2 GB RAM, 2 cores |
+| `droidlm_api29_lenovo_tb8505f` | Lenovo TB-8505F-style Android 10 tablet install behavior | API 29 | 800x1280 @ 213 dpi | 2 GB RAM, 2 cores |
 
-This matrix intentionally covers API spread, screen density/size, and performance class. It does not emulate OEM skins such as HONOR MagicOS, Samsung One UI, MIUI/HyperOS, ColorOS, or FuntouchOS. Use at least one physical HONOR or Samsung device for OEM-specific speech, overlay, and permission behavior.
+This matrix intentionally covers API spread, screen density/size, performance class, and an Android 10 tablet install path. It does not emulate OEM skins such as HONOR MagicOS, Samsung One UI, MIUI/HyperOS, ColorOS, FuntouchOS, or Lenovo customizations. Use physical devices for OEM-specific speech, overlay, permission, and package-installer behavior.
 
 ## Prerequisites
 
@@ -39,7 +40,7 @@ Create or update all AVDs:
 scripts/android-emulator-matrix.sh create all
 ```
 
-Run the standard voice E2E suite across all three profiles:
+Run the standard voice E2E suite across all profiles:
 
 ```bash
 scripts/android-emulator-matrix.sh run all connectedVoiceE2e
@@ -49,6 +50,12 @@ Run only the budget profile:
 
 ```bash
 scripts/android-emulator-matrix.sh run droidlm_api33_budget_720p connectedVoiceE2e
+```
+
+Run the local debug APK install/upgrade regression check on the Android 10 Lenovo-style tablet profile:
+
+```bash
+scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 ```
 
 Run the Vosk/support-log instrumentation test on one profile:
@@ -83,6 +90,7 @@ scripts/run-containerized-virtual-mic-e2e.sh ./gradlew connectedHoverMicAudioE2e
 ## Notes
 
 - `scripts/android-emulator-matrix.sh run ...` exports `ANDROID_SERIAL` so Gradle and `adb` target the active emulator.
-- gRPC mic ports are assigned per profile: `8554`, `8556`, and `8558`.
+- gRPC mic ports are assigned per profile: `8554`, `8556`, `8558`, and `8560`.
 - E2E videos and emulator logs are written under `test-artifacts/`, which is gitignored.
+- `connectedDebugInstallUpgradeE2e` builds the local debug APK and upgrades it over the latest GitHub debug prerelease; running `scripts/debug-install-upgrade-e2e.sh` directly defaults to the latest and previous GitHub debug prereleases. Override with `DROIDLM_INSTALL_E2E_LATEST_TAG`, `DROIDLM_INSTALL_E2E_BASELINE_TAG`, `DROIDLM_INSTALL_E2E_LATEST_APK`, or `DROIDLM_INSTALL_E2E_BASELINE_APK`.
 - Private support-log PCM fixtures should stay local and are ignored via `app/src/androidTest/assets/droidlm-audio-*-vosk.pcm`.
