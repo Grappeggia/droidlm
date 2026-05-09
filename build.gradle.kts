@@ -710,6 +710,34 @@ tasks.register("connectedVoiceE2e") {
     }
 }
 
+tasks.register("connectedDebugLogUploadE2e") {
+    group = "verification"
+    description = "Runs debug log upload E2E tests against the connected emulator."
+    dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        val instrumentationArgs = mutableMapOf("debugLogUploadE2e" to "true")
+        val relayUrl = System.getenv("DROIDLM_E2E_DEBUG_LOG_RELAY_URL")
+            ?: System.getenv("DROIDLM_E2E_RELAY_URL")
+        relayUrl?.takeIf { it.isNotBlank() }?.let { instrumentationArgs["debugLogUploadRelayUrl"] = it }
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        runInstrumentedSuiteWithVideos(
+            adbPath,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmDebugLogUploadE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmDebugLogUploadE2ETest.kt",
+                artifactSubdirectory = "debug-log-upload",
+                instrumentationArgs = instrumentationArgs
+            )
+        )
+    }
+}
+
+
 tasks.register("connectedActionKnownIssuesE2e") {
     group = "verification"
     description = "Runs E2E probes for action semantics that are expected to fail until support is improved. Requires a running emulator."

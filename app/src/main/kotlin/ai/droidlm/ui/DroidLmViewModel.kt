@@ -3,6 +3,7 @@ package ai.droidlm.ui
 import ai.droidlm.DroidLMApp
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
+import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
@@ -11,7 +12,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.core.content.FileProvider
+
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -133,6 +134,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
+    fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
@@ -185,31 +187,38 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun shareDebugLogs(issueDescription: String) = viewModelScope.launch {
-        app.debugLogStore.recordEvent("share_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
+        app.debugLogStore.recordEvent("upload_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
         val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle(issueDescription) }
         if (file == null) {
-            app.debugLogStore.recordEvent("share_empty")
-            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to share")
+            app.debugLogStore.recordEvent("upload_empty")
+            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to upload")
             return@launch
         }
-        val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/zip"
-            putExtra(Intent.EXTRA_SUBJECT, "DroidLM debug logs")
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, "DroidLM debug logs attached.")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        val relayBaseUrl = app.settingsRepository.settings.first().relayBaseUrl
+        if (relayBaseUrl.isBlank()) {
+            app.debugLogStore.recordEvent("upload_failed", mapOf("reason" to "missing_relay_url", "zipName" to file.name, "zipBytes" to file.length()))
+            app.actionLogRepository.log(ActionLogType.ERROR, "Set the relay URL before uploading debug logs", "NO_RELAY_URL")
+            return@launch
         }
-        val chooser = Intent.createChooser(sendIntent, "Share debug logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { app.startActivity(chooser) }
-            .onSuccess {
-                app.debugLogStore.recordEvent("share_sheet_opened", mapOf("zipName" to file.name, "zipBytes" to file.length()))
-                app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened debug logs share sheet")
+
+        when (val result = app.relayClient.uploadDebugLogs(relayBaseUrl, file, app.packageName, appVersionName())) {
+            is RelayCallResult.Success -> {
+                val upload = result.value
+                app.debugLogStore.recordEvent(
+                    "upload_succeeded",
+                    mapOf("zipName" to file.name, "zipBytes" to file.length(), "objectName" to upload.objectName, "uploadedBytes" to upload.sizeBytes)
+                )
+                app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
             }
-            .onFailure { error ->
-                app.debugLogStore.recordEvent("share_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "zipName" to file.name, "zipBytes" to file.length()))
-                app.actionLogRepository.log(ActionLogType.ERROR, "Could not share debug logs: ${error.message}")
+            is RelayCallResult.Failure -> {
+                app.debugLogStore.recordEvent(
+                    "upload_failed",
+                    mapOf("message" to result.message, "errorCode" to result.errorCode, "zipName" to file.name, "zipBytes" to file.length())
+                )
+                app.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)
             }
+        }
     }
 
     fun clearDebugLogs() {
@@ -279,6 +288,11 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { app.settingsRepository.updateMobilerunDeviceId(value) }
     fun saveMobilerunApiKey(value: String) = viewModelScope.launch { app.settingsRepository.saveMobilerunApiKey(value) }
     fun savePicovoiceAccessKey(value: String) = viewModelScope.launch { app.settingsRepository.savePicovoiceAccessKey(value) }
+
+    @Suppress("DEPRECATION")
+    private fun appVersionName(): String? = runCatching {
+        app.packageManager.getPackageInfo(app.packageName, 0).versionName
+    }.getOrNull()
 
     companion object {
         const val ONBOARDING_VERSION = 1

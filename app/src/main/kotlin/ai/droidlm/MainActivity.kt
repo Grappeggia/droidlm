@@ -793,6 +793,7 @@ private fun SettingsCard(
 
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
+    var relayBaseUrlDraft by remember(settings.relayBaseUrl) { mutableStateOf(settings.relayBaseUrl) }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
@@ -806,8 +807,20 @@ private fun SettingsCard(
         "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots. Zip exports may include spoken text, screenshots, audio, and device/app state, but never API keys.",
         color = DroidLmColors.TextMuted
     )
+    Text(
+        "Cloud upload uses the DroidLM relay URL. The relay writes the zip to your private GCS bucket.",
+        color = DroidLmColors.TextMuted
+    )
+    OutlinedTextField(
+        value = relayBaseUrlDraft,
+        onValueChange = { relayBaseUrlDraft = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Relay URL") },
+        singleLine = true
+    )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Share") }
+        OutlinedButton(onClick = { viewModel.updateRelayBaseUrl(relayBaseUrlDraft) }) { Text("Save Relay URL") }
+        OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Upload") }
         OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
         OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }
     }
@@ -818,7 +831,7 @@ private fun SettingsCard(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Add any details that would help diagnose what happened. This description will be saved inside the shared zip.",
+                        "Add any details that would help diagnose what happened. This description will be saved inside the uploaded zip.",
                         color = DroidLmColors.TextMuted
                     )
                     OutlinedTextField(
@@ -843,7 +856,7 @@ private fun SettingsCard(
                         showDebugShareDialog = false
                         debugIssueDescription = ""
                     }
-                ) { Text("Share logs") }
+                ) { Text("Upload logs") }
             },
             dismissButton = {
                 OutlinedButton(onClick = { showDebugShareDialog = false }) { Text("Cancel") }

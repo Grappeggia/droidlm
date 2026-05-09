@@ -13,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 class RelayClientTest {
@@ -29,6 +30,28 @@ class RelayClientTest {
         val parsed = RelayClient().parseTranscriptionJson("{\"text\":\"open drive\",\"durationMs\":123}")
         assertEquals("open drive", parsed.text)
         assertEquals(123L, parsed.durationMs)
+    }
+
+    @Test fun debugLogUploadPostsMultipart() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/bundle.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/bundle.zip","sizeBytes":3,"contentType":"application/zip"}"""))
+            server.start()
+            val bundle = File.createTempFile("droidlm-debug", ".zip")
+            try {
+                bundle.writeBytes(byteArrayOf(1, 2, 3))
+                val result = RelayClient().uploadDebugLogs(server.url("/").toString(), bundle, "ai.droidlm.debug", "0.1-debug")
+                if (result !is RelayCallResult.Success) error("Expected upload success")
+                assertEquals("debug-logs/synthetic/bundle.zip", result.value.objectName)
+                val request = server.takeRequest()
+                assertEquals("/debug-logs", request.path)
+                val body = request.body.readUtf8()
+                assertTrue(body.contains("name=\"logs\""))
+                assertTrue(body.contains("name=\"appPackage\""))
+                assertTrue(body.contains("ai.droidlm.debug"))
+            } finally {
+                bundle.delete()
+            }
+        }
     }
 
     @Test fun invalidJsonError() {

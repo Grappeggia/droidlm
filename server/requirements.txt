@@ -4,3 +4,5 @@ python-multipart
 openai
 pydantic
 python-dotenv
+google-cloud-storage
+

@@ -1,13 +1,17 @@
+import asyncio
 import base64
 import json
 import os
+import re
 import secrets
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -19,6 +23,10 @@ VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-5.4")
 DEBUG_RETAIN_UPLOADS = os.getenv("DEBUG_RETAIN_UPLOADS", "false").lower() == "true"
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_DEBUG_LOG_BYTES = int(os.getenv("DROIDLM_MAX_DEBUG_LOG_BYTES", str(100 * 1024 * 1024)))
+DEBUG_LOG_BUCKET = os.getenv("DROIDLM_DEBUG_LOG_BUCKET", "droidlm-debug-logs").strip()
+DEBUG_LOG_PREFIX = os.getenv("DROIDLM_DEBUG_LOG_PREFIX", "debug-logs").strip("/")
+
 SECRET_DIR = Path(os.getenv("DROIDLM_SECRET_DIR", ".secrets"))
 OPENAI_KEY_FILE = SECRET_DIR / "openai_key"
 SETUP_TOKEN = os.getenv("DROIDLM_SETUP_TOKEN") or secrets.token_urlsafe(24)
@@ -45,6 +53,15 @@ class OpenAiKeySetupRequest(BaseModel):
 
 class SetupTokenRequest(BaseModel):
     setupToken: str
+
+
+class DebugLogUploadResponse(BaseModel):
+    ok: bool
+    bucket: str
+    objectName: str
+    gsUri: str
+    sizeBytes: int
+    contentType: str
 
 
 ACTION_SCHEMA = {
@@ -151,6 +168,62 @@ async def delete_openai_key(payload: SetupTokenRequest) -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     return {"ok": True, "openAiKeyConfigured": bool(os.getenv("OPENAI_API_KEY"))}
+
+
+@app.post("/debug-logs", response_model=DebugLogUploadResponse)
+async def upload_debug_logs(
+    logs: UploadFile = File(...),
+    appPackage: Optional[str] = Form(default=None),
+    appVersion: Optional[str] = Form(default=None),
+) -> DebugLogUploadResponse:
+    content_type = (logs.content_type or "application/zip").lower()
+    if content_type not in {"application/zip", "application/octet-stream", "application/x-zip-compressed"}:
+        raise HTTPException(status_code=415, detail="Only zip debug log uploads are accepted")
+
+    data = await logs.read(MAX_DEBUG_LOG_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Debug log upload is empty")
+    if len(data) > MAX_DEBUG_LOG_BYTES:
+        raise HTTPException(status_code=413, detail="Debug log upload is too large")
+
+    store = require_debug_log_store()
+    object_name = store.object_name_for(logs.filename)
+    metadata = {
+        "source": "droidlm-android",
+        "originalFilename": safe_filename(logs.filename or "droidlm-debug-logs.zip"),
+    }
+    if appPackage:
+        metadata["appPackage"] = appPackage[:128]
+    if appVersion:
+        metadata["appVersion"] = appVersion[:64]
+
+    await asyncio.to_thread(store.write_object, object_name, data, content_type, metadata)
+    return DebugLogUploadResponse(
+        ok=True,
+        bucket=store.bucket_name,
+        objectName=object_name,
+        gsUri=f"gs://{store.bucket_name}/{object_name}",
+        sizeBytes=len(data),
+        contentType=content_type,
+    )
+
+
+@app.get("/debug-logs/{object_name:path}")
+async def read_debug_log(
+    object_name: str,
+    setupToken: Optional[str] = Query(default=None),
+    xDroidlmSetupToken: Optional[str] = Header(default=None, alias="X-DroidLM-Setup-Token"),
+) -> Response:
+    verify_setup_token(setupToken or xDroidlmSetupToken or "")
+    store = require_debug_log_store()
+    safe_object_name = require_debug_log_object_name(object_name)
+    downloaded = await asyncio.to_thread(store.read_object, safe_object_name)
+    filename = safe_filename(Path(safe_object_name).name or "droidlm-debug-logs.zip")
+    return Response(
+        content=downloaded["data"],
+        media_type=downloaded["contentType"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/transcribe")
@@ -321,6 +394,86 @@ async def analyze_screenshot(
 async def realtime_token() -> Dict[str, str]:
     require_openai()
     return {"message": "Ephemeral realtime token generation is not implemented in the MVP"}
+
+class GcsDebugLogStore:
+    def __init__(self, bucket_name: str, prefix: str) -> None:
+        from google.cloud import storage
+
+        self.bucket_name = bucket_name
+        self.prefix = prefix.strip("/")
+        self._bucket = storage.Client().bucket(bucket_name)
+
+    def object_name_for(self, filename: Optional[str]) -> str:
+        now = datetime.now(timezone.utc)
+        date_path = now.strftime("%Y/%m/%d")
+        timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+        name = safe_filename(filename or "droidlm-debug-logs.zip")
+        object_id = secrets.token_hex(8)
+        parts = [part for part in [self.prefix, date_path, f"{timestamp}-{object_id}-{name}"] if part]
+        return "/".join(parts)
+
+    def write_object(self, object_name: str, data: bytes, content_type: str, metadata: Dict[str, str]) -> None:
+        blob = self._bucket.blob(require_debug_log_object_name(object_name))
+        blob.metadata = metadata
+        blob.upload_from_string(data, content_type=content_type)
+
+    def read_object(self, object_name: str) -> Dict[str, Any]:
+        blob = self._bucket.blob(require_debug_log_object_name(object_name))
+        try:
+            data = blob.download_as_bytes()
+        except Exception as error:
+            if error.__class__.__name__ == "NotFound":
+                raise HTTPException(status_code=404, detail="Debug log object was not found") from error
+            raise
+        return {
+            "data": data,
+            "contentType": blob.content_type or "application/octet-stream",
+        }
+
+
+_debug_log_store: Optional[GcsDebugLogStore] = None
+
+
+def require_debug_log_store() -> GcsDebugLogStore:
+    global _debug_log_store
+    if not DEBUG_LOG_BUCKET:
+        raise HTTPException(
+            status_code=503,
+            detail={"errorCode": "DEBUG_LOG_BUCKET_MISSING", "message": "DroidLM debug log bucket is not configured"},
+        )
+    if _debug_log_store is None:
+        try:
+            _debug_log_store = GcsDebugLogStore(DEBUG_LOG_BUCKET, DEBUG_LOG_PREFIX)
+        except ImportError as error:
+            raise HTTPException(
+                status_code=503,
+                detail={"errorCode": "GCS_LIBRARY_MISSING", "message": "google-cloud-storage is not installed"},
+            ) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=503,
+                detail={"errorCode": "GCS_CLIENT_UNAVAILABLE", "message": f"Could not create GCS client: {error}"},
+            ) from error
+    return _debug_log_store
+
+
+def require_debug_log_object_name(object_name: str) -> str:
+    normalized = object_name.strip().lstrip("/")
+    if not normalized or "//" in normalized or "/../" in f"/{normalized}/":
+        raise HTTPException(status_code=400, detail="Invalid debug log object name")
+    if DEBUG_LOG_PREFIX and not normalized.startswith(f"{DEBUG_LOG_PREFIX}/"):
+        raise HTTPException(status_code=403, detail="Debug log object is outside the configured prefix")
+    return normalized
+
+
+def safe_filename(filename: str) -> str:
+    name = Path(filename).name
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-")
+    if not safe:
+        safe = "droidlm-debug-logs.zip"
+    if not safe.lower().endswith(".zip"):
+        safe = f"{safe}.zip"
+    return safe[:120]
 
 
 def read_openai_key() -> Optional[str]:

@@ -89,6 +89,12 @@ data class OpenAiKeySetupResponse(
     val openAiKeyConfigured: Boolean
 )
 
+data class DebugLogUploadResponse(
+    val objectName: String,
+    val gsUri: String,
+    val sizeBytes: Long
+)
+
 data class VisionBoundingBox(val x: Int, val y: Int, val width: Int, val height: Int)
 
 data class VisionSuggestedAction(
@@ -213,6 +219,25 @@ class RelayClient(
         return execute(request, ::parseVisionAnalysisJson)
     }
 
+    suspend fun uploadDebugLogs(
+        baseUrl: String,
+        zipFile: File,
+        appPackage: String,
+        appVersion: String? = null
+    ): RelayCallResult<DebugLogUploadResponse> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        if (!zipFile.exists() || zipFile.length() <= 0) return RelayCallResult.Failure("Debug log bundle is empty", "EMPTY_DEBUG_LOGS")
+        val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("logs", zipFile.name, zipFile.asRequestBody("application/zip".toMediaType()))
+            .addFormDataPart("appPackage", appPackage)
+        appVersion?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("appVersion", it) }
+        val request = Request.Builder()
+            .url("$normalized/debug-logs")
+            .post(bodyBuilder.build())
+            .build()
+        return execute(request, ::parseDebugLogUploadJson)
+    }
+
     fun parseTranscriptionJson(json: String): TranscriptionResponse {
         val obj = JSONObject(json)
         val text = obj.optString("text").trim()
@@ -236,6 +261,19 @@ class RelayClient(
         return OpenAiKeySetupResponse(
             ok = obj.optBoolean("ok", false),
             openAiKeyConfigured = obj.optBoolean("openAiKeyConfigured", false)
+        )
+    }
+
+    fun parseDebugLogUploadJson(json: String): DebugLogUploadResponse {
+        val obj = JSONObject(json)
+        val objectName = obj.optString("objectName").takeIf { it.isNotBlank() }
+            ?: throw JSONException("Debug log upload response missing objectName")
+        val gsUri = obj.optString("gsUri").takeIf { it.isNotBlank() }
+            ?: throw JSONException("Debug log upload response missing gsUri")
+        return DebugLogUploadResponse(
+            objectName = objectName,
+            gsUri = gsUri,
+            sizeBytes = obj.optLong("sizeBytes", 0L)
         )
     }
 
