@@ -37,12 +37,22 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     val promptHistory = app.promptHistoryRepository.prompts
     val overlayState = FloatingControlOverlayService.isRunningState
 
+    private val _overlayPermissionGranted = MutableStateFlow(Settings.canDrawOverlays(app))
+    val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted.asStateFlow()
+
 
     private val _accessibilityEnabled = MutableStateFlow(false)
     val accessibilityEnabled: StateFlow<Boolean> = _accessibilityEnabled.asStateFlow()
 
     fun refreshAccessibility() {
         viewModelScope.launch { _accessibilityEnabled.value = app.portalController.isAccessibilityEnabled() }
+    }
+
+
+    fun refreshOverlayPermission(): Boolean {
+        val granted = Settings.canDrawOverlays(app)
+        _overlayPermissionGranted.value = granted
+        return granted
     }
 
     fun startListening() {

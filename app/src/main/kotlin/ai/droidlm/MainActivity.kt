@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessibility()
+        viewModel.refreshOverlayPermission()
     }
 }
 
@@ -124,6 +125,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val pendingConfirmation by viewModel.pendingConfirmation.collectAsState()
     val promptHistory by viewModel.promptHistory.collectAsState()
     val overlayRunning by viewModel.overlayState.collectAsState()
+    val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
     val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION
@@ -133,10 +135,18 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> micGranted = granted }
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> notificationGranted = granted }
-    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var pendingOverlayStart by remember { mutableStateOf(false) }
+    var overlayPermissionNeedsRetry by remember { mutableStateOf(false) }
+    var showOverlayPermissionInstructions by remember { mutableStateOf(false) }
     val overlayLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        overlayGranted = Settings.canDrawOverlays(context)
-        if (overlayGranted) viewModel.startOverlay()
+        val granted = viewModel.refreshOverlayPermission()
+        if (granted) {
+            overlayPermissionNeedsRetry = false
+            if (pendingOverlayStart) viewModel.startOverlay()
+        } else if (pendingOverlayStart) {
+            overlayPermissionNeedsRetry = true
+        }
+        pendingOverlayStart = false
     }
 
     fun startListeningWithPermission() {
@@ -155,12 +165,36 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
         }
     }
 
+    fun requestOverlayPermission() {
+        pendingOverlayStart = true
+        overlayPermissionNeedsRetry = false
+        showOverlayPermissionInstructions = true
+    }
+
+    fun openOverlayPermissionSettings() {
+        pendingOverlayStart = true
+        showOverlayPermissionInstructions = false
+        overlayLauncher.launch(overlayPermissionIntent(context))
+    }
+
     fun startOverlayWithPermission() {
-        overlayGranted = Settings.canDrawOverlays(context)
-        if (overlayGranted) {
+        val granted = viewModel.refreshOverlayPermission()
+        if (granted) {
+            pendingOverlayStart = false
+            overlayPermissionNeedsRetry = false
             viewModel.startOverlay()
         } else {
-            overlayLauncher.launch(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
+            requestOverlayPermission()
+        }
+    }
+
+    LaunchedEffect(overlayGranted) {
+        if (overlayGranted) {
+            overlayPermissionNeedsRetry = false
+            if (pendingOverlayStart) {
+                pendingOverlayStart = false
+                viewModel.startOverlay()
+            }
         }
     }
 
@@ -212,17 +246,14 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         notificationGranted = notificationGranted,
                         overlayRunning = overlayRunning,
                         overlayGranted = overlayGranted,
+                        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
                         speechRecognition = speechRecognition,
                         onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         },
-                        onOpenOverlayPermission = {
-                            overlayLauncher.launch(
-                                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            )
-                        },
+                        onOpenOverlayPermission = ::requestOverlayPermission,
                         onStartOverlay = ::startOverlayWithPermission,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
@@ -246,6 +277,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         listening = listening,
                         overlayRunning = overlayRunning,
                         overlayGranted = overlayGranted,
+                        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
                         onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                         onRequestNotificationPermission = {
@@ -254,11 +286,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onStartOverlay = ::startOverlayWithPermission,
                         onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
                         onOpenRecognizerAppSettings = viewModel::openRecognizerAppSettings,
-                        onOpenOverlayPermission = {
-                            overlayLauncher.launch(
-                                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            )
-                        },
+                        onOpenOverlayPermission = ::requestOverlayPermission,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
@@ -322,6 +350,12 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 }
             }
         }
+        if (showOverlayPermissionInstructions) {
+            OverlayPermissionGuideDialog(
+                onOpenSettings = ::openOverlayPermissionSettings,
+                onDismiss = { showOverlayPermissionInstructions = false }
+            )
+        }
 
 
     }
@@ -372,6 +406,7 @@ private fun OnboardingPage(
     notificationGranted: Boolean,
     overlayRunning: Boolean,
     overlayGranted: Boolean,
+    overlayPermissionNeedsRetry: Boolean,
     speechRecognition: SpeechRecognitionUiState,
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -397,6 +432,7 @@ private fun OnboardingPage(
         notificationGranted = notificationGranted,
         overlayRunning = overlayRunning,
         overlayGranted = overlayGranted,
+        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
         settings = settings,
         onOpenAccessibility = onOpenAccessibility,
         onRequestMicPermission = onRequestMicPermission,
@@ -438,6 +474,7 @@ private fun SettingsPage(
     listening: Boolean,
     overlayRunning: Boolean,
     overlayGranted: Boolean,
+    overlayPermissionNeedsRetry: Boolean,
     onOpenAccessibility: () -> Unit,
     onOpenOverlayPermission: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -458,6 +495,7 @@ private fun SettingsPage(
         notificationGranted = notificationGranted,
         overlayRunning = overlayRunning,
         overlayGranted = overlayGranted,
+        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
         settings = settings,
         onOpenAccessibility = onOpenAccessibility,
         onRequestMicPermission = onRequestMicPermission,
@@ -498,6 +536,7 @@ private fun SetupStatusCard(
     notificationGranted: Boolean,
     overlayRunning: Boolean,
     overlayGranted: Boolean,
+    overlayPermissionNeedsRetry: Boolean,
     settings: DroidLmSettings,
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
@@ -512,8 +551,6 @@ private fun SetupStatusCard(
         SetupStatusItem("Accessibility", accessibilityEnabled, onOpenAccessibility),
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
         SetupStatusItem("Notifications", notificationGranted, onRequestNotificationPermission),
-        SetupStatusItem("Overlay permission", overlayGranted, onOpenOverlayPermission),
-        SetupStatusItem("Floating controls", overlayRunning, onStartOverlay),
         SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr)
     )
     val languageItem = when {
@@ -542,6 +579,14 @@ private fun SetupStatusCard(
     Spacer(Modifier.height(10.dp))
     SetupStatusRow("Enabled", enabledItems)
     SetupStatusRow("Missing", missingItems)
+    Spacer(Modifier.height(12.dp))
+    FloatingControlsSetupCard(
+        overlayRunning = overlayRunning,
+        overlayGranted = overlayGranted,
+        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
+        onOpenOverlayPermission = onOpenOverlayPermission,
+        onStartOverlay = onStartOverlay
+    )
 }
 
 private data class SetupStatusItem(
@@ -565,6 +610,72 @@ private fun SetupStatusRow(label: String, items: List<SetupStatusItem>) {
         }
     }
 }
+
+@Composable
+private fun FloatingControlsSetupCard(
+    overlayRunning: Boolean,
+    overlayGranted: Boolean,
+    overlayPermissionNeedsRetry: Boolean,
+    onOpenOverlayPermission: () -> Unit,
+    onStartOverlay: () -> Unit
+) {
+    val title = when {
+        overlayRunning -> "Controls are running"
+        overlayGranted -> "Ready to start"
+        overlayPermissionNeedsRetry -> "Still off"
+        else -> "Permission needed"
+    }
+    val message = when {
+        overlayRunning -> "The floating record button is visible over other apps."
+        overlayGranted -> "Android already allows DroidLM to display over other apps. Start the controls when you need them."
+        overlayPermissionNeedsRetry -> "Android still has this permission off. Open the DroidLM settings page and turn on Allow display over other apps."
+        else -> "DroidLM needs Android's display-over-apps permission before it can show the floating record button."
+    }
+    val container = if (overlayRunning || overlayGranted) DroidLmColors.SuccessSurface else DroidLmColors.WarningSurface
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Floating controls", fontWeight = FontWeight.SemiBold)
+            Text(title, fontWeight = FontWeight.Bold)
+            Text(message, color = DroidLmColors.TextMuted)
+            if (!overlayRunning) {
+                val buttonLabel = when {
+                    overlayGranted -> "Start controls"
+                    overlayPermissionNeedsRetry -> "Try setup again"
+                    else -> "Set up controls"
+                }
+                Button(onClick = if (overlayGranted) onStartOverlay else onOpenOverlayPermission) { Text(buttonLabel) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlayPermissionGuideDialog(
+    onOpenSettings: () -> Unit,
+    onDismiss: () -> Unit
+) = AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Enable floating controls") },
+    text = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Android requires this one setting before DroidLM can show the floating record button over other apps.")
+            Text("1. Tap Open Android settings.")
+            Text("2. Find Allow display over other apps and turn it on.")
+            Text("3. Return to DroidLM; the controls start automatically.")
+        }
+    },
+    confirmButton = {
+        Button(onClick = onOpenSettings) { Text("Open Android settings") }
+    },
+    dismissButton = {
+        OutlinedButton(onClick = onDismiss) { Text("Not now") }
+    }
+)
 
 @Composable
 private fun AdvancedControlsCard(
@@ -856,6 +967,10 @@ private fun displayLanguage(languageTag: String): String {
     val locale = Locale.forLanguageTag(languageTag)
     return locale.getDisplayName(locale).takeIf { it.isNotBlank() } ?: languageTag
 }
+
+
+private fun overlayPermissionIntent(context: Context): Intent =
+    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
 
 
 private fun hasPermission(context: Context, permission: String): Boolean =
