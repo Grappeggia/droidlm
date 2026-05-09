@@ -43,6 +43,35 @@ class DebugLogStoreTest {
         }
     }
 
+    @Test fun manifestRecordsPrivacyMetadataForRetainedSensitiveCategories() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        File(context.cacheDir, "droidlm-debug-logs").deleteRecursively()
+        File(context.cacheDir, "droidlm-debug-exports").deleteRecursively()
+        File(context.cacheDir, "droidlm-diagnostics").deleteRecursively()
+
+        val settingsRepository = SettingsRepository(context)
+        val actionLogs = ActionLogRepository()
+        val diagnosticsLogger = SpeechDiagnosticsLogger(context, settingsRepository, actionLogs)
+        val debugLogStore = DebugLogStore(context, settingsRepository, actionLogs, diagnosticsLogger)
+
+        settingsRepository.updateDebugLoggingEnabled(true)
+        diagnosticsLogger.setEnabled(true)
+        assertNotNull(debugLogStore.retainText("audio", "test-audio", "pcm bytes", extension = "pcm"))
+        assertNotNull(debugLogStore.retainText("llm", "plan-preview", "{}", extension = "json"))
+
+        val bundle = debugLogStore.createBundle("network timeout")
+
+        assertNotNull(bundle)
+        ZipFile(bundle!!).use { zip ->
+            val manifest = zip.readEntry("manifest.json")
+            assertTrue(manifest.contains("\"includesRawAudio\":true"))
+            assertTrue(manifest.contains("\"includesLlmTraces\":true"))
+            assertTrue(manifest.contains("\"raw_microphone_audio\""))
+            assertTrue(manifest.contains("\"llm_request_response_trace\""))
+            assertTrue(manifest.contains("\"apiKeysIncluded\":false"))
+        }
+    }
+
     private fun ZipFile.readEntry(name: String): String {
         val entry = getEntry(name) ?: throw AssertionError("Missing zip entry $name")
         return getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }

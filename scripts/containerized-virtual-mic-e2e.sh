@@ -73,11 +73,12 @@ pactl info >/dev/null 2>&1 || fail "PulseAudio did not become ready at $PULSE_SE
 
 AVD_NAME="${DROIDLM_E2E_AVD:-droidlm_e2e}"
 SYSTEM_IMAGE="${DROIDLM_E2E_SYSTEM_IMAGE:-system-images;android-34;google_apis;x86_64}"
+AVD_DEVICE="${DROIDLM_E2E_AVD_DEVICE:-pixel_6}"
 export DROIDLM_E2E_AVD="$AVD_NAME"
 
 if ! avdmanager list avd | grep -q "Name: $AVD_NAME"; then
-  log "Creating AVD $AVD_NAME from $SYSTEM_IMAGE"
-  printf 'no\n' | avdmanager create avd --force --name "$AVD_NAME" --package "$SYSTEM_IMAGE" --device "pixel_6" >/dev/null
+  log "Creating AVD $AVD_NAME from $SYSTEM_IMAGE with device profile $AVD_DEVICE"
+  printf 'no\n' | avdmanager create avd --force --name "$AVD_NAME" --package "$SYSTEM_IMAGE" --device "$AVD_DEVICE" >/dev/null
 fi
 
 adb start-server >/dev/null

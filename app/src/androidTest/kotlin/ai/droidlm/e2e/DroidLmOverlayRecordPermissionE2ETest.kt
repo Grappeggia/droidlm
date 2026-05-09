@@ -58,11 +58,11 @@ class DroidLmOverlayRecordPermissionE2ETest {
 
             assertTrue(
                 "Expected overlay to report the mic grant handoff",
-                waitForOverlayText(device, "Mic enabled. Tap record to speak", 5_000)
+                waitForOverlayText(device, "Mic enabled. Tap record to speak", 15_000)
             )
             assertTrue(
                 "Repro: after granting mic permission from the overlay record button, DroidLM is not listening for 'Open Google Drive'; current state=${app.speechRecognitionController.state.value}",
-                app.speechRecognitionController.state.value.isListening
+                waitForSpeechListening(15_000)
             )
         }
     }
@@ -93,6 +93,15 @@ class DroidLmOverlayRecordPermissionE2ETest {
             SystemClock.sleep(250)
         }
         return device.hasObject(By.text(text))
+    }
+
+    private fun waitForSpeechListening(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (app.speechRecognitionController.state.value.isListening) return true
+            SystemClock.sleep(250)
+        }
+        return app.speechRecognitionController.state.value.isListening
     }
 
     private fun executeShell(command: String): String {

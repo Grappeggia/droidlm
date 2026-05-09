@@ -11,7 +11,7 @@ import java.net.URI
 
 class NetworkDiagnostics(private val context: Context) {
     fun connectivityFields(endpoint: String? = null): Map<String, Any?> {
-        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val activeNetwork = connectivity?.activeNetwork
         val capabilities = activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
         val linkProperties = activeNetwork?.let { connectivity.getLinkProperties(it) }

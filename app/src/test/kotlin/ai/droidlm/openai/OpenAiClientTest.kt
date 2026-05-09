@@ -6,6 +6,7 @@ import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayPlanRequest
 import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONArray
@@ -14,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class OpenAiClientTest {
     @Test fun defaultGpt5ModelUsesMaxCompletionTokens() = runTest {
@@ -50,6 +52,32 @@ class OpenAiClientTest {
         }
     }
 
+
+    @Test fun readTimeoutsAreClassifiedAsTimeouts() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setHeadersDelay(250, TimeUnit.MILLISECONDS)
+                    .setBody("{}")
+            )
+            server.start()
+
+            val httpClient = OkHttpClient.Builder()
+                .connectTimeout(100, TimeUnit.MILLISECONDS)
+                .readTimeout(50, TimeUnit.MILLISECONDS)
+                .writeTimeout(100, TimeUnit.MILLISECONDS)
+                .build()
+            val result = OpenAiClient(
+                client = httpClient,
+                endpoint = server.url("/v1/chat/completions").toString()
+            ).planPreview("sk-test", "gpt-5.4-nano", minimalRequest())
+
+            assertTrue(result is RelayCallResult.Failure)
+            result as RelayCallResult.Failure
+            assertEquals("TIMEOUT", result.errorCode)
+            assertTrue(result.message.contains("timeout", ignoreCase = true))
+        }
+    }
     @Test fun unsupportedParameterErrorsRemainActionable() = runTest {
         MockWebServer().use { server ->
             server.enqueue(

@@ -16,4 +16,5 @@ node_modules/
 test-artifacts/
 __pycache__/
 support-logs/
+app/src/androidTest/assets/droidlm-audio-*-vosk.pcm
 
