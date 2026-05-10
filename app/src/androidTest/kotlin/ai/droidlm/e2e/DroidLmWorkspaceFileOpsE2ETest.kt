@@ -314,7 +314,7 @@ class DroidLmWorkspaceFileOpsE2ETest {
         )
         assertTrue("Expected fixture to open on device: $output", output.contains("Status: ok"))
         SystemClock.sleep(2500)
-        device.click(540, 1100)
+        device.click(device.displayWidth / 2, device.displayHeight / 2)
     }
 
     private fun seedDeviceFile(devicePath: String, content: String) {

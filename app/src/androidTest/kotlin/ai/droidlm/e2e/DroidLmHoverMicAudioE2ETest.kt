@@ -15,12 +15,15 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class DroidLmHoverMicAudioE2ETest {
@@ -97,6 +100,106 @@ class DroidLmHoverMicAudioE2ETest {
         }
     }
 
+    @Test
+    fun hoverRecordSupportLogAudioReproducesAmbiguousOpenRegression() {
+        runBlocking {
+            val markerPath = args.getString("micAudioMarkerPath")
+                ?: throw AssertionError("micAudioMarkerPath instrumentation arg is required")
+            app.settingsRepository.updateDebugLoggingEnabled(true)
+            assertTrue("Expected debug logging to enable for support-log regression capture", waitForDebugLoggingEnabled(5_000))
+            app.speechDiagnosticsLogger.clear()
+            assertTrue("Expected speech diagnostics file to clear before support-log regression run", waitForDiagnosticsCleared(5_000))
+            app.actionLogRepository.clear()
+            app.executor.cancelActive()
+            app.speechRecognitionController.clear()
+
+            targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
+            val device = UiDevice.getInstance(instrumentation)
+            val recordButton = device.wait(
+                Until.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION)),
+                5_000
+            ) ?: throw AssertionError("Expected floating record button to be visible")
+
+            recordButton.click()
+            assertTrue(
+                "Expected support-log regression run to activate speech recognition quickly; state=${app.speechRecognitionController.state.value}",
+                waitForActive(750)
+            )
+            assertRecordButtonStaysActive(device, 2_000)
+            assertTrue(
+                "Expected support-log regression run to reach listening state before injecting audio; state=${app.speechRecognitionController.state.value}",
+                waitForListening(3_000)
+            )
+            executeShell("mkdir -p ${markerPath.substringBeforeLast('/')}")
+            executeShell("touch $markerPath")
+            SystemClock.sleep(5_000)
+
+            val stopButton = device.wait(
+                Until.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION)),
+                2_000
+            ) ?: throw AssertionError("Expected floating record button to remain visible for stop tap")
+            stopButton.click()
+
+            assertTrue(
+                "Expected May 10 support-log audio to settle into a failed short-transcript outcome after the stop tap; speech=${app.speechRecognitionController.state.value}; execution=${app.executor.uiState.value}; logs=${app.actionLogRepository.logs.value}",
+                waitForSpeechSessionToFinish(30_000)
+            )
+
+            val events = readDiagnosticEvents()
+            val primarySessionStart = events.firstOrNull { event -> event.optString("event") == "session_start" }
+                ?: throw AssertionError("Expected support-log regression run to record a session_start event")
+            val primarySessionId = primarySessionStart.optString("sessionId")
+            val primarySessionEvents = events.filter { event -> event.optString("sessionId") == primarySessionId }
+
+            assertTrue(
+                "Expected support-log regression session to route through offline-preferred Vosk fallback. Events=$primarySessionEvents",
+                primarySessionEvents.any { it.optString("event") == "prefer_offline_vosk_direct" } &&
+                    primarySessionEvents.any { it.optString("event") == "vosk_fallback_started" }
+            )
+            assertTrue(
+                "Expected support-log regression session to receive an explicit stop request. Events=$primarySessionEvents",
+                primarySessionEvents.any { it.optString("event") == "vosk_stop_requested" } &&
+                    primarySessionEvents.any { it.optString("event") == "stop_current_requested" }
+            )
+            val stopRequestSession = events.firstOrNull { event -> event.optString("event") == "foreground_stop_listening_requested" }
+            assertTrue(
+                "Expected a second overlay tap to request foreground stop listening. Events=$events",
+                stopRequestSession != null && stopRequestSession.optString("sessionId") != primarySessionId
+            )
+
+            val finalTranscript = primarySessionEvents.lastOrNull { it.optString("event") == "vosk_final" }
+                ?: throw AssertionError("Expected support-log regression session to record a vosk_final event")
+            val transcript = finalTranscript.optString("transcript").lowercase().trim()
+            assertTrue(
+                "Expected May 10 support-log audio to collapse into a short single-word transcript during live emulator capture; transcript='$transcript'; event=$finalTranscript",
+                transcript in setOf("open", "okay", "the")
+            )
+            assertTrue(
+                "Expected May 10 support-log audio to stay truncated instead of preserving the requested app name; transcript='$transcript'",
+                transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets")
+            )
+
+            val planningFailure = primarySessionEvents.lastOrNull { it.optString("event") == "push_to_talk_planning_failed" }
+                ?: throw AssertionError("Expected support-log regression session to record push_to_talk_planning_failed")
+            if (transcript == "open") {
+                assertEquals("AMBIGUOUS_OPEN_APP", planningFailure.optString("errorCode"))
+                assertTrue(
+                    "Expected ambiguous-open planner failure to suggest the same Google Sheets wording seen in the user report. Event=$planningFailure",
+                    planningFailure.optString("message").contains("open Google Sheets")
+                )
+            } else {
+                assertEquals(
+                    "OPENAI_API_KEY_MISSING",
+                    planningFailure.optString("errorCode")
+                )
+            }
+            assertFalse(
+                "Support-log regression should not accidentally foreground Google Docs/Drive packages; currentPackage=${device.currentPackageName}",
+                device.currentPackageName?.startsWith("com.google.android.apps.docs") == true
+            )
+        }
+    }
+
     private fun waitForActive(timeoutMs: Long): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -125,6 +228,60 @@ class DroidLmHoverMicAudioE2ETest {
         }
         return app.speechRecognitionController.state.value.isListening
     }
+
+    private fun waitForDebugLoggingEnabled(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (app.speechDiagnosticsLogger.isEnabledNow()) return true
+            SystemClock.sleep(50)
+        }
+        return app.speechDiagnosticsLogger.isEnabledNow()
+    }
+
+    private fun waitForPartialTranscript(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (app.speechRecognitionController.state.value.partialTranscript.isNotBlank()) return true
+            SystemClock.sleep(100)
+        }
+        return app.speechRecognitionController.state.value.partialTranscript.isNotBlank()
+    }
+
+    private fun waitForDiagnosticsCleared(timeoutMs: Long): Boolean {
+        val file = diagnosticsLogFile()
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (!file.exists()) return true
+            SystemClock.sleep(50)
+        }
+        return !file.exists()
+    }
+
+    private fun waitForSpeechSessionToFinish(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val speech = app.speechRecognitionController.state.value
+            val execution = app.executor.uiState.value
+            val settled = !speech.isActive && !speech.isListening && !speech.isStarting &&
+                (speech.finalTranscript.isNotBlank() || execution.status == "Error")
+            if (settled) return true
+            SystemClock.sleep(100)
+        }
+        val speech = app.speechRecognitionController.state.value
+        val execution = app.executor.uiState.value
+        return !speech.isActive && !speech.isListening && !speech.isStarting &&
+            (speech.finalTranscript.isNotBlank() || execution.status == "Error")
+    }
+
+    private fun readDiagnosticEvents(): List<JSONObject> {
+        val exported = runBlocking { app.speechDiagnosticsLogger.exportSnapshot() }
+            ?: throw AssertionError("Expected support-log regression run to produce an exported diagnostics snapshot")
+        return exported.readLines()
+            .filter { it.isNotBlank() }
+            .map(::JSONObject)
+    }
+
+    private fun diagnosticsLogFile(): File = File(targetContext.cacheDir, "droidlm-diagnostics/speech-diagnostics.jsonl")
 
     private fun waitForTranscriptOrDrive(timeoutMs: Long): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs

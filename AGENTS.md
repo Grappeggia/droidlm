@@ -12,8 +12,8 @@
 ## Build Verification
 
 - Build APKs locally before publishing.
-- For debug/prerelease builds, run `./gradlew testDebugUnitTest assembleDebug` at minimum, and run emulator E2E with `./gradlew connectedVoiceE2e` when changing Android behavior.
-- For prod/release builds, run `./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease` at minimum, and run emulator E2E with `./gradlew connectedVoiceE2e` when changing Android behavior.
+- For debug/prerelease builds, run `./gradlew testDebugUnitTest assembleDebug` at minimum. Release candidates must also pass `scripts/android-emulator-matrix.sh release full`.
+- For prod/release builds, run `./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease` at minimum. Stable releases must also pass `scripts/android-emulator-matrix.sh release full`.
 - Run CLI checks with `npm test` and `npm pack --dry-run` from `cli/` when CLI packaging or install/release instructions change.
 
 ## Release Channels

@@ -21,12 +21,74 @@ ADB="${ADB:-$ANDROID_HOME/platform-tools/adb}"
 GRADLEW="${GRADLEW:-$REPO_ROOT/gradlew}"
 ARTIFACT_DIR="$REPO_ROOT/test-artifacts/emulator-matrix"
 
-# name|serialPort|grpcPort|device|systemImage|width|height|density|ramMb|cores|heapMb|label
+# name|serialPort|grpcPort|device|systemImage|width|height|density|ramMb|cores|heapMb|label|tags
 PROFILES=(
-  "droidlm_api36_latest|5554|8554|pixel_7|system-images;android-36;google_apis;x86_64|1080|2400|420|6144|4|512|Latest flagship baseline"
-  "droidlm_api35_midrange|5556|8556|pixel_6|system-images;android-35;google_apis;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone"
-  "droidlm_api33_budget_720p|5558|8558|medium_phone|system-images;android-33;google_apis;x86_64|720|1600|320|2048|2|256|Budget 720p installed-base phone"
-  "droidlm_api29_lenovo_tb8505f|5560|8560|medium_tablet|system-images;android-29;google_apis;x86_64|800|1280|213|2048|2|256|Lenovo TB-8505F Android 10 tablet"
+  "droidlm_api36_latest|5554|8554|pixel_7|system-images;android-36;google_apis;x86_64|1080|2400|420|6144|4|512|Latest flagship baseline|phone,core,voice,audio"
+  "droidlm_api35_midrange|5556|8556|pixel_6|system-images;android-35;google_apis;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone|phone,core,voice,audio"
+  "droidlm_api33_budget_720p|5558|8558|medium_phone|system-images;android-33;google_apis;x86_64|720|1600|320|2048|2|256|Budget 720p installed-base phone|phone,core,voice,audio,budget"
+  "droidlm_api29_lenovo_tb8505f|5560|8560|medium_tablet|system-images;android-29;google_apis;x86_64|800|1280|213|2048|2|256|Lenovo TB-8505F Android 10 tablet|tablet,core,voice,legacy"
+  "droidlm_api31_phone|5562|8562|medium_phone|system-images;android-31;google_apis;x86_64|1080|2340|420|3072|2|320|Android 12 permission and overlay baseline|phone,core,voice"
+  "droidlm_api35_play_midrange|5564|8564|pixel_6|system-images;android-35;google_apis_playstore;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone with Google Play|phone,play,workspace"
+  "droidlm_api35_play_tablet|5566|8566|medium_tablet|system-images;android-35;google_apis_playstore;x86_64|1600|2560|320|6144|4|512|Modern tablet with Google Play|tablet,play,workspace"
+)
+
+RELEASE_VOICE_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api35_midrange
+  droidlm_api33_budget_720p
+  droidlm_api29_lenovo_tb8505f
+  droidlm_api31_phone
+  droidlm_api35_play_midrange
+  droidlm_api35_play_tablet
+)
+
+RELEASE_LOG_UPLOAD_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api35_midrange
+  droidlm_api33_budget_720p
+  droidlm_api29_lenovo_tb8505f
+  droidlm_api31_phone
+  droidlm_api35_play_midrange
+  droidlm_api35_play_tablet
+)
+
+RELEASE_VOSK_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api33_budget_720p
+)
+
+RELEASE_SUPPORT_LOG_PROFILES=(
+  droidlm_api36_latest
+)
+
+RELEASE_AUDIO_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api35_midrange
+  droidlm_api33_budget_720p
+)
+
+RELEASE_ON_DEVICE_AUDIO_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api33_budget_720p
+  droidlm_api35_play_midrange
+)
+
+RELEASE_INSTALL_UPGRADE_PROFILES=(
+  droidlm_api35_midrange
+  droidlm_api33_budget_720p
+  droidlm_api29_lenovo_tb8505f
+  droidlm_api31_phone
+  droidlm_api35_play_midrange
+)
+
+RELEASE_ACTION_PROFILES=(
+  droidlm_api36_latest
+  droidlm_api31_phone
+)
+
+RELEASE_WORKSPACE_PROFILES=(
+  droidlm_api35_play_midrange
+  droidlm_api35_play_tablet
 )
 
 log() {
@@ -223,6 +285,30 @@ boot_profile() {
   fail "Timed out waiting for $name to boot. See $log_file"
 }
 
+configure_device_state() {
+  local serial="$1"
+  local network_mode="${DROIDLM_E2E_NETWORK_MODE:-online}"
+  local font_scale="${DROIDLM_E2E_FONT_SCALE:-}"
+
+  case "$network_mode" in
+    online)
+      "$ADB" -s "$serial" shell svc wifi enable >/dev/null 2>&1 || true
+      "$ADB" -s "$serial" shell svc data enable >/dev/null 2>&1 || true
+      ;;
+    offline)
+      "$ADB" -s "$serial" shell svc wifi disable >/dev/null 2>&1 || true
+      "$ADB" -s "$serial" shell svc data disable >/dev/null 2>&1 || true
+      ;;
+    *)
+      fail "Unknown DROIDLM_E2E_NETWORK_MODE '$network_mode'. Expected online or offline."
+      ;;
+  esac
+
+  if [[ -n "$font_scale" ]]; then
+    "$ADB" -s "$serial" shell settings put system font_scale "$font_scale" >/dev/null 2>&1 || true
+  fi
+}
+
 stop_profile() {
   local profile="$1"
   local name serial
@@ -246,6 +332,7 @@ run_profile() {
   debug_log_upload_url="${DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL:-}"
   create_profile "$profile"
   boot_profile "$profile"
+  configure_device_state "$serial"
   if [[ -z "$relay_url" && "${DROIDLM_E2E_ENABLE_RELAY_REVERSE:-false}" == "true" ]]; then
     if "$ADB" -s "$serial" reverse "tcp:$relay_port" "tcp:$relay_port" >/dev/null 2>&1; then
       relay_url="http://127.0.0.1:$relay_port"
@@ -256,15 +343,80 @@ run_profile() {
     fi
   fi
   log "Running Gradle on $name ($serial): $*"
+  local stop_after_run="${DROIDLM_MATRIX_STOP_AFTER_RUN:-false}"
+  set +e
   (
     cd "$REPO_ROOT"
     ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL="$debug_log_upload_url" "$GRADLEW" "$@" </dev/null
   )
+  local status=$?
+  set -e
+  if [[ "$stop_after_run" == "true" ]]; then
+    stop_profile "$profile"
+  fi
+  return "$status"
+}
+
+run_profile_names() {
+  local -n profile_names_ref="$1"
+  shift
+  local profile_name
+  for profile_name in "${profile_names_ref[@]}"; do
+    run_profile "$(find_profile "$profile_name")" "$@"
+  done
+}
+
+run_release_core() {
+  log "Running release core matrix: voice, upload, offline speech, mic injection, on-device STT, install/upgrade, and action semantics."
+  run_profile_names RELEASE_VOICE_PROFILES connectedVoiceE2e
+  run_profile_names RELEASE_LOG_UPLOAD_PROFILES connectedDebugLogUploadE2e
+
+  local previous_network_mode="${DROIDLM_E2E_NETWORK_MODE:-online}"
+  DROIDLM_E2E_NETWORK_MODE=offline
+  run_profile_names RELEASE_VOSK_PROFILES connectedVoskOfflineE2e
+  DROIDLM_E2E_NETWORK_MODE="$previous_network_mode"
+
+  run_profile_names RELEASE_SUPPORT_LOG_PROFILES connectedSupportLogMicRegressionE2e
+  run_profile_names RELEASE_AUDIO_PROFILES connectedEmulatorMicProbeE2e connectedHoverMicAudioE2e
+  run_profile_names RELEASE_ON_DEVICE_AUDIO_PROFILES connectedOnDeviceAudioSourceE2e
+  run_profile_names RELEASE_INSTALL_UPGRADE_PROFILES connectedDebugInstallUpgradeE2e
+  run_profile_names RELEASE_ACTION_PROFILES connectedActionKnownIssuesE2e
+}
+
+run_release_workspace() {
+  log "Running release workspace matrix on Play-enabled phone and tablet profiles."
+  log "Provide Workspace APKs under /tmp/droidlm-google-apks or preinstall them on the Play-enabled AVDs before running this release gate."
+  run_profile_names RELEASE_WORKSPACE_PROFILES connectedWorkspaceFileOpsE2e
+}
+
+run_release_matrix() {
+  local mode="${1:-full}"
+  local previous_stop_after_run="${DROIDLM_MATRIX_STOP_AFTER_RUN:-false}"
+  DROIDLM_MATRIX_STOP_AFTER_RUN=true
+
+  case "$mode" in
+    core)
+      run_release_core
+      ;;
+    workspace)
+      run_release_workspace
+      ;;
+    full)
+      run_release_core
+      run_release_workspace
+      ;;
+    *)
+      DROIDLM_MATRIX_STOP_AFTER_RUN="$previous_stop_after_run"
+      fail "Unknown release matrix mode '$mode'. Expected core, workspace, or full."
+      ;;
+  esac
+
+  DROIDLM_MATRIX_STOP_AFTER_RUN="$previous_stop_after_run"
 }
 
 print_list() {
-  printf '%-30s %-14s %-10s %-18s %-50s %s\n' "AVD" "serial" "gRPC" "device" "system image" "profile"
-  local profile name port grpc_port device image label
+  printf '%-30s %-14s %-10s %-18s %-50s %-36s %s\n' "AVD" "serial" "gRPC" "device" "system image" "profile" "tags"
+  local profile name port grpc_port device image label tags
   for profile in "${PROFILES[@]}"; do
     name="$(profile_field "$profile" 1)"
     port="$(profile_field "$profile" 2)"
@@ -272,7 +424,8 @@ print_list() {
     device="$(profile_field "$profile" 4)"
     image="$(profile_field "$profile" 5)"
     label="$(profile_field "$profile" 12)"
-    printf '%-30s %-14s %-10s %-18s %-50s %s\n' "$name" "emulator-$port" "$grpc_port" "$device" "$image" "$label"
+    tags="$(profile_field "$profile" 13)"
+    printf '%-30s %-14s %-10s %-18s %-50s %-36s %s\n' "$name" "emulator-$port" "$grpc_port" "$device" "$image" "$label" "$tags"
   done
 }
 
@@ -286,6 +439,7 @@ Commands:
   boot <profile>       Boot one profile headlessly.
   stop [profile]       Stop all profiles or one named profile.
   run [profile] [tasks] Create, boot, and run Gradle tasks. Defaults to connectedVoiceE2e.
+  release [mode]       Run the curated release matrix. Modes: core, workspace, full.
   doctor               Print SDK, AVD, and adb state.
 
 Profiles:
@@ -294,13 +448,17 @@ Profiles:
   droidlm_api35_midrange
   droidlm_api33_budget_720p
   droidlm_api29_lenovo_tb8505f
+  droidlm_api31_phone
+  droidlm_api35_play_midrange
+  droidlm_api35_play_tablet
 
 Examples:
   scripts/android-emulator-matrix.sh create all
   scripts/android-emulator-matrix.sh run all connectedVoiceE2e
   scripts/android-emulator-matrix.sh run all connectedDebugLogUploadE2e
-  scripts/android-emulator-matrix.sh run droidlm_api33_budget_720p connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=ai.droidlm.e2e.DroidLmVoskOfflineE2ETest
+  scripts/android-emulator-matrix.sh run droidlm_api33_budget_720p connectedVoskOfflineE2e
   scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
+  scripts/android-emulator-matrix.sh release full
 EOF
 }
 
@@ -346,6 +504,10 @@ main() {
       mapfile -t profiles < <(for_profiles "$target")
       local profile
       for profile in "${profiles[@]}"; do run_profile "$profile" "${tasks[@]}"; done
+      ;;
+    release)
+      local mode="${1:-full}"
+      run_release_matrix "$mode"
       ;;
     doctor)
       "$SDKMANAGER" --list_installed | grep -E 'platforms;android-|system-images;android-' || true

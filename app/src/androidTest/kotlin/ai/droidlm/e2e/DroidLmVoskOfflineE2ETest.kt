@@ -39,7 +39,8 @@ class DroidLmVoskOfflineE2ETest {
     fun sharedSupportLogPcmReproducesShortTranscripts() = runBlocking {
         val cases = listOf(
             "private-vosk-fixture-a.pcm" to "the",
-            "private-vosk-fixture-b.pcm" to "opus"
+            "private-vosk-fixture-b.pcm" to "opus",
+            "private-vosk-fixture.pcm" to "open"
         )
         assumeTrue(
             "Private support-log PCM fixtures are not packaged in androidTest assets.",

@@ -79,12 +79,30 @@ class DroidLmOverlayRecordPermissionE2ETest {
     }
 
     private fun clickAllowMicrophonePermission(device: UiDevice) {
-        val allowButton = device.wait(
-            Until.findObject(By.text(Pattern.compile("(?i)(While using the app|Allow|ALLOW|OK)"))),
-            5_000
-        ) ?: throw AssertionError("Expected Android microphone permission dialog")
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val allowButton = findPermissionAllowButton(device)
+            if (allowButton != null) {
+                allowButton.click()
+                return
+            }
+            SystemClock.sleep(250)
+        }
+        val allowButton = findPermissionAllowButton(device)
+            ?: throw AssertionError("Expected Android microphone permission dialog")
         allowButton.click()
     }
+
+    private fun findPermissionAllowButton(device: UiDevice) = listOf(
+        "com.android.permissioncontroller:id/permission_allow_foreground_only_button",
+        "com.android.permissioncontroller:id/permission_allow_button",
+        "com.android.permissioncontroller:id/permission_allow_one_time_button",
+        "com.google.android.permissioncontroller:id/permission_allow_foreground_only_button",
+        "com.google.android.permissioncontroller:id/permission_allow_button",
+        "com.google.android.permissioncontroller:id/permission_allow_one_time_button"
+    ).asSequence().mapNotNull { resourceId ->
+        device.findObject(By.res(resourceId))
+    }.firstOrNull() ?: device.findObject(By.text(Pattern.compile("(?i)(While using the app|Allow|ALLOW|OK)")))
 
     private fun waitForOverlayText(device: UiDevice, text: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs

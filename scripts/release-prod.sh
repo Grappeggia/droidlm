@@ -6,6 +6,7 @@ REMOTE="${DROIDLM_RELEASE_REMOTE:-origin}"
 BRANCH="${DROIDLM_RELEASE_BRANCH:-main}"
 SKIP_E2E="${DROIDLM_SKIP_E2E:-false}"
 ALLOW_UNSIGNED="${DROIDLM_ALLOW_UNSIGNED_RELEASE:-false}"
+RELEASE_E2E_MODE="${DROIDLM_RELEASE_E2E_MODE:-full}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -43,7 +44,7 @@ git ls-remote --exit-code --tags "$REMOTE" "$TAG" >/dev/null 2>&1 && fail "Tag a
 
 ./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease
 if [[ "$SKIP_E2E" != "true" ]]; then
-  ./gradlew connectedVoiceE2e
+  scripts/android-emulator-matrix.sh release "$RELEASE_E2E_MODE"
 fi
 
 mapfile -t RELEASE_APKS < <(python3 - <<'PY'
@@ -60,4 +61,4 @@ gh release create "$TAG" "/tmp/$ASSET" \
   --target "$BRANCH" \
   --title "DroidLM ${TAG}" \
   --latest \
-  --notes "Production release for DroidLM ${VERSION}.\n\nChannel: prod\nTag: ${TAG}\nAsset: ${ASSET}\n\nVerified with ./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease and connectedVoiceE2e."
+  --notes "Production release for DroidLM ${VERSION}.\n\nChannel: prod\nTag: ${TAG}\nAsset: ${ASSET}\n\nVerified with ./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease and scripts/android-emulator-matrix.sh release ${RELEASE_E2E_MODE}."

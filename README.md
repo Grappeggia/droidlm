@@ -372,6 +372,12 @@ adb devices
 ./gradlew connectedVoiceE2e
 ```
 
+Or run the full emulator matrix:
+
+```bash
+scripts/android-emulator-matrix.sh run all connectedVoiceE2e
+```
+
 Prepare and verify the real Google Workspace emulator environment separately:
 
 ```bash
@@ -414,6 +420,7 @@ Debug and production builds use separate package IDs and release channels:
 - Debug releases use prerelease tags like `v0.1.26-debug.15` and assets like `DroidLM-0.1.26-debug.15-debug.apk`.
 - Production releases use stable tags like `v0.1.26` and assets like `DroidLM-0.1.26-release.apk`.
 - Production signing is read only from `DROIDLM_RELEASE_STORE_FILE`, `DROIDLM_RELEASE_STORE_PASSWORD`, `DROIDLM_RELEASE_KEY_ALIAS`, and `DROIDLM_RELEASE_KEY_PASSWORD`.
+- `scripts/release-debug.sh` and `scripts/release-prod.sh` now require `scripts/android-emulator-matrix.sh release full` unless `DROIDLM_SKIP_E2E=true` is set.
 
 ## Safety and Privacy
 

@@ -6,6 +6,7 @@ ITERATION="${2:-1}"
 REMOTE="${DROIDLM_RELEASE_REMOTE:-origin}"
 BRANCH="${DROIDLM_RELEASE_BRANCH:-main}"
 SKIP_E2E="${DROIDLM_SKIP_E2E:-false}"
+RELEASE_E2E_MODE="${DROIDLM_RELEASE_E2E_MODE:-full}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -39,11 +40,11 @@ git ls-remote --exit-code --tags "$REMOTE" "$TAG" >/dev/null 2>&1 && fail "Tag a
 GRADLE_DEBUG_FLAGS=(-Pdroidlm.debugIteration="$ITERATION")
 ./gradlew "${GRADLE_DEBUG_FLAGS[@]}" testDebugUnitTest assembleDebug
 if [[ "$SKIP_E2E" != "true" ]]; then
-  ./gradlew "${GRADLE_DEBUG_FLAGS[@]}" connectedVoiceE2e
+  scripts/android-emulator-matrix.sh release "$RELEASE_E2E_MODE"
 fi
 VERIFY_COMMANDS="./gradlew -Pdroidlm.debugIteration=${ITERATION} testDebugUnitTest assembleDebug"
 if [[ "$SKIP_E2E" != "true" ]]; then
-  VERIFY_COMMANDS="$VERIFY_COMMANDS and ./gradlew -Pdroidlm.debugIteration=${ITERATION} connectedVoiceE2e"
+  VERIFY_COMMANDS="$VERIFY_COMMANDS and scripts/android-emulator-matrix.sh release ${RELEASE_E2E_MODE}"
 fi
 
 
