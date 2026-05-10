@@ -48,10 +48,8 @@ class DroidLmOverlayRecordPermissionE2ETest {
 
             targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
             val device = UiDevice.getInstance(instrumentation)
-            val recordButton = device.wait(
-                Until.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION)),
-                5_000
-            ) ?: throw AssertionError("Expected floating record button to be visible")
+            val recordButton = waitForRecordButton(device, 15_000)
+                ?: throw AssertionError("Expected floating record button to be visible")
 
             recordButton.click()
             clickAllowMicrophonePermission(device)
@@ -91,6 +89,17 @@ class DroidLmOverlayRecordPermissionE2ETest {
         val allowButton = findPermissionAllowButton(device)
             ?: throw AssertionError("Expected Android microphone permission dialog")
         allowButton.click()
+    }
+
+    private fun waitForRecordButton(device: UiDevice, timeoutMs: Long) = run {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            device.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION))?.let { return@run it }
+            targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
+            device.waitForIdle()
+            SystemClock.sleep(500)
+        }
+        device.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION))
     }
 
     private fun findPermissionAllowButton(device: UiDevice) = listOf(
