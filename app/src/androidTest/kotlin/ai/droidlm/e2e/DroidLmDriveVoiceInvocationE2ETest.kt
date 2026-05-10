@@ -13,7 +13,6 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -72,12 +71,10 @@ class DroidLmDriveVoiceInvocationE2ETest {
                 .setHeader("Content-Type", "application/json")
                 .setBody("""{"text":"DroidLM open the Google Drive App","durationMs":1320}""")
         )
-        app.settingsRepository.updateRelayBaseUrl(server.url("/").toString())
-
         val voiceSample = createVoiceSampleFile()
         assertTrue("Voice sample should be non-empty", voiceSample.length() > 1024)
 
-        val relayBaseUrl = app.settingsRepository.settings.first().relayBaseUrl
+        val relayBaseUrl = server.url("/").toString()
         val transcription = when (val result = app.relayClient.transcribe(relayBaseUrl, voiceSample, "audio/wav")) {
             is RelayCallResult.Success -> result.value.text
             is RelayCallResult.Failure -> throw AssertionError("Transcription relay failed: ${result.message}")

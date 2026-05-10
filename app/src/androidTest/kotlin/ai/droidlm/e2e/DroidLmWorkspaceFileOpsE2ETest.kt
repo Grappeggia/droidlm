@@ -16,7 +16,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -52,6 +51,7 @@ class DroidLmWorkspaceFileOpsE2ETest {
         get() = UiDevice.getInstance(instrumentation)
 
     private lateinit var server: MockWebServer
+    private lateinit var relayUrl: String
 
     @Before
     fun setUp() = runBlocking {
@@ -64,8 +64,8 @@ class DroidLmWorkspaceFileOpsE2ETest {
         enableAccessibilityServiceForEmulator()
         server = MockWebServer()
         server.start()
+        relayUrl = server.url("/").toString()
         app.executor.cancelActive()
-        app.settingsRepository.updateRelayBaseUrl(server.url("/").toString())
         app.settingsRepository.updateTranscriptionProvider(TranscriptionProvider.OPENAI_DIRECT)
         app.settingsRepository.updateAutoAcceptSafePlans(true)
         app.settingsRepository.updateRequireRiskConfirmation(false)
@@ -356,7 +356,6 @@ class DroidLmWorkspaceFileOpsE2ETest {
     private suspend fun saveOpenAiKeyToRelay() {
         val openAiKey = InstrumentationRegistry.getArguments().getString("openAiApiKey").orEmpty()
         assertTrue("OPENAI_API_KEY from .env.local must be provided to connectedWorkspaceFileOpsE2e", openAiKey.startsWith("sk-"))
-        val relayUrl = app.settingsRepository.settings.first().relayBaseUrl
         when (val result = app.relayClient.saveOpenAiKey(relayUrl, "test-setup-token", openAiKey)) {
             is RelayCallResult.Success -> assertTrue("Expected relay to accept OpenAI key setup", result.value.ok)
             is RelayCallResult.Failure -> fail("Could not save OpenAI key to mock relay: ${result.message}")

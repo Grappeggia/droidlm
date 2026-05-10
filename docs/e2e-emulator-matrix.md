@@ -19,7 +19,7 @@ This matrix intentionally covers API spread, screen density/size, performance cl
 - KVM/hardware acceleration for practical E2E runtime.
 - `ffmpeg` for audio conversion tasks.
 - `OPENAI_API_KEY` in the environment or `.env.local` only when running TTS-backed mic-injection tests such as `connectedHoverMicAudioE2e`; cached audio can avoid a fresh TTS call.
-- `gcloud` with Application Default Credentials for live GCS debug-log upload tests against a local relay: `gcloud auth application-default login`.
+- `gcloud` with Application Default Credentials only when running live GCS debug-log upload tests against a local upload endpoint: `gcloud auth application-default login`.
 
 The script installs missing SDK system images automatically when possible:
 
@@ -59,24 +59,24 @@ Run the local debug APK install/upgrade regression check on the Android 10 Lenov
 scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 ```
 
-Run debug-log upload E2E against a relay on the host. The matrix runner can map emulator `127.0.0.1:8787` to the host with `adb reverse` and export `DROIDLM_E2E_RELAY_URL` for the test:
+Run the hidden debug-log upload E2E across all supported profiles. By default, the instrumentation test overrides the built-in endpoint with an in-device mock server and verifies the app uploads without any user-visible URL setting:
+
+```bash
+scripts/android-emulator-matrix.sh run all connectedDebugLogUploadE2e
+```
+
+Run the same E2E against a deployed HTTPS Cloud Function that writes to GCS:
+
+```bash
+DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL=https://us-central1-droidlm-495821.cloudfunctions.net/droidlm-debug-log-upload \
+scripts/android-emulator-matrix.sh run all connectedDebugLogUploadE2e
+```
+
+For a local host upload endpoint, map the emulator loopback to the host with `adb reverse`:
 
 ```bash
 (cd server && DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs DROIDLM_DEBUG_LOG_PROJECT=droidlm-495821 uvicorn main:app --host 127.0.0.1 --port 8787)
-DROIDLM_E2E_ENABLE_RELAY_REVERSE=true scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
-```
-
-For a deployed HTTPS relay or Cloud Function, skip adb reverse and pass the URL directly:
-
-```bash
-DROIDLM_E2E_RELAY_URL=https://your-relay.example.com \
-scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
-```
-
-For the hosted debug-log Cloud Function deployed from `server/gcf_debug_logs/`, use the function root URL:
-
-```bash
-DROIDLM_E2E_RELAY_URL=https://us-central1-droidlm-495821.cloudfunctions.net/droidlm-debug-log-upload \
+DROIDLM_E2E_ENABLE_RELAY_REVERSE=true \
 scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
 ```
 

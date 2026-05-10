@@ -128,7 +128,6 @@ class DroidLmActionKnownIssuesE2ETest {
             )
             start()
         }
-        app.settingsRepository.updateRelayBaseUrl(server!!.url("/").toString())
         app.settingsRepository.updateCloudScreenshotAnalysisEnabled(true)
 
         executor.invokeActionForKnownIssue(

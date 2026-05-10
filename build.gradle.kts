@@ -712,15 +712,16 @@ tasks.register("connectedVoiceE2e") {
 
 tasks.register("connectedDebugLogUploadE2e") {
     group = "verification"
-    description = "Runs debug log upload E2E tests against the connected emulator."
+    description = "Runs hidden debug log upload E2E tests against the connected emulator."
     dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
 
     doLast {
         val adbPath = project.androidAdbPath()
         val instrumentationArgs = mutableMapOf("debugLogUploadE2e" to "true")
-        val relayUrl = System.getenv("DROIDLM_E2E_DEBUG_LOG_RELAY_URL")
+        val uploadUrl = System.getenv("DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL")
+            ?: System.getenv("DROIDLM_E2E_DEBUG_LOG_RELAY_URL")
             ?: System.getenv("DROIDLM_E2E_RELAY_URL")
-        relayUrl?.takeIf { it.isNotBlank() }?.let { instrumentationArgs["debugLogUploadRelayUrl"] = it }
+        uploadUrl?.takeIf { it.isNotBlank() }?.let { instrumentationArgs["debugLogUploadUrl"] = it }
         project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
         project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")

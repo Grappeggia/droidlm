@@ -237,18 +237,20 @@ stop_profile() {
 run_profile() {
   local profile="$1"
   shift
-  local name serial grpc_port relay_port relay_url
+  local name serial grpc_port relay_port relay_url debug_log_upload_url
   name="$(profile_field "$profile" 1)"
   serial="$(serial_for_profile "$profile")"
   grpc_port="$(profile_field "$profile" 3)"
   relay_port="${DROIDLM_E2E_RELAY_PORT:-8787}"
   relay_url="${DROIDLM_E2E_RELAY_URL:-}"
+  debug_log_upload_url="${DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL:-}"
   create_profile "$profile"
   boot_profile "$profile"
   if [[ -z "$relay_url" && "${DROIDLM_E2E_ENABLE_RELAY_REVERSE:-false}" == "true" ]]; then
     if "$ADB" -s "$serial" reverse "tcp:$relay_port" "tcp:$relay_port" >/dev/null 2>&1; then
       relay_url="http://127.0.0.1:$relay_port"
       log "Mapped $serial tcp:$relay_port to host; emulator relay URL: $relay_url"
+      if [[ -z "$debug_log_upload_url" ]]; then debug_log_upload_url="$relay_url"; fi
     else
       log "Warning: could not configure adb reverse for $serial tcp:$relay_port"
     fi
@@ -256,7 +258,7 @@ run_profile() {
   log "Running Gradle on $name ($serial): $*"
   (
     cd "$REPO_ROOT"
-    ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" "$GRADLEW" "$@" </dev/null
+    ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL="$debug_log_upload_url" "$GRADLEW" "$@" </dev/null
   )
 }
 
@@ -296,6 +298,7 @@ Profiles:
 Examples:
   scripts/android-emulator-matrix.sh create all
   scripts/android-emulator-matrix.sh run all connectedVoiceE2e
+  scripts/android-emulator-matrix.sh run all connectedDebugLogUploadE2e
   scripts/android-emulator-matrix.sh run droidlm_api33_budget_720p connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=ai.droidlm.e2e.DroidLmVoskOfflineE2ETest
   scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDebugInstallUpgradeE2e
 EOF

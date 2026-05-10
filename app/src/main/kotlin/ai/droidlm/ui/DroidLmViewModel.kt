@@ -1,6 +1,7 @@
 package ai.droidlm.ui
 
 import ai.droidlm.DroidLMApp
+import ai.droidlm.diagnostics.DebugLogUploadEndpoint
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
@@ -20,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -134,11 +134,6 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
-    fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
-    fun saveDebugLogUploadSettings(relayBaseUrl: String, debugLogUploadUrl: String) = viewModelScope.launch {
-        app.settingsRepository.updateRelayBaseUrl(relayBaseUrl)
-        app.settingsRepository.updateDebugLogUploadUrl(debugLogUploadUrl)
-    }
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
@@ -199,28 +194,21 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             return@launch
         }
 
-        val settings = app.settingsRepository.settings.first()
-        val relayBaseUrl = settings.relayBaseUrl
-        val debugLogUploadUrl = settings.debugLogUploadUrl
-        val usingDirectUploadUrl = debugLogUploadUrl.isNotBlank()
-        if (relayBaseUrl.isBlank() && !usingDirectUploadUrl) {
+        val uploadUrl = DebugLogUploadEndpoint.url()
+        if (uploadUrl.isBlank()) {
             app.debugLogStore.recordEvent(
                 "upload_failed",
                 mapOf("reason" to "missing_upload_url", "zipName" to file.name, "zipBytes" to file.length())
             )
             app.actionLogRepository.log(
                 ActionLogType.ERROR,
-                "Set the relay URL or debug log upload URL before uploading debug logs",
+                "Debug log upload endpoint is not configured",
                 "NO_DEBUG_LOG_UPLOAD_URL"
             )
             return@launch
         }
 
-        val result = if (usingDirectUploadUrl) {
-            app.relayClient.uploadDebugLogsToUrl(debugLogUploadUrl, file, app.packageName, appVersionName())
-        } else {
-            app.relayClient.uploadDebugLogs(relayBaseUrl, file, app.packageName, appVersionName())
-        }
+        val result = app.relayClient.uploadDebugLogsToUrl(uploadUrl, file, app.packageName, appVersionName())
         when (result) {
             is RelayCallResult.Success -> {
                 val upload = result.value
@@ -231,7 +219,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         "zipBytes" to file.length(),
                         "objectName" to upload.objectName,
                         "uploadedBytes" to upload.sizeBytes,
-                        "usedDirectUploadUrl" to usingDirectUploadUrl
+                        "uploadEndpointConfigured" to true
                     )
                 )
                 app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
@@ -244,7 +232,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         "errorCode" to result.errorCode,
                         "zipName" to file.name,
                         "zipBytes" to file.length(),
-                        "usedDirectUploadUrl" to usingDirectUploadUrl
+                        "uploadEndpointConfigured" to uploadUrl.isNotBlank()
                     )
                 )
                 app.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)

@@ -219,38 +219,20 @@ class RelayClient(
         return execute(request, ::parseVisionAnalysisJson)
     }
 
-    suspend fun uploadDebugLogs(
-        baseUrl: String,
-        zipFile: File,
-        appPackage: String,
-        appVersion: String? = null
-    ): RelayCallResult<DebugLogUploadResponse> =
-        uploadDebugLogsInternal(baseUrl, zipFile, appPackage, appVersion, appendDebugLogsPath = true)
-
     suspend fun uploadDebugLogsToUrl(
         uploadUrl: String,
         zipFile: File,
         appPackage: String,
         appVersion: String? = null
-    ): RelayCallResult<DebugLogUploadResponse> =
-        uploadDebugLogsInternal(uploadUrl, zipFile, appPackage, appVersion, appendDebugLogsPath = false)
-
-    private suspend fun uploadDebugLogsInternal(
-        uploadUrlOrBaseUrl: String,
-        zipFile: File,
-        appPackage: String,
-        appVersion: String?,
-        appendDebugLogsPath: Boolean
     ): RelayCallResult<DebugLogUploadResponse> {
-        val normalized = normalizeBaseUrl(uploadUrlOrBaseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
+        val normalized = normalizeBaseUrl(uploadUrl) ?: return RelayCallResult.Failure("Debug log upload URL is not configured", "NO_DEBUG_LOG_UPLOAD_URL")
         if (!zipFile.exists() || zipFile.length() <= 0) return RelayCallResult.Failure("Debug log bundle is empty", "EMPTY_DEBUG_LOGS")
         val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("logs", zipFile.name, zipFile.asRequestBody("application/zip".toMediaType()))
             .addFormDataPart("appPackage", appPackage)
         appVersion?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("appVersion", it) }
-        val targetUrl = if (appendDebugLogsPath) "$normalized/debug-logs" else normalized
         val request = Request.Builder()
-            .url(targetUrl)
+            .url(normalized)
             .post(bodyBuilder.build())
             .build()
         return execute(request, ::parseDebugLogUploadJson)

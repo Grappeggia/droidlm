@@ -18,8 +18,6 @@ enum class TranscriptionProvider {
 }
 
 data class DroidLmSettings(
-    val relayBaseUrl: String = "",
-    val debugLogUploadUrl: String = "",
     val openAiApiKeyConfigured: Boolean = false,
     val openAiModel: String = "gpt-5.4-nano",
     val wakePhrase: String = "DroidLM",

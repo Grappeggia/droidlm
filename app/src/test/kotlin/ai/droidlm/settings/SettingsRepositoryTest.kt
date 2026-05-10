@@ -37,12 +37,11 @@ class SettingsRepositoryTest {
         assertTrue(repository.settings.first().debugLoggingEnabled)
     }
 
-    @Test fun debugLogUploadUrlIsTrimmedAndPersisted() = runTest {
-        val repository = SettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+    @Test fun settingsDoNotExposeDebugLogUploadUrls() {
+        val fieldNames = DroidLmSettings::class.java.declaredFields.map { it.name }.toSet()
 
-        repository.updateDebugLogUploadUrl(" https://example.com/upload ")
-
-        assertEquals("https://example.com/upload", repository.settings.first().debugLogUploadUrl)
+        assertFalse(fieldNames.contains("relayBaseUrl"))
+        assertFalse(fieldNames.contains("debugLogUploadUrl"))
     }
 
     @Test fun agentLimitsAreClampedConservatively() = runTest {

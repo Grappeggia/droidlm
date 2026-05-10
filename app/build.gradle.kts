@@ -21,6 +21,14 @@ val debugIterationNumber = debugIteration?.let { value ->
     number
 }
 val debugVersionCode = baseVersionCode * 1000 + (debugIterationNumber ?: 0)
+val defaultDebugLogUploadUrl = "https://us-central1-droidlm-495821.cloudfunctions.net/droidlm-debug-log-upload"
+val debugLogUploadUrl = providers.gradleProperty("droidlm.debugLogUploadUrl")
+    .orElse(providers.environmentVariable("DROIDLM_DEBUG_LOG_UPLOAD_URL"))
+    .orElse(defaultDebugLogUploadUrl)
+
+fun buildConfigString(value: String): String = value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 val hasReleaseSigning = listOf(
     releaseStoreFile,
@@ -41,6 +49,7 @@ android {
         versionName = baseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEBUG_LOG_UPLOAD_URL", "\"${buildConfigString(debugLogUploadUrl.get().trim())}\"")
     }
 
     signingConfigs {

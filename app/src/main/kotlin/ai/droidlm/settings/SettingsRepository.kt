@@ -19,8 +19,6 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 
 class SettingsRepository(private val context: Context) {
     private object Keys {
-        val relayBaseUrl = stringPreferencesKey("relay_base_url")
-        val debugLogUploadUrl = stringPreferencesKey("debug_log_upload_url")
         val openAiApiKeyConfigured = booleanPreferencesKey("openai_api_key_configured")
         val openAiModel = stringPreferencesKey("openai_model")
         val wakePhrase = stringPreferencesKey("wake_phrase")
@@ -60,8 +58,6 @@ class SettingsRepository(private val context: Context) {
 
     val settings: Flow<DroidLmSettings> = context.settingsDataStore.data.map { preferences ->
         DroidLmSettings(
-            relayBaseUrl = preferences[Keys.relayBaseUrl].orEmpty(),
-            debugLogUploadUrl = preferences[Keys.debugLogUploadUrl].orEmpty(),
             openAiApiKeyConfigured = hasOpenAiApiKey(),
             openAiModel = preferences[Keys.openAiModel] ?: "gpt-5.4-nano",
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
@@ -102,8 +98,6 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
-    suspend fun updateRelayBaseUrl(value: String) = editString(Keys.relayBaseUrl, value.trim())
-    suspend fun updateDebugLogUploadUrl(value: String) = editString(Keys.debugLogUploadUrl, value.trim())
     suspend fun updateOpenAiModel(value: String) = editString(Keys.openAiModel, value.trim().ifBlank { "gpt-5.4-nano" })
     suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
     suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)

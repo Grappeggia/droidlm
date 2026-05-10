@@ -19,7 +19,7 @@ Defaults use OpenAI's current speech-to-text model `gpt-4o-transcribe`, plus GPT
 
 Set `DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs` and `DROIDLM_DEBUG_LOG_PROJECT=droidlm-495821` on the relay, then run the relay on Google Cloud with a service account that has bucket-scoped `storage.objects.create`. Add `storage.objects.get` only if you want the relay's admin read endpoint to work. Locally, use Application Default Credentials or `GOOGLE_APPLICATION_CREDENTIALS` pointing to a credential file outside this repository. The Android app uploads zipped debug logs to `POST /debug-logs`; admin reads are available from `GET /debug-logs/{objectName}` with the relay setup token.
 
-A Cloud Functions 2nd gen version of the upload endpoint lives in `server/gcf_debug_logs/`. Deploy it with `scripts/deploy-debug-log-upload-function.sh`, then either point DroidLM's Relay URL at the deployed function root or set the optional Debug Log Upload URL in Diagnostics.
+A Cloud Functions 2nd gen version of the upload endpoint lives in `server/gcf_debug_logs/`. Deploy it with `scripts/deploy-debug-log-upload-function.sh`. Android debug-log upload uses the hidden `BuildConfig.DEBUG_LOG_UPLOAD_URL` endpoint, which defaults to the hosted function root; override it at build time with `DROIDLM_DEBUG_LOG_UPLOAD_URL` or `-Pdroidlm.debugLogUploadUrl=...` for development builds.
 
 
 ## Endpoints

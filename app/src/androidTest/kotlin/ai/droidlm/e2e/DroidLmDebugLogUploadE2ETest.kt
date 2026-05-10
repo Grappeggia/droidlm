@@ -2,6 +2,7 @@ package ai.droidlm.e2e
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.MainActivity
+import ai.droidlm.diagnostics.DebugLogUploadEndpoint
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.ui.DroidLmViewModel
 import androidx.test.core.app.ApplicationProvider
@@ -31,7 +32,6 @@ class DroidLmDebugLogUploadE2ETest {
         get() = ApplicationProvider.getApplicationContext()
 
     private var server: MockWebServer? = null
-    private var relayUrl: String = ""
 
     @Before
     fun setUp() = runBlocking {
@@ -40,8 +40,8 @@ class DroidLmDebugLogUploadE2ETest {
             InstrumentationRegistry.getArguments().getString("debugLogUploadE2e") == "true"
         )
         val args = InstrumentationRegistry.getArguments()
-        val liveRelayUrl = args.getString("debugLogUploadRelayUrl")?.takeIf { it.isNotBlank() }
-        relayUrl = liveRelayUrl ?: MockWebServer().also { mockServer ->
+        val liveUploadUrl = args.getString("debugLogUploadUrl")?.takeIf { it.isNotBlank() }
+        val uploadUrl = liveUploadUrl ?: MockWebServer().also { mockServer ->
             mockServer.enqueue(
                 MockResponse()
                     .setResponseCode(200)
@@ -53,8 +53,9 @@ class DroidLmDebugLogUploadE2ETest {
             mockServer.start()
             server = mockServer
         }.url("/").toString()
+        DebugLogUploadEndpoint.setOverrideForTesting(uploadUrl)
         app.debugLogStore.clear()
-        app.settingsRepository.updateRelayBaseUrl(relayUrl)
+        app.settingsRepository.updateOnboardingCompletedVersion(DroidLmViewModel.ONBOARDING_VERSION)
         app.settingsRepository.updateDebugLoggingEnabled(true)
         app.speechDiagnosticsLogger.setEnabled(true)
         app.actionLogRepository.clear()
@@ -64,6 +65,7 @@ class DroidLmDebugLogUploadE2ETest {
     fun tearDown() {
         runBlocking {
             runCatching { server?.shutdown() }
+            runCatching { DebugLogUploadEndpoint.clearOverrideForTesting() }
             runCatching { app.settingsRepository.updateDebugLoggingEnabled(false) }
             runCatching { app.speechDiagnosticsLogger.setEnabled(false) }
             runCatching { app.debugLogStore.clear() }
@@ -71,7 +73,7 @@ class DroidLmDebugLogUploadE2ETest {
     }
 
     @Test
-    fun uploadLogsSendsBundleToRelayDebugLogsEndpoint() = runBlocking {
+    fun uploadLogsUsesHiddenConfiguredEndpoint() = runBlocking {
         app.debugLogStore.retainText(
             category = "e2e",
             source = "debug-log-upload",
@@ -83,8 +85,8 @@ class DroidLmDebugLogUploadE2ETest {
 
         server?.let { mockServer ->
             val request = mockServer.takeRequest(10, TimeUnit.SECONDS)
-            assertNotNull("Expected the app to upload debug logs to the relay", request)
-            assertEquals("/debug-logs", request!!.path?.substringBefore('?'))
+            assertNotNull("Expected the app to upload debug logs to the hidden endpoint", request)
+            assertEquals("/", request!!.path?.substringBefore('?'))
             assertEquals("POST", request.method)
             assertTrue(
                 "Upload should be multipart/form-data",
