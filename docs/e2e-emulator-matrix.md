@@ -62,14 +62,21 @@ scripts/android-emulator-matrix.sh run droidlm_api29_lenovo_tb8505f connectedDeb
 Run debug-log upload E2E against a relay on the host. The matrix runner can map emulator `127.0.0.1:8787` to the host with `adb reverse` and export `DROIDLM_E2E_RELAY_URL` for the test:
 
 ```bash
-(cd server && DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs uvicorn main:app --host 127.0.0.1 --port 8787)
+(cd server && DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs DROIDLM_DEBUG_LOG_PROJECT=droidlm-495821 uvicorn main:app --host 127.0.0.1 --port 8787)
 DROIDLM_E2E_ENABLE_RELAY_REVERSE=true scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
 ```
 
-For a deployed HTTPS relay, skip adb reverse and pass the URL directly:
+For a deployed HTTPS relay or Cloud Function, skip adb reverse and pass the URL directly:
 
 ```bash
 DROIDLM_E2E_RELAY_URL=https://your-relay.example.com \
+scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
+```
+
+For the hosted debug-log Cloud Function deployed from `server/gcf_debug_logs/`, use the function root URL:
+
+```bash
+DROIDLM_E2E_RELAY_URL=https://us-central1-droidlm-495821.cloudfunctions.net/droidlm-debug-log-upload \
 scripts/android-emulator-matrix.sh run droidlm_api36_latest connectedDebugLogUploadE2e
 ```
 

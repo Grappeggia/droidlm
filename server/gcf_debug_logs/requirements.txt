@@ -1,0 +1,3 @@
+functions-framework
+python-dotenv
+google-cloud-storage

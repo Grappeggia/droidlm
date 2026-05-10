@@ -135,6 +135,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun confirmPending() = app.executor.respondToConfirmation(true)
     fun rejectPending() = app.executor.respondToConfirmation(false)
     fun updateRelayBaseUrl(value: String) = viewModelScope.launch { app.settingsRepository.updateRelayBaseUrl(value) }
+    fun saveDebugLogUploadSettings(relayBaseUrl: String, debugLogUploadUrl: String) = viewModelScope.launch {
+        app.settingsRepository.updateRelayBaseUrl(relayBaseUrl)
+        app.settingsRepository.updateDebugLogUploadUrl(debugLogUploadUrl)
+    }
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
@@ -195,26 +199,53 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             return@launch
         }
 
-        val relayBaseUrl = app.settingsRepository.settings.first().relayBaseUrl
-        if (relayBaseUrl.isBlank()) {
-            app.debugLogStore.recordEvent("upload_failed", mapOf("reason" to "missing_relay_url", "zipName" to file.name, "zipBytes" to file.length()))
-            app.actionLogRepository.log(ActionLogType.ERROR, "Set the relay URL before uploading debug logs", "NO_RELAY_URL")
+        val settings = app.settingsRepository.settings.first()
+        val relayBaseUrl = settings.relayBaseUrl
+        val debugLogUploadUrl = settings.debugLogUploadUrl
+        val usingDirectUploadUrl = debugLogUploadUrl.isNotBlank()
+        if (relayBaseUrl.isBlank() && !usingDirectUploadUrl) {
+            app.debugLogStore.recordEvent(
+                "upload_failed",
+                mapOf("reason" to "missing_upload_url", "zipName" to file.name, "zipBytes" to file.length())
+            )
+            app.actionLogRepository.log(
+                ActionLogType.ERROR,
+                "Set the relay URL or debug log upload URL before uploading debug logs",
+                "NO_DEBUG_LOG_UPLOAD_URL"
+            )
             return@launch
         }
 
-        when (val result = app.relayClient.uploadDebugLogs(relayBaseUrl, file, app.packageName, appVersionName())) {
+        val result = if (usingDirectUploadUrl) {
+            app.relayClient.uploadDebugLogsToUrl(debugLogUploadUrl, file, app.packageName, appVersionName())
+        } else {
+            app.relayClient.uploadDebugLogs(relayBaseUrl, file, app.packageName, appVersionName())
+        }
+        when (result) {
             is RelayCallResult.Success -> {
                 val upload = result.value
                 app.debugLogStore.recordEvent(
                     "upload_succeeded",
-                    mapOf("zipName" to file.name, "zipBytes" to file.length(), "objectName" to upload.objectName, "uploadedBytes" to upload.sizeBytes)
+                    mapOf(
+                        "zipName" to file.name,
+                        "zipBytes" to file.length(),
+                        "objectName" to upload.objectName,
+                        "uploadedBytes" to upload.sizeBytes,
+                        "usedDirectUploadUrl" to usingDirectUploadUrl
+                    )
                 )
                 app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
             }
             is RelayCallResult.Failure -> {
                 app.debugLogStore.recordEvent(
                     "upload_failed",
-                    mapOf("message" to result.message, "errorCode" to result.errorCode, "zipName" to file.name, "zipBytes" to file.length())
+                    mapOf(
+                        "message" to result.message,
+                        "errorCode" to result.errorCode,
+                        "zipName" to file.name,
+                        "zipBytes" to file.length(),
+                        "usedDirectUploadUrl" to usingDirectUploadUrl
+                    )
                 )
                 app.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)
             }

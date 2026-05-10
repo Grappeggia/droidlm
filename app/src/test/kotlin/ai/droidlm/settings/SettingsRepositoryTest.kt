@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,14 @@ class SettingsRepositoryTest {
 
         repository.updateDebugLoggingEnabled(true)
         assertTrue(repository.settings.first().debugLoggingEnabled)
+    }
+
+    @Test fun debugLogUploadUrlIsTrimmedAndPersisted() = runTest {
+        val repository = SettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+
+        repository.updateDebugLogUploadUrl(" https://example.com/upload ")
+
+        assertEquals("https://example.com/upload", repository.settings.first().debugLogUploadUrl)
     }
 
     @Test fun agentLimitsAreClampedConservatively() = runTest {

@@ -245,6 +245,7 @@ class SpeechDiagnosticsLogger(
 
     private fun settingsFields(settings: DroidLmSettings): Map<String, Any?> = mapOf(
         "relayBaseUrlConfigured" to settings.relayBaseUrl.isNotBlank(),
+        "debugLogUploadUrlConfigured" to settings.debugLogUploadUrl.isNotBlank(),
         "openAiApiKeyConfigured" to settings.openAiApiKeyConfigured,
         "openAiModel" to settings.openAiModel,
         "wakePhraseLength" to settings.wakePhrase.length,

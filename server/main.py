@@ -26,6 +26,13 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_DEBUG_LOG_BYTES = int(os.getenv("DROIDLM_MAX_DEBUG_LOG_BYTES", str(100 * 1024 * 1024)))
 DEBUG_LOG_BUCKET = os.getenv("DROIDLM_DEBUG_LOG_BUCKET", "droidlm-debug-logs").strip()
 DEBUG_LOG_PREFIX = os.getenv("DROIDLM_DEBUG_LOG_PREFIX", "debug-logs").strip("/")
+DEBUG_LOG_PROJECT = (
+    os.getenv("DROIDLM_DEBUG_LOG_PROJECT")
+    or os.getenv("GOOGLE_CLOUD_PROJECT")
+    or os.getenv("GCLOUD_PROJECT")
+    or os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+)
+
 
 SECRET_DIR = Path(os.getenv("DROIDLM_SECRET_DIR", ".secrets"))
 OPENAI_KEY_FILE = SECRET_DIR / "openai_key"
@@ -401,7 +408,8 @@ class GcsDebugLogStore:
 
         self.bucket_name = bucket_name
         self.prefix = prefix.strip("/")
-        self._bucket = storage.Client().bucket(bucket_name)
+        client = storage.Client(project=DEBUG_LOG_PROJECT) if DEBUG_LOG_PROJECT else storage.Client()
+        self._bucket = client.bucket(bucket_name)
 
     def object_name_for(self, filename: Optional[str]) -> str:
         now = datetime.now(timezone.utc)

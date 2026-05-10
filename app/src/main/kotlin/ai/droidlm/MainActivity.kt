@@ -794,6 +794,7 @@ private fun SettingsCard(
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
     var relayBaseUrlDraft by remember(settings.relayBaseUrl) { mutableStateOf(settings.relayBaseUrl) }
+    var debugLogUploadUrlDraft by remember(settings.debugLogUploadUrl) { mutableStateOf(settings.debugLogUploadUrl) }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
@@ -808,7 +809,7 @@ private fun SettingsCard(
         color = DroidLmColors.TextMuted
     )
     Text(
-        "Cloud upload uses the DroidLM relay URL. The relay writes the zip to your private GCS bucket.",
+        "Cloud upload uses the Debug Log Upload URL when set, otherwise Relay URL + /debug-logs. The destination still writes to your private GCS bucket.",
         color = DroidLmColors.TextMuted
     )
     OutlinedTextField(
@@ -818,8 +819,17 @@ private fun SettingsCard(
         label = { Text("Relay URL") },
         singleLine = true
     )
+    OutlinedTextField(
+        value = debugLogUploadUrlDraft,
+        onValueChange = { debugLogUploadUrlDraft = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Debug Log Upload URL (optional)") },
+        singleLine = true
+    )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { viewModel.updateRelayBaseUrl(relayBaseUrlDraft) }) { Text("Save Relay URL") }
+        OutlinedButton(
+            onClick = { viewModel.saveDebugLogUploadSettings(relayBaseUrlDraft, debugLogUploadUrlDraft) }
+        ) { Text("Save URLs") }
         OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Upload") }
         OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
         OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }

@@ -54,6 +54,24 @@ class RelayClientTest {
         }
     }
 
+    @Test fun debugLogUploadCanPostToDirectFunctionUrl() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/bundle.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/bundle.zip","sizeBytes":3,"contentType":"application/zip"}"""))
+            server.start()
+            val bundle = File.createTempFile("droidlm-debug", ".zip")
+            try {
+                bundle.writeBytes(byteArrayOf(1, 2, 3))
+                val directUrl = server.url("/upload-debug-logs").toString()
+                val result = RelayClient().uploadDebugLogsToUrl(directUrl, bundle, "ai.droidlm.debug", "0.1-debug")
+                if (result !is RelayCallResult.Success) error("Expected upload success")
+                val request = server.takeRequest()
+                assertEquals("/upload-debug-logs", request.path)
+            } finally {
+                bundle.delete()
+            }
+        }
+    }
+
     @Test fun invalidJsonError() {
         val result = runCatching { RelayClient().parseTranscriptionJson("not-json") }
         assertTrue(result.isFailure)
