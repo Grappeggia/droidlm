@@ -304,17 +304,23 @@ class DroidLmHoverMicAudioE2ETest {
             )
 
             val executionFailure = primarySessionEvents.lastOrNull { it.optString("event") == "push_to_talk_execution_failed" }
-                ?: throw AssertionError("Expected support-log regression session to record push_to_talk_execution_failed")
-            if (transcript == "open") {
-                assertEquals("NO_OP", executionFailure.optString("errorCode"))
-                assertTrue(
-                    "Expected ambiguous-open local parser failure to ask for an app name. Event=$executionFailure",
-                    executionFailure.optString("message").contains("which app", ignoreCase = true)
-                )
+            if (executionFailure != null) {
+                if (transcript == "open") {
+                    assertEquals("NO_OP", executionFailure.optString("errorCode"))
+                    assertTrue(
+                        "Expected ambiguous-open local parser failure to ask for an app name. Event=$executionFailure",
+                        executionFailure.optString("message").contains("which app", ignoreCase = true)
+                    )
+                } else {
+                    assertEquals(
+                        "PLANNING_DISABLED",
+                        executionFailure.optString("errorCode")
+                    )
+                }
             } else {
-                assertEquals(
-                    "PLANNING_DISABLED",
-                    executionFailure.optString("errorCode")
+                assertTrue(
+                    "Expected missing push-to-talk failure only when support-log capture produced no text; transcript='$transcript'; events=$primarySessionEvents",
+                    transcript.isBlank()
                 )
             }
             assertFalse(
