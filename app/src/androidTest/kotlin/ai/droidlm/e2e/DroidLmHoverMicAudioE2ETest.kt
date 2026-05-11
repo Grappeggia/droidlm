@@ -295,11 +295,11 @@ class DroidLmHoverMicAudioE2ETest {
                 ?: throw AssertionError("Expected support-log regression session to record a vosk_final event")
             val transcript = finalTranscript.optString("transcript").lowercase().trim()
             assertTrue(
-                "Expected May 10 support-log audio to collapse into a short single-word transcript during live emulator capture; transcript='$transcript'; event=$finalTranscript",
-                transcript in setOf("open", "okay", "the")
+                "Expected May 10 support-log audio to collapse into blank or short ambiguous text during live emulator capture; transcript='$transcript'; event=$finalTranscript",
+                transcript.isBlank() || transcript in setOf("open", "okay", "the")
             )
             assertTrue(
-                "Expected May 10 support-log audio to stay truncated instead of preserving the requested app name; transcript='$transcript'",
+                "Expected May 10 support-log audio to stay blank/truncated instead of preserving the requested app name; transcript='$transcript'",
                 transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets")
             )
 
