@@ -147,7 +147,7 @@ class DroidLmHoverMicAudioE2ETest {
 
             val events = readDiagnosticEvents()
             val primarySessionId = events.lastOrNull { event ->
-                event.optString("event") in setOf("vosk_final", "push_to_talk_planning_failed", "push_to_talk_failed")
+                event.optString("event") in setOf("vosk_final", "push_to_talk_execution_failed", "push_to_talk_failed")
             }?.optString("sessionId")
                 ?: throw AssertionError("Expected support-log regression run to record a completed speech session")
             val primarySessionEvents = events.filter { event -> event.optString("sessionId") == primarySessionId }
@@ -179,18 +179,18 @@ class DroidLmHoverMicAudioE2ETest {
                 transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets")
             )
 
-            val planningFailure = primarySessionEvents.lastOrNull { it.optString("event") == "push_to_talk_planning_failed" }
-                ?: throw AssertionError("Expected support-log regression session to record push_to_talk_planning_failed")
+            val executionFailure = primarySessionEvents.lastOrNull { it.optString("event") == "push_to_talk_execution_failed" }
+                ?: throw AssertionError("Expected support-log regression session to record push_to_talk_execution_failed")
             if (transcript == "open") {
-                assertEquals("AMBIGUOUS_OPEN_APP", planningFailure.optString("errorCode"))
+                assertEquals("NO_OP", executionFailure.optString("errorCode"))
                 assertTrue(
-                    "Expected ambiguous-open planner failure to suggest the same Google Sheets wording seen in the user report. Event=$planningFailure",
-                    planningFailure.optString("message").contains("open Google Sheets")
+                    "Expected ambiguous-open local parser failure to ask for an app name. Event=$executionFailure",
+                    executionFailure.optString("message").contains("which app", ignoreCase = true)
                 )
             } else {
                 assertEquals(
-                    "OPENAI_API_KEY_MISSING",
-                    planningFailure.optString("errorCode")
+                    "PLANNING_DISABLED",
+                    executionFailure.optString("errorCode")
                 )
             }
             assertFalse(

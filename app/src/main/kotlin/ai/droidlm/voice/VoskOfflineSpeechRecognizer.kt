@@ -88,6 +88,61 @@ open class VoskOfflineSpeechRecognizer(
         return true
     }
 
+    open suspend fun preloadModel(languageTag: String = Locale.getDefault().toLanguageTag(), source: String = "app_start"): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsLanguage(languageTag)) {
+            diagnostics.record(null, "vosk_preload_skipped", mapOf("language" to languageTag, "source" to source, "reason" to "unsupported_language"))
+            return@withContext false
+        }
+        val cachedBefore = isModelCached()
+        val markerExistsBefore = modelReadyMarkerFile().isFile
+        val startedAt = System.currentTimeMillis()
+        diagnostics.record(
+            null,
+            "vosk_preload_started",
+            mapOf(
+                "language" to languageTag,
+                "source" to source,
+                "assetModel" to ASSET_MODEL_NAME,
+                "modelCachedBefore" to cachedBefore,
+                "modelReadyMarkerExistsBefore" to markerExistsBefore,
+                "coldStart" to !cachedBefore
+            )
+        )
+        runCatching { loadModel() }
+            .onSuccess {
+                diagnostics.record(
+                    null,
+                    "vosk_preload_succeeded",
+                    mapOf(
+                        "language" to languageTag,
+                        "source" to source,
+                        "assetModel" to ASSET_MODEL_NAME,
+                        "modelCachedBefore" to cachedBefore,
+                        "modelReadyMarkerExistsBefore" to markerExistsBefore,
+                        "coldStart" to !cachedBefore,
+                        "durationMs" to (System.currentTimeMillis() - startedAt)
+                    )
+                )
+            }
+            .onFailure { error ->
+                diagnostics.record(
+                    null,
+                    "vosk_preload_failed",
+                    mapOf(
+                        "language" to languageTag,
+                        "source" to source,
+                        "assetModel" to ASSET_MODEL_NAME,
+                        "modelCachedBefore" to cachedBefore,
+                        "modelReadyMarkerExistsBefore" to markerExistsBefore,
+                        "durationMs" to (System.currentTimeMillis() - startedAt),
+                        "errorClass" to error::class.java.name,
+                        "message" to error.message
+                    )
+                )
+            }
+            .isSuccess
+    }
+
     open suspend fun recognizeCommand(
         languageTag: String,
         maxDurationMs: Long,

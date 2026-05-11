@@ -139,11 +139,11 @@ class WakeWordForegroundService : Service() {
                     "push_to_talk_transcript_ready",
                     mapOf("transcriptLength" to transcript.length, "transcript" to transcript.take(160))
                 )
-                app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_planning_started")
-                val result = app.executor.planTranscript(transcript, sessionId)
+                app.speechDiagnosticsLogger.record(sessionId, "push_to_talk_execution_started")
+                val result = app.executor.executeTranscript(transcript, sessionId)
                 app.speechDiagnosticsLogger.record(
                     sessionId,
-                    if (result.success) "push_to_talk_planning_succeeded" else "push_to_talk_planning_failed",
+                    if (result.success) "push_to_talk_execution_succeeded" else "push_to_talk_execution_failed",
                     serviceLifecycleFields(mapOf("message" to result.message, "errorCode" to result.errorCode))
                 )
             }.onFailure { error ->

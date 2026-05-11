@@ -109,31 +109,31 @@ class DroidLmExecutor(
     private val agentVerifier = AgentVerifier()
     private val agentRecoveryPolicy = AgentRecoveryPolicy()
 
-    suspend fun executeTranscript(transcript: String): ActionResult {
+    suspend fun executeTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
-        debugEvent(null, "manual_execute_started", mapOf("transcriptLength" to stripped.length))
+        debugEvent(diagnosticSessionId, "manual_execute_started", mapOf("transcriptLength" to stripped.length, "hasSessionId" to (diagnosticSessionId != null)))
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
         promptHistoryRepository.record(stripped, "manual_command")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val settings = settingsRepository.settings.first()
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val action = parser.parse(stripped, packages)
-        debugEvent(null, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
+        debugEvent(diagnosticSessionId, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
         _uiState.value = _uiState.value.copy(parsedAction = ActionUiFormatter.full(action))
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
 
         val state = runCatching { portalController.getState() }.getOrNull()
         val safety = safetyClassifier.classify(stripped, action, state, settings.sensitiveAppScreenshotDenylist)
-        recordSafetyDecision(null, "manual_command", safety, settings.requireRiskConfirmation)
+        recordSafetyDecision(diagnosticSessionId, "manual_command", safety, settings.requireRiskConfirmation)
         if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
-            val confirmed = requestConfirmation(stripped, action, safety.reason ?: "This action is sensitive", null)
+            val confirmed = requestConfirmation(stripped, action, safety.reason ?: "This action is sensitive", diagnosticSessionId)
             if (!confirmed) return finish(ActionResult.fail("Command cancelled because confirmation was not accepted", "CONFIRMATION_REJECTED"))
         }
 
         return when (action) {
-            is DroidLmAction.NeedLlmPlanning -> handlePlanning(stripped)
-            else -> executeAction(action, stripped)
+            is DroidLmAction.NeedLlmPlanning -> handlePlanning(stripped, diagnosticSessionId)
+            else -> executeAction(action, stripped, diagnosticSessionId = diagnosticSessionId)
         }
     }
 
@@ -404,7 +404,7 @@ class DroidLmExecutor(
         _pendingConfirmation.value = null
     }
 
-    private suspend fun handlePlanning(goal: String): ActionResult {
+    private suspend fun handlePlanning(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
         return when (settings.executionMode) {
             ExecutionMode.LOCAL_RULE_FIRST -> finish(
@@ -414,7 +414,7 @@ class DroidLmExecutor(
                 )
             )
             ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps)
-            ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, null)
+            ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, diagnosticSessionId)
             ExecutionMode.MOBILERUN_CLOUD_TASK -> runMobilerunTask(goal)
         }
     }
@@ -764,7 +764,7 @@ class DroidLmExecutor(
         _uiState.value = _uiState.value.copy(status = "Executing ${ActionUiFormatter.compact(action)}")
         val result = when (action) {
             is DroidLmAction.NoOp -> ActionResult.fail(action.message, "NO_OP")
-            is DroidLmAction.NeedLlmPlanning -> handlePlanning(transcript)
+            is DroidLmAction.NeedLlmPlanning -> handlePlanning(transcript, diagnosticSessionId)
             is DroidLmAction.AskConfirmation -> {
                 val confirmed = requestConfirmation(transcript, action, action.reason, diagnosticSessionId)
                 if (confirmed) ActionResult.ok("Confirmation accepted") else ActionResult.fail("Confirmation rejected", "CONFIRMATION_REJECTED")

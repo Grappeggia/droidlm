@@ -28,8 +28,18 @@ import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import android.app.Application
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import java.util.Locale
 
 class DroidLMApp : Application() {
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     lateinit var settingsRepository: SettingsRepository
         private set
     lateinit var actionLogRepository: ActionLogRepository
@@ -117,6 +127,28 @@ class DroidLMApp : Application() {
         voskOfflineSpeechRecognizer = VoskOfflineSpeechRecognizer(this, actionLogRepository, speechDiagnosticsLogger, debugLogStore)
         speechRecognitionController = SpeechRecognitionController(this, actionLogRepository, speechDiagnosticsLogger, voskOfflineSpeechRecognizer)
         manualWakeWordEngine = ManualWakeWordEngine()
+        observeOfflineSpeechPreload()
+    }
+
+    override fun onTerminate() {
+        appScope.cancel()
+        super.onTerminate()
+    }
+
+    private fun observeOfflineSpeechPreload() {
+        appScope.launch {
+            settingsRepository.settings
+                .map { it.preferOfflineSpeechRecognition }
+                .distinctUntilChanged()
+                .collect { preferOffline ->
+                    if (preferOffline) {
+                        voskOfflineSpeechRecognizer.preloadModel(
+                            languageTag = Locale.getDefault().toLanguageTag(),
+                            source = "settings_prefer_offline"
+                        )
+                    }
+                }
+        }
     }
 
     companion object {
