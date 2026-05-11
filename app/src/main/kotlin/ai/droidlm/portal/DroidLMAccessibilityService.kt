@@ -1,5 +1,5 @@
 package ai.droidlm.portal
-import ai.droidlm.DroidLMApp
+import ai.droidlm.di.appGraph
 
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.ImeActionType
@@ -21,17 +21,18 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 class DroidLMAccessibilityService : AccessibilityService() {
+    private val deps by lazy { applicationContext.appGraph().accessibilityServiceDeps() }
     private val nodeCache = LinkedHashMap<String, AccessibilityNodeInfo>()
     private var accessibilityEventCount = 0L
     private var lastAccessibilityEventLogAtMs = 0L
+    private var accessibilityRegistrationToken: Long? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        currentService.set(this)
+        accessibilityRegistrationToken = deps.accessibilityRuntime.attach(DroidLMAccessibilityGateway(this))
         recordLifecycle("accessibility_service_connected", mapOf("sdk" to Build.VERSION.SDK_INT))
     }
 
@@ -58,14 +59,15 @@ class DroidLMAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
-        if (currentService.get() === this) currentService.set(null)
+        accessibilityRegistrationToken?.let { deps.accessibilityRuntime.detach(it) }
+        accessibilityRegistrationToken = null
         recordLifecycle("accessibility_service_destroyed", mapOf("cachedNodeCount" to nodeCache.size, "eventCount" to accessibilityEventCount))
         nodeCache.clear()
         super.onDestroy()
     }
 
     private fun recordLifecycle(event: String, fields: Map<String, Any?> = emptyMap()) {
-        runCatching { DroidLMApp.from(this).speechDiagnosticsLogger.record(null, event, fields) }
+        runCatching { deps.speechDiagnosticsLogger.record(null, event, fields) }
     }
 
     fun captureState(includeAllWindows: Boolean): PortalState {
@@ -872,11 +874,9 @@ class DroidLMAccessibilityService : AccessibilityService() {
         private val SCROLL_LEFT_ACTION_ID = lookupActionId("ACTION_SCROLL_LEFT")
         private val SCROLL_RIGHT_ACTION_ID = lookupActionId("ACTION_SCROLL_RIGHT")
         private val SET_PROGRESS_ACTION_ID = lookupActionId("ACTION_SET_PROGRESS")
-        private val currentService = AtomicReference<DroidLMAccessibilityService?>()
         private fun lookupActionId(fieldName: String): Int? = runCatching {
             val action = AccessibilityNodeInfo.AccessibilityAction::class.java.getField(fieldName).get(null)
             (action as AccessibilityNodeInfo.AccessibilityAction).id
         }.getOrNull()
-        fun current(): DroidLMAccessibilityService? = currentService.get()
     }
 }

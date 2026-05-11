@@ -81,7 +81,7 @@ class DroidLmDebugLogUploadE2ETest {
         )
         app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Debug log upload E2E marker")
 
-        DroidLmViewModel(app).shareDebugLogs("E2E issue description").join()
+        DroidLmViewModel(app, app.graph.droidLmViewModelDeps()).shareDebugLogs("E2E issue description").join()
 
         server?.let { mockServer ->
             val request = mockServer.takeRequest(10, TimeUnit.SECONDS)

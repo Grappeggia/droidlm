@@ -9,6 +9,13 @@
 - Keep the settings experience simple, intuitive, and uncluttered.
 - Favor sensible defaults and contextual flows over exposing advanced planning or floating-control tuning in the main settings UI.
 
+## Architecture Guardrails
+
+- Keep `DroidLMApp` as the composition root only. Add app-wide dependencies to `AppGraph`/`RealAppGraph`; do not add new public singleton-style fields or helper lookups on `DroidLMApp`.
+- Android entry points must depend on typed dependency bundles or factories from `appGraph()`. Do not reintroduce `DroidLMApp.from(...)`, `(application as DroidLMApp)`, or broad app-object lookups in activities, services, receivers, or accessibility components.
+- Service lifecycle state must live in app-scoped runtime stores such as `AccessibilityRuntime`, `OverlayRuntime`, and `ListeningRuntime`. Do not publish mutable lifecycle state from companion objects, `object`s, or static `Service` references.
+- New execution behavior should go into focused collaborators under `execution/`; do not grow `DroidLmExecutor` with unrelated wiring, lifecycle, or UI-state responsibilities.
+
 ## Build Verification
 
 - Build APKs locally before publishing.

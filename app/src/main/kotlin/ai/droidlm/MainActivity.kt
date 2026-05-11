@@ -1,5 +1,6 @@
 package ai.droidlm
 
+import ai.droidlm.di.appGraph
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.intent.ActionUiFormatter
@@ -10,6 +11,7 @@ import ai.droidlm.update.DebugUpdateUiState
 import ai.droidlm.update.compactDebugVersionName
 
 import ai.droidlm.ui.DroidLmViewModel
+import ai.droidlm.ui.DroidLmViewModelFactory
 import ai.droidlm.voice.SpeechRecognitionUiState
 import android.Manifest
 import android.content.Context
@@ -73,7 +75,10 @@ import java.util.Locale
 private const val MAX_DEBUG_ISSUE_DESCRIPTION_CHARS = 4_000
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: DroidLmViewModel by viewModels()
+    private val mainActivityDeps by lazy { applicationContext.appGraph().mainActivityDeps() }
+    private val viewModel: DroidLmViewModel by viewModels {
+        DroidLmViewModelFactory(application, mainActivityDeps.viewModelDeps)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,7 +104,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun recordLifecycle(event: String, fields: Map<String, Any?> = emptyMap()) {
-        runCatching { DroidLMApp.from(this).speechDiagnosticsLogger.record(null, event, fields) }
+        runCatching { mainActivityDeps.speechDiagnosticsLogger.record(null, event, fields) }
     }
 }
 

@@ -7,9 +7,11 @@ import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.ImeActionType
 import ai.droidlm.intent.MenuType
 import ai.droidlm.intent.ScrollDirection
+import ai.droidlm.ocr.CloudScreenshotAnalysisEndpoint
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.ocr.OcrResult
 import ai.droidlm.ocr.OcrSource
+import ai.droidlm.ocr.RelayCloudScreenshotAnalyzer
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalController
@@ -56,13 +58,16 @@ class DroidLmActionKnownIssuesE2ETest {
             "Known issue probes run only via `./gradlew connectedActionKnownIssuesE2e`.",
             InstrumentationRegistry.getArguments().getString("actionKnownIssuesE2e") == "true"
         )
+        CloudScreenshotAnalysisEndpoint.clearOverrideForTesting()
         app.settingsRepository.updateRequireRiskConfirmation(false)
         app.settingsRepository.updateAutoAcceptSafePlans(true)
+        app.settingsRepository.updateCloudScreenshotAnalysisEnabled(false)
     }
 
     @After
     fun tearDown() {
         runCatching { server?.shutdown() }
+        runCatching { CloudScreenshotAnalysisEndpoint.clearOverrideForTesting() }
         server = null
     }
 
@@ -118,7 +123,6 @@ class DroidLmActionKnownIssuesE2ETest {
     @Test
     fun analyzeScreenshotUsesCloudAnalysisEndpointWhenConfigured() = runBlocking {
         val portal = FakePortalController(firstText = "visible text", secondText = "other text")
-        val executor = executorFor(portal, ocrEngine = FakeOcrEngine())
         server = MockWebServer().apply {
             enqueue(
                 MockResponse()
@@ -128,6 +132,17 @@ class DroidLmActionKnownIssuesE2ETest {
             )
             start()
         }
+        CloudScreenshotAnalysisEndpoint.setOverrideForTesting(server!!.url("/").toString())
+        val executor = executorFor(
+            portal,
+            ocrEngine = FakeOcrEngine(),
+            cloudScreenshotAnalyzer = RelayCloudScreenshotAnalyzer(
+                context = app,
+                relayClient = app.relayClient,
+                endpointProvider = { CloudScreenshotAnalysisEndpoint.url() },
+                debugLogStore = app.debugLogStore
+            )
+        )
         app.settingsRepository.updateCloudScreenshotAnalysisEnabled(true)
 
         executor.invokeActionForKnownIssue(
@@ -144,7 +159,8 @@ class DroidLmActionKnownIssuesE2ETest {
 
     private fun executorFor(
         portal: FakePortalController,
-        ocrEngine: OcrEngine = app.ocrEngine
+        ocrEngine: OcrEngine = app.ocrEngine,
+        cloudScreenshotAnalyzer: ai.droidlm.ocr.CloudScreenshotAnalyzer? = null
     ): DroidLmExecutor {
         val textEditingController = TextEditingController(
             portalController = portal,
@@ -167,6 +183,7 @@ class DroidLmActionKnownIssuesE2ETest {
             promptHistoryRepository = app.promptHistoryRepository,
             diagnostics = app.speechDiagnosticsLogger,
             debugLogStore = app.debugLogStore,
+            cloudScreenshotAnalyzer = cloudScreenshotAnalyzer,
             mobilerunCloudClient = app.mobilerunCloudClient
         )
     }
@@ -289,7 +306,11 @@ class DroidLmActionKnownIssuesE2ETest {
         override suspend fun openRecents(): ActionResult = ActionResult.ok("Opened recents")
         override suspend fun openUrl(url: String): ActionResult = ActionResult.ok("Opened $url")
         override suspend fun openDeepLink(uri: String): ActionResult = ActionResult.ok("Opened $uri")
-        override suspend fun takeScreenshot(): ScreenshotResult = ScreenshotResult(success = false, message = "Fake screenshot unavailable")
+        override suspend fun takeScreenshot(): ScreenshotResult = ScreenshotResult(
+            success = true,
+            bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888),
+            message = "Fake screenshot"
+        )
         override suspend fun findFocusedEditableNode(): EditableTarget? = editableTarget(focusedNodeId)
         override suspend fun findEditableNodes(): List<EditableTarget> = fields.keys.mapNotNull(::editableTarget)
         override suspend fun getNodeText(nodeId: String): String? = fields[nodeId]?.text

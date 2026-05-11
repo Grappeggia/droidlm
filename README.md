@@ -90,6 +90,13 @@ DroidLM supports several execution modes, all mediated by the same local validat
 - `DroidLmExecutor` as the central orchestration engine.
 - `CommandRecorder`, `VoskOfflineSpeechRecognizer`, and `SpeechRecognitionController` for voice input.
 
+Architecture guardrails:
+
+- `DroidLMApp` is the composition root only; app-wide wiring lives in `AppGraph`/`RealAppGraph`.
+- Android entry points depend on typed dependency bundles or factories from `appGraph()`, not raw `DroidLMApp` lookups.
+- Service lifecycle state is published through app-scoped runtime stores such as `AccessibilityRuntime`, `OverlayRuntime`, and `ListeningRuntime`, not companion-object `MutableStateFlow`s or static `Service` references.
+- New execution behavior should be added as focused collaborators under `execution/` instead of expanding `DroidLmExecutor` with more unrelated responsibilities.
+
 ### UI Layer
 
 `MainActivity` is a Jetpack Compose Material 3 UI. It provides:

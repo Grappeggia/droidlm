@@ -23,6 +23,7 @@ import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.ocr.CloudScreenshotAnalyzer
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.AppPackage
@@ -89,6 +90,7 @@ class DroidLmExecutor(
     private val promptHistoryRepository: PromptHistoryRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
     private val debugLogStore: DebugLogStore? = null,
+    private val cloudScreenshotAnalyzer: CloudScreenshotAnalyzer? = null,
     private val mobilerunCloudClient: MobilerunCloudClient,
     private val parser: IntentParser = IntentParser()
 ) {
@@ -813,7 +815,7 @@ class DroidLmExecutor(
             is DroidLmAction.PickPhoto -> portalController.tapText(action.photoLabel, role = "item")
             is DroidLmAction.ShareToApp -> shareToApp(action)
             is DroidLmAction.PermissionDecision -> portalController.dialogAction(role = if (action.allow) DialogButtonRole.POSITIVE else DialogButtonRole.NEGATIVE)
-            is DroidLmAction.TypeText -> textEditingController.insertTextAtSelection(action.text)
+            is DroidLmAction.TypeText -> portalController.typeText(action.text, clear = action.clear)
             DroidLmAction.TakeScreenshot -> {
                 val screenshot = portalController.takeScreenshot()
                 debugEvent(diagnosticSessionId, "screenshot_capture_result", mapOf("success" to screenshot.success, "hasBitmap" to (screenshot.bitmap != null), "errorCode" to screenshot.errorCode, "message" to screenshot.message))
@@ -822,10 +824,7 @@ class DroidLmExecutor(
                 }
                 if (screenshot.success) ActionResult.ok("Screenshot captured") else ActionResult.fail(screenshot.message, screenshot.errorCode)
             }
-            is DroidLmAction.FocusEditable -> {
-                val target = textEditingController.getFocusedEditable()
-                if (target != null) ActionResult.ok("Editable target available") else ActionResult.fail("No editable target found", "NO_EDITABLE")
-            }
+            is DroidLmAction.FocusEditable -> focusEditable(action)
             is DroidLmAction.SetSelection -> {
                 val target = textEditingController.getFocusedEditable()
                 if (target == null) ActionResult.fail("No editable target found", "NO_EDITABLE")
@@ -841,8 +840,8 @@ class DroidLmExecutor(
             is DroidLmAction.MoveCursor -> textEditingController.moveCursorBySemanticTarget(action.targetDescription)
             is DroidLmAction.TapTextAnchor -> textEditingController.insertTextAtAnchor(action.anchorText, action.anchorPosition, "")
             DroidLmAction.OcrScreen -> runOcrScreen(diagnosticSessionId)
-            is DroidLmAction.AnalyzeScreenshot -> runOcrScreen(diagnosticSessionId)
-            is DroidLmAction.VerifyTextChange -> ActionResult.ok("Verification requested: ${action.expectedText}")
+            is DroidLmAction.AnalyzeScreenshot -> runAnalyzeScreenshot(action.goal, diagnosticSessionId)
+            is DroidLmAction.VerifyTextChange -> verifyTextChange(action.expectedText)
             is DroidLmAction.InsertTextAtAnchor -> textEditingController.insertTextAtAnchor(action.anchorText, action.anchorPosition, action.text)
             is DroidLmAction.ReplaceTextRange -> textEditingController.replaceText(action.targetText, action.replacementText)
             is DroidLmAction.AppendText -> textEditingController.appendText(action.text)
@@ -904,6 +903,136 @@ class DroidLmExecutor(
         return portalController.openAppStoreListing(action.packageName, appName)
     }
 
+    private suspend fun focusEditable(action: DroidLmAction.FocusEditable): ActionResult {
+        val requestedNodeId = action.nodeId?.trim()?.takeIf { it.isNotBlank() }
+        if (requestedNodeId != null) {
+            val target = portalController.findEditableNodes().firstOrNull { it.nodeId == requestedNodeId }
+                ?: return ActionResult.fail("Requested editable target was not found: $requestedNodeId", "NO_EDITABLE")
+            val nodeId = target.nodeId ?: return ActionResult.fail("Editable target has no node id", "NO_NODE_ID")
+            return portalController.focusNode(nodeId)
+        }
+        val focused = textEditingController.getFocusedEditable()
+            ?: return ActionResult.fail("No editable target found", "NO_EDITABLE")
+        val nodeId = focused.nodeId ?: return ActionResult.fail("Editable target has no node id", "NO_NODE_ID")
+        return if (focused.isFocused) ActionResult.ok("Editable target available") else portalController.focusNode(nodeId)
+    }
+
+    private suspend fun verifyTextChange(expectedText: String): ActionResult {
+        val normalizedExpected = expectedText.trim()
+        if (normalizedExpected.isBlank()) return ActionResult.fail("Expected text is blank", "EXPECTED_TEXT_BLANK")
+        val focused = textEditingController.getFocusedEditable()
+        if (focused != null) {
+            val snapshot = textEditingController.readEditableText(focused)
+            if (snapshot.text.contains(normalizedExpected, ignoreCase = true)) {
+                return ActionResult.ok("Verified text change: $normalizedExpected")
+            }
+        }
+        val state = portalController.getState()
+        return if (state.hasVisibleText(normalizedExpected)) {
+            ActionResult.ok("Verified text change: $normalizedExpected")
+        } else {
+            ActionResult.fail("Expected text was not visible: $normalizedExpected", "EXPECTED_TEXT_NOT_VISIBLE")
+        }
+    }
+
+    private suspend fun runAnalyzeScreenshot(goal: String, diagnosticSessionId: String? = null): ActionResult {
+        val settings = settingsRepository.settings.first()
+        val analyzer = cloudScreenshotAnalyzer
+        if (!settings.cloudScreenshotAnalysisEnabled || analyzer == null || !analyzer.isConfigured()) {
+            return runOcrScreen(diagnosticSessionId)
+        }
+
+        val startedAt = System.currentTimeMillis()
+        debugEvent(
+            diagnosticSessionId,
+            "cloud_screenshot_analysis_started",
+            mapOf("goalLength" to goal.length)
+        )
+        val screenshotStartedAt = System.currentTimeMillis()
+        val screenshot = portalController.takeScreenshot()
+        debugEvent(
+            diagnosticSessionId,
+            "cloud_screenshot_capture_result",
+            mapOf(
+                "success" to screenshot.success,
+                "hasBitmap" to (screenshot.bitmap != null),
+                "width" to screenshot.bitmap?.width,
+                "height" to screenshot.bitmap?.height,
+                "durationMs" to (System.currentTimeMillis() - screenshotStartedAt),
+                "errorCode" to screenshot.errorCode,
+                "message" to screenshot.message
+            )
+        )
+        if (!screenshot.success || screenshot.bitmap == null) {
+            return ActionResult.fail(screenshot.message, screenshot.errorCode)
+        }
+
+        debugLogStore?.retainScreenshot(screenshot.bitmap, "cloud-screenshot-analysis")
+        logs.log(ActionLogType.SCREENSHOT_CAPTURED, "Screenshot captured for cloud analysis")
+
+        val deviceContextStartedAt = System.currentTimeMillis()
+        val deviceContextResult = runCatching {
+            deviceContextAggregator.collect(goal, portalController.getState(), diagnosticSessionId = diagnosticSessionId)
+        }
+        deviceContextResult
+            .onSuccess { context ->
+                debugEvent(
+                    diagnosticSessionId,
+                    "cloud_screenshot_device_context_collected",
+                    mapOf(
+                        "packageCount" to context.packages.size,
+                        "activePackage" to context.activeApp?.packageName,
+                        "extraKeyCount" to context.extras.length(),
+                        "durationMs" to (System.currentTimeMillis() - deviceContextStartedAt)
+                    )
+                )
+            }
+            .onFailure { error ->
+                debugEvent(
+                    diagnosticSessionId,
+                    "cloud_screenshot_device_context_failed",
+                    mapOf(
+                        "message" to error.message,
+                        "errorClass" to error::class.java.name,
+                        "durationMs" to (System.currentTimeMillis() - deviceContextStartedAt)
+                    )
+                )
+            }
+        val deviceContext = deviceContextResult.getOrNull()
+        val analyzeStartedAt = System.currentTimeMillis()
+        return runCatching { analyzer.analyze(screenshot.bitmap, goal, deviceContext) }
+            .fold(
+                onSuccess = {
+                    logs.log(ActionLogType.OCR_RESULT, "Cloud screenshot analysis detected ${it.lines.size} lines")
+                    debugEvent(
+                        diagnosticSessionId,
+                        "cloud_screenshot_analysis_result",
+                        mapOf(
+                            "lineCount" to it.lines.size,
+                            "elementCount" to it.elements.size,
+                            "fullTextLength" to it.fullText.length,
+                            "recognizeDurationMs" to (System.currentTimeMillis() - analyzeStartedAt),
+                            "totalDurationMs" to (System.currentTimeMillis() - startedAt)
+                        )
+                    )
+                    ActionResult.ok("Cloud screenshot analysis detected ${it.lines.size} lines")
+                },
+                onFailure = {
+                    debugEvent(
+                        diagnosticSessionId,
+                        "cloud_screenshot_analysis_failed",
+                        mapOf(
+                            "message" to it.message,
+                            "errorClass" to it::class.java.name,
+                            "recognizeDurationMs" to (System.currentTimeMillis() - analyzeStartedAt),
+                            "totalDurationMs" to (System.currentTimeMillis() - startedAt)
+                        )
+                    )
+                    ActionResult.fail("Cloud screenshot analysis failed: ${it.message}", "CLOUD_SCREENSHOT_ANALYSIS_FAILED")
+                }
+            )
+    }
+
     private suspend fun runOcrScreen(diagnosticSessionId: String? = null): ActionResult {
         val startedAt = System.currentTimeMillis()
         debugEvent(diagnosticSessionId, "ocr_screen_started")
@@ -947,6 +1076,15 @@ class DroidLmExecutor(
             )
     }
 
+
+    private fun PortalState.hasVisibleText(expected: String): Boolean {
+        val normalizedExpected = expected.trim().lowercase()
+        if (normalizedExpected.isBlank()) return false
+        return nodes.any { node ->
+            listOfNotNull(node.text, node.contentDescription, node.hintText, node.stateDescription)
+                .any { it.lowercase().contains(normalizedExpected) }
+        }
+    }
 
     private suspend fun selectAllText(): ActionResult {
         val target = textEditingController.getFocusedEditable() ?: return ActionResult.fail("No editable field found", "NO_EDITABLE")

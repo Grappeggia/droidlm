@@ -1,6 +1,6 @@
 package ai.droidlm.permissions
 
-import ai.droidlm.DroidLMApp
+import ai.droidlm.di.appGraph
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
 import android.Manifest
@@ -12,6 +12,8 @@ import android.os.Bundle
 import androidx.core.content.ContextCompat
 
 class RecordingPermissionActivity : Activity() {
+    private val deps by lazy { applicationContext.appGraph().recordingPermissionDeps() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         diagnostics("recording_permission_activity_created", mapOf("alreadyGranted" to hasMicPermission()))
@@ -29,10 +31,10 @@ class RecordingPermissionActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_RECORD_AUDIO && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             diagnostics("recording_permission_result", mapOf("granted" to true, "requestCode" to requestCode))
-            (application as DroidLMApp).actionLogRepository.log(ActionLogType.ACTION_RESULT, "Microphone permission granted")
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Microphone permission granted")
             notifyMicPermissionReady()
         } else {
-            (application as DroidLMApp).actionLogRepository.log(ActionLogType.ERROR, "Microphone permission denied", "RECORD_AUDIO_PERMISSION_DENIED")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Microphone permission denied", "RECORD_AUDIO_PERMISSION_DENIED")
             diagnostics("recording_permission_result", mapOf("granted" to false, "requestCode" to requestCode, "resultCount" to grantResults.size))
         }
         finish()
@@ -43,7 +45,7 @@ class RecordingPermissionActivity : Activity() {
     }
 
     private fun diagnostics(event: String, fields: Map<String, Any?> = emptyMap()) {
-        runCatching { (application as DroidLMApp).speechDiagnosticsLogger.record(null, event, fields) }
+        runCatching { deps.speechDiagnosticsLogger.record(null, event, fields) }
     }
 
     private fun hasMicPermission(): Boolean =

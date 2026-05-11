@@ -1,6 +1,5 @@
 package ai.droidlm.ui
 
-import ai.droidlm.DroidLMApp
 import ai.droidlm.diagnostics.DebugLogUploadEndpoint
 import ai.droidlm.update.DebugBuildPreparationResult
 import ai.droidlm.update.DebugUpdatePhase
@@ -28,17 +27,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class DroidLmViewModel(application: Application) : AndroidViewModel(application) {
-    private val app = application as DroidLMApp
-    val settings = app.settingsRepository.settings
-    val logs = app.actionLogRepository.logs
-    val executionState = app.executor.uiState
-    val pendingConfirmation = app.executor.pendingConfirmation
-    val listeningState = WakeWordForegroundService.isRunningState
-    val speechRecognitionState = app.speechRecognitionController.state
-    val pendingPlan = app.executor.pendingPlan
-    val plannerKeySetupRequest = app.executor.plannerKeySetupRequest
-    val overlayState = FloatingControlOverlayService.isRunningState
+class DroidLmViewModel(
+    application: Application,
+    private val deps: DroidLmViewModelDeps
+) : AndroidViewModel(application) {
+    private val app = application
+    val settings = deps.settingsRepository.settings
+    val logs = deps.actionLogRepository.logs
+    val executionState = deps.executor.uiState
+    val pendingConfirmation = deps.executor.pendingConfirmation
+    val listeningState = deps.listeningRuntime.isRunning
+    val speechRecognitionState = deps.speechRecognitionController.state
+    val pendingPlan = deps.executor.pendingPlan
+    val plannerKeySetupRequest = deps.executor.plannerKeySetupRequest
+    val overlayState = deps.overlayRuntime.isRunning
 
     private val _overlayPermissionGranted = MutableStateFlow(Settings.canDrawOverlays(app))
     val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted.asStateFlow()
@@ -52,7 +54,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     private var pendingDebugBuild: PreparedDebugBuild? = null
 
     fun refreshAccessibility() {
-        viewModelScope.launch { _accessibilityEnabled.value = app.portalController.isAccessibilityEnabled() }
+        viewModelScope.launch { _accessibilityEnabled.value = deps.portalController.isAccessibilityEnabled() }
     }
 
 
@@ -64,14 +66,14 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
 
     fun upgradeToLatestDebugBuild() {
-        if (!app.debugBuildUpdater.isSupported) return
+        if (!deps.debugBuildUpdater.isSupported) return
         viewModelScope.launch {
             pendingDebugBuild = null
             _debugUpdateState.value = DebugUpdateUiState(
                 phase = DebugUpdatePhase.CHECKING,
                 statusMessage = "Checking GitHub and downloading the latest debug build..."
             )
-            when (val result = app.debugBuildUpdater.prepareLatestInstall()) {
+            when (val result = deps.debugBuildUpdater.prepareLatestInstall()) {
                 is DebugBuildPreparationResult.ReadyToInstall -> continueDebugBuildInstall(result.build)
                 is DebugBuildPreparationResult.AlreadyLatest -> {
                     _debugUpdateState.value = DebugUpdateUiState(
@@ -79,7 +81,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         statusMessage = "Already on the latest published debug build (${result.availableVersionName}).",
                         availableVersionName = result.availableVersionName
                     )
-                    app.actionLogRepository.log(
+                    deps.actionLogRepository.log(
                         ActionLogType.ACTION_RESULT,
                         "Already on latest published debug build",
                         result.availableVersionName
@@ -90,7 +92,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         phase = DebugUpdatePhase.ERROR,
                         statusMessage = result.message
                     )
-                    app.actionLogRepository.log(
+                    deps.actionLogRepository.log(
                         ActionLogType.ERROR,
                         "Debug build upgrade failed: ${result.message}",
                         result.errorCode
@@ -100,7 +102,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun debugBuildInstallPermissionIntent(): Intent = app.debugBuildUpdater.installPermissionIntent()
+    fun debugBuildInstallPermissionIntent(): Intent = deps.debugBuildUpdater.installPermissionIntent()
 
     fun resumePendingDebugBuildInstall() {
         val build = pendingDebugBuild ?: return
@@ -109,13 +111,13 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     private fun continueDebugBuildInstall(build: PreparedDebugBuild) {
         pendingDebugBuild = build
-        if (!app.debugBuildUpdater.canRequestPackageInstalls()) {
+        if (!deps.debugBuildUpdater.canRequestPackageInstalls()) {
             _debugUpdateState.value = DebugUpdateUiState(
                 phase = DebugUpdatePhase.AWAITING_INSTALL_PERMISSION,
                 statusMessage = "Downloaded ${build.versionName}. Allow DroidLM to install unknown apps to continue.",
                 availableVersionName = build.versionName
             )
-            app.actionLogRepository.log(
+            deps.actionLogRepository.log(
                 ActionLogType.ACTION_RESULT,
                 "Downloaded debug build and waiting for install permission",
                 build.versionName
@@ -128,14 +130,14 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             statusMessage = "Opening Android package installer for ${build.versionName}...",
             availableVersionName = build.versionName
         )
-        runCatching { app.debugBuildUpdater.launchInstaller(build) }
+        runCatching { deps.debugBuildUpdater.launchInstaller(build) }
             .onSuccess {
                 pendingDebugBuild = null
                 _debugUpdateState.value = DebugUpdateUiState(
                     statusMessage = "Installer opened for ${build.versionName}. Finish the upgrade in Android's package installer.",
                     availableVersionName = build.versionName
                 )
-                app.actionLogRepository.log(
+                deps.actionLogRepository.log(
                     ActionLogType.ACTION_RESULT,
                     "Opened installer for debug build ${build.versionName}",
                     build.tagName
@@ -147,7 +149,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                     statusMessage = "Could not open Android package installer: ${error.message}",
                     availableVersionName = build.versionName
                 )
-                app.actionLogRepository.log(
+                deps.actionLogRepository.log(
                     ActionLogType.ERROR,
                     "Could not open debug build installer: ${error.message}"
                 )
@@ -165,7 +167,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun pushToTalk() {
-        val sessionId = app.speechDiagnosticsLogger.startSession("main_push_to_talk")
+        val sessionId = deps.speechDiagnosticsLogger.startSession("main_push_to_talk")
         ContextCompat.startForegroundService(
             app,
             WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_PUSH_TO_TALK, sessionId)
@@ -181,92 +183,92 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun acceptPendingPlan(alwaysAcceptSafePlans: Boolean) {
-        viewModelScope.launch { app.executor.acceptPendingPlan(alwaysAcceptSafePlans) }
+        viewModelScope.launch { deps.executor.acceptPendingPlan(alwaysAcceptSafePlans) }
     }
 
     fun rejectPendingPlan() {
-        app.executor.rejectPendingPlan()
+        deps.executor.rejectPendingPlan()
     }
 
     fun dismissPlannerKeySetup() {
-        app.executor.clearPlannerKeySetupRequest()
+        deps.executor.clearPlannerKeySetupRequest()
     }
 
     fun saveOpenAiApiKey(apiKey: String) {
         viewModelScope.launch {
-            app.settingsRepository.saveOpenAiApiKey(apiKey)
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key saved on this device")
-            app.executor.retryPlannerKeySetupRequest()
+            deps.settingsRepository.saveOpenAiApiKey(apiKey)
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key saved on this device")
+            deps.executor.retryPlannerKeySetupRequest()
         }
     }
 
     fun clearOpenAiApiKey() {
         viewModelScope.launch {
-            app.settingsRepository.clearOpenAiApiKey()
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key cleared from this device")
+            deps.settingsRepository.clearOpenAiApiKey()
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "OpenAI API key cleared from this device")
         }
     }
 
     fun cancelCurrentTask() {
-        app.executor.cancelActive()
+        deps.executor.cancelActive()
         app.startService(WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_CANCEL))
     }
 
     fun executeTextCommand(command: String) {
-        viewModelScope.launch { app.executor.executeTranscript(command) }
+        viewModelScope.launch { deps.executor.executeTranscript(command) }
     }
 
 
     fun testOcr() {
         viewModelScope.launch {
-            val screenshot = app.portalController.takeScreenshot()
+            val screenshot = deps.portalController.takeScreenshot()
             if (!screenshot.success || screenshot.bitmap == null) {
-                app.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${screenshot.message}", screenshot.errorCode)
+                deps.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${screenshot.message}", screenshot.errorCode)
                 return@launch
             }
-            app.debugLogStore.retainScreenshot(screenshot.bitmap, "ocr-test")
-            runCatching { app.ocrEngine.recognize(screenshot.bitmap) }
-                .onSuccess { app.actionLogRepository.log(ActionLogType.OCR_RESULT, "OCR test detected ${it.lines.size} lines") }
-                .onFailure { app.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${it.message}") }
+            deps.debugLogStore.retainScreenshot(screenshot.bitmap, "ocr-test")
+            runCatching { deps.ocrEngine.recognize(screenshot.bitmap) }
+                .onSuccess { deps.actionLogRepository.log(ActionLogType.OCR_RESULT, "OCR test detected ${it.lines.size} lines") }
+                .onFailure { deps.actionLogRepository.log(ActionLogType.ERROR, "OCR test failed: ${it.message}") }
         }
     }
 
-    fun confirmPending() = app.executor.respondToConfirmation(true)
-    fun rejectPending() = app.executor.respondToConfirmation(false)
+    fun confirmPending() = deps.executor.respondToConfirmation(true)
+    fun rejectPending() = deps.executor.respondToConfirmation(false)
 
-    fun updateOpenAiModel(value: String) = viewModelScope.launch { app.settingsRepository.updateOpenAiModel(value) }
-    fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { app.settingsRepository.updateWakeWordProvider(provider) }
-    fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { app.settingsRepository.updateTranscriptionProvider(provider) }
-    fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
-    fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateShowPartialSpeechRecognition(value) }
-    fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateRequireRiskConfirmation(value) }
-    fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateOnDeviceOcrEnabled(value) }
-    fun updateCloudVision(value: Boolean) = viewModelScope.launch { app.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }
+    fun updateOpenAiModel(value: String) = viewModelScope.launch { deps.settingsRepository.updateOpenAiModel(value) }
+    fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { deps.settingsRepository.updateWakeWordProvider(provider) }
+    fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { deps.settingsRepository.updateTranscriptionProvider(provider) }
+    fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
+    fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateShowPartialSpeechRecognition(value) }
+    fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateRequireRiskConfirmation(value) }
+    fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateOnDeviceOcrEnabled(value) }
+    fun updateCloudVision(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }
     fun updateDebugLogging(value: Boolean) = viewModelScope.launch {
-        app.settingsRepository.updateDebugLoggingEnabled(value)
-        app.speechDiagnosticsLogger.setEnabled(value)
+        deps.settingsRepository.updateDebugLoggingEnabled(value)
+        deps.speechDiagnosticsLogger.setEnabled(value)
         if (value) {
-            app.debugLogStore.recordEvent("setting_enabled", mapOf("source" to "settings_ui"))
-            app.actionLogRepository.log(
+            deps.debugLogStore.recordEvent("setting_enabled", mapOf("source" to "settings_ui"))
+            deps.actionLogRepository.log(
                 ActionLogType.ACTION_RESULT,
                 "Debug logging enabled",
                 "Exports may include spoken text, screenshots, retained audio, and speech-recognition state."
             )
         } else {
-            app.speechDiagnosticsLogger.clear()
-            app.debugLogStore.clear()
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Debug logging disabled and cleared")
+            deps.speechDiagnosticsLogger.clear()
+            deps.debugLogStore.clear()
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Debug logging disabled and cleared")
         }
     }
 
-    fun debugLogsExportFileName(): String = app.debugLogStore.exportFileName()
+    fun debugLogsExportFileName(): String = deps.debugLogStore.exportFileName()
 
     fun saveDebugLogsToUri(uri: Uri) = viewModelScope.launch {
-        app.debugLogStore.recordEvent("save_requested", mapOf("uriScheme" to uri.scheme))
-        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle() }
+        deps.debugLogStore.recordEvent("save_requested", mapOf("uriScheme" to uri.scheme))
+        val file = withContext(Dispatchers.IO) { deps.debugLogStore.createBundle() }
         if (file == null) {
-            app.debugLogStore.recordEvent("save_empty")
-            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to save")
+            deps.debugLogStore.recordEvent("save_empty")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to save")
             return@launch
         }
         runCatching {
@@ -276,30 +278,30 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                 } ?: error("Could not open destination file")
             }
         }.onSuccess {
-            app.debugLogStore.recordEvent("save_succeeded", mapOf("zipName" to file.name, "zipBytes" to file.length()))
-            app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved debug logs")
+            deps.debugLogStore.recordEvent("save_succeeded", mapOf("zipName" to file.name, "zipBytes" to file.length()))
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Saved debug logs")
         }.onFailure { error ->
-            app.debugLogStore.recordEvent("save_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "zipName" to file.name, "zipBytes" to file.length()))
-            app.actionLogRepository.log(ActionLogType.ERROR, "Could not save debug logs: ${error.message}")
+            deps.debugLogStore.recordEvent("save_failed", mapOf("message" to error.message, "errorClass" to error::class.java.name, "zipName" to file.name, "zipBytes" to file.length()))
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not save debug logs: ${error.message}")
         }
     }
 
     fun shareDebugLogs(issueDescription: String) = viewModelScope.launch {
-        app.debugLogStore.recordEvent("upload_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
-        val file = withContext(Dispatchers.IO) { app.debugLogStore.createBundle(issueDescription) }
+        deps.debugLogStore.recordEvent("upload_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
+        val file = withContext(Dispatchers.IO) { deps.debugLogStore.createBundle(issueDescription) }
         if (file == null) {
-            app.debugLogStore.recordEvent("upload_empty")
-            app.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to upload")
+            deps.debugLogStore.recordEvent("upload_empty")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to upload")
             return@launch
         }
 
         val uploadUrl = DebugLogUploadEndpoint.url()
         if (uploadUrl.isBlank()) {
-            app.debugLogStore.recordEvent(
+            deps.debugLogStore.recordEvent(
                 "upload_failed",
                 mapOf("reason" to "missing_upload_url", "zipName" to file.name, "zipBytes" to file.length())
             )
-            app.actionLogRepository.log(
+            deps.actionLogRepository.log(
                 ActionLogType.ERROR,
                 "Debug log upload endpoint is not configured",
                 "NO_DEBUG_LOG_UPLOAD_URL"
@@ -307,11 +309,11 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
             return@launch
         }
 
-        val result = app.relayClient.uploadDebugLogsToUrl(uploadUrl, file, app.packageName, appVersionName())
+        val result = deps.relayClient.uploadDebugLogsToUrl(uploadUrl, file, app.packageName, appVersionName())
         when (result) {
             is RelayCallResult.Success -> {
                 val upload = result.value
-                app.debugLogStore.recordEvent(
+                deps.debugLogStore.recordEvent(
                     "upload_succeeded",
                     mapOf(
                         "zipName" to file.name,
@@ -321,10 +323,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         "uploadEndpointConfigured" to true
                     )
                 )
-                app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
+                deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
             }
             is RelayCallResult.Failure -> {
-                app.debugLogStore.recordEvent(
+                deps.debugLogStore.recordEvent(
                     "upload_failed",
                     mapOf(
                         "message" to result.message,
@@ -334,24 +336,24 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
                         "uploadEndpointConfigured" to uploadUrl.isNotBlank()
                     )
                 )
-                app.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)
+                deps.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)
             }
         }
     }
 
     fun clearDebugLogs() {
-        app.debugLogStore.recordEvent("clear_requested", mapOf("source" to "settings_ui"))
-        app.speechDiagnosticsLogger.clear()
-        viewModelScope.launch { app.debugLogStore.clear() }
+        deps.debugLogStore.recordEvent("clear_requested", mapOf("source" to "settings_ui"))
+        deps.speechDiagnosticsLogger.clear()
+        viewModelScope.launch { deps.debugLogStore.clear() }
     }
 
     fun completeOnboarding() = viewModelScope.launch {
-        app.settingsRepository.updateOnboardingCompletedVersion(ONBOARDING_VERSION)
-        app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Onboarding completed")
+        deps.settingsRepository.updateOnboardingCompletedVersion(ONBOARDING_VERSION)
+        deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Onboarding completed")
     }
 
     fun checkSpeechSetup(preferOffline: Boolean) {
-        app.speechRecognitionController.checkSpeechSetup(preferOffline)
+        deps.speechRecognitionController.checkSpeechSetup(preferOffline)
     }
 
     fun openSpeechRecognitionSettings() {
@@ -362,7 +364,7 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         )
         val target = options.firstOrNull { (_, intent) -> canOpen(intent) }
         if (target == null) {
-            app.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings on this device")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings on this device")
             return
         }
         openSettingsIntent(target.first, target.second)
@@ -371,13 +373,13 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     fun openRecognizerAppSettings() {
         val packageName = voiceRecognitionServicePackageName()
         if (packageName == null) {
-            app.actionLogRepository.log(ActionLogType.ERROR, "No Android speech recognizer app was reported by the device")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "No Android speech recognizer app was reported by the device")
             openSpeechRecognitionSettings()
             return
         }
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
         if (!canOpen(intent)) {
-            app.actionLogRepository.log(ActionLogType.ERROR, "Could not open settings for speech recognizer app $packageName")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not open settings for speech recognizer app $packageName")
             openSpeechRecognitionSettings()
             return
         }
@@ -386,14 +388,14 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
 
     private fun openSettingsIntent(label: String, intent: Intent, fields: Map<String, Any?> = emptyMap()) {
         val launchIntent = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        app.speechDiagnosticsLogger.record(
+        deps.speechDiagnosticsLogger.record(
             null,
             "speech_settings_opened",
             mapOf("target" to label, "action" to launchIntent.action, "data" to launchIntent.dataString) + fields
         )
         runCatching { app.startActivity(launchIntent) }
-            .onSuccess { app.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Android speech settings") }
-            .onFailure { error -> app.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings: ${error.message}") }
+            .onSuccess { deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Opened Android speech settings") }
+            .onFailure { error -> deps.actionLogRepository.log(ActionLogType.ERROR, "Could not open Android speech settings: ${error.message}") }
     }
 
     private fun canOpen(intent: Intent): Boolean = intent.resolveActivity(app.packageManager) != null
@@ -403,9 +405,9 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         return ComponentName.unflattenFromString(component)?.packageName
             ?: component.substringBefore('/').takeIf { it.isNotBlank() }
     }
-    fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { app.settingsRepository.updateMobilerunDeviceId(value) }
-    fun saveMobilerunApiKey(value: String) = viewModelScope.launch { app.settingsRepository.saveMobilerunApiKey(value) }
-    fun savePicovoiceAccessKey(value: String) = viewModelScope.launch { app.settingsRepository.savePicovoiceAccessKey(value) }
+    fun updateMobilerunDeviceId(value: String) = viewModelScope.launch { deps.settingsRepository.updateMobilerunDeviceId(value) }
+    fun saveMobilerunApiKey(value: String) = viewModelScope.launch { deps.settingsRepository.saveMobilerunApiKey(value) }
+    fun savePicovoiceAccessKey(value: String) = viewModelScope.launch { deps.settingsRepository.savePicovoiceAccessKey(value) }
 
     @Suppress("DEPRECATION")
     private fun appVersionName(): String? = runCatching {

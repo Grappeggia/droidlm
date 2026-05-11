@@ -6,6 +6,7 @@ import ai.droidlm.intent.MenuType
 import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.runtime.AccessibilityRuntime
 import ai.droidlm.textedit.EditableTarget
 import android.content.Context
 import android.content.Intent
@@ -18,19 +19,20 @@ import kotlinx.coroutines.withContext
 
 class AccessibilityPortalController(
     private val context: Context,
-    private val logs: ActionLogRepository
+    private val logs: ActionLogRepository,
+    private val accessibilityRuntime: AccessibilityRuntime
 ) : PortalController {
     override suspend fun isAccessibilityEnabled(): Boolean = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current() != null || isServiceEnabledInSettings()
+        accessibilityRuntime.currentGateway() != null || isServiceEnabledInSettings()
     }
 
     override suspend fun getState(): PortalState = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.captureState(includeAllWindows = false)
+        accessibilityRuntime.currentGateway()?.captureState(includeAllWindows = false)
             ?: PortalState(null, null, null, null, emptyList())
     }
 
     override suspend fun getFullState(): PortalState? = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.captureState(includeAllWindows = true)
+        accessibilityRuntime.currentGateway()?.captureState(includeAllWindows = true)
     }
 
     @Suppress("DEPRECATION")
@@ -170,19 +172,19 @@ class AccessibilityPortalController(
     override suspend fun takeScreenshot(): ScreenshotResult = withServiceScreenshot { it.takeScreenshotBitmap() }
 
     override suspend fun findFocusedEditableNode(): EditableTarget? = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.findFocusedEditableTarget()
+        accessibilityRuntime.currentGateway()?.findFocusedEditableTarget()
     }
 
     override suspend fun findEditableNodes(): List<EditableTarget> = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.findEditableTargets().orEmpty()
+        accessibilityRuntime.currentGateway()?.findEditableTargets().orEmpty()
     }
 
     override suspend fun getNodeText(nodeId: String): String? = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.getNodeText(nodeId)
+        accessibilityRuntime.currentGateway()?.getNodeText(nodeId)
     }
 
     override suspend fun getNodeSelection(nodeId: String): Pair<Int, Int>? = withContext(Dispatchers.Main) {
-        DroidLMAccessibilityService.current()?.getNodeSelection(nodeId)
+        accessibilityRuntime.currentGateway()?.getNodeSelection(nodeId)
     }
 
     override suspend fun performSetSelection(nodeId: String, start: Int, end: Int): ActionResult = withService {
@@ -219,16 +221,16 @@ class AccessibilityPortalController(
         )
     }
 
-    private suspend fun withService(block: suspend (DroidLMAccessibilityService) -> ActionResult): ActionResult =
+    private suspend fun withService(block: suspend (AccessibilityGateway) -> ActionResult): ActionResult =
         withContext(Dispatchers.Main) {
-            val service = DroidLMAccessibilityService.current()
+            val service = accessibilityRuntime.currentGateway()
             if (service == null) ActionResult.fail("Accessibility service is not enabled", "ACCESSIBILITY_DISABLED")
             else block(service)
         }
 
-    private suspend fun withServiceScreenshot(block: suspend (DroidLMAccessibilityService) -> ScreenshotResult): ScreenshotResult =
+    private suspend fun withServiceScreenshot(block: suspend (AccessibilityGateway) -> ScreenshotResult): ScreenshotResult =
         withContext(Dispatchers.Main) {
-            val service = DroidLMAccessibilityService.current()
+            val service = accessibilityRuntime.currentGateway()
             if (service == null) ScreenshotResult(false, message = "Accessibility service is not enabled", errorCode = "ACCESSIBILITY_DISABLED")
             else block(service)
         }
