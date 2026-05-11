@@ -1,5 +1,6 @@
 package ai.droidlm.voice
 
+import ai.droidlm.intent.SpeechTextNormalizer
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.logs.ActionLogRepository
@@ -206,6 +207,10 @@ open class VoskOfflineSpeechRecognizer(
         var readCount = 0
         var zeroReadCount = 0
         var negativeReadCount = 0
+        var lastReadAt: Long? = null
+        var maxReadGapMs = 0L
+        var totalReadGapMs = 0L
+        var slowReadGapCount = 0
         val audioCaptureFile = debugLogStore?.createRetainedFile("audio", "pcm", "vosk")
         val audioCaptureOutput = audioCaptureFile?.let { runCatching { it.outputStream() }.getOrNull() }
         audioCaptureFile?.let {
@@ -228,8 +233,21 @@ open class VoskOfflineSpeechRecognizer(
         try {
             recorder.startRecording()
             callbacks.onReady()
+            val recordingReadyAt = System.currentTimeMillis()
+            val modelLoadDurationMs = recordingReadyAt - modelLoadStartedAt
             logs.log(ActionLogType.RECORDING_STARTED, "Built-in offline speech ready")
             diagnostics.record(diagnosticSessionId, "vosk_ready", mapOf("sampleRate" to SAMPLE_RATE))
+            diagnostics.record(
+                diagnosticSessionId,
+                "speech_ready_to_record",
+                mapOf(
+                    "provider" to VOSK_PROVIDER_LABEL,
+                    "sampleRate" to SAMPLE_RATE,
+                    "modelCachedBefore" to modelCachedBefore,
+                    "modelLoadDurationMs" to modelLoadDurationMs,
+                    "captureStartDelayMs" to (recordingReadyAt - startedAt)
+                )
+            )
 
             val buffer = ByteArray(BUFFER_BYTES)
             while (System.currentTimeMillis() - startedAt < maxDurationMs) {
@@ -240,13 +258,20 @@ open class VoskOfflineSpeechRecognizer(
                     if (cancelRequested || (stopRequested && elapsed >= MIN_STOP_DURATION_MS)) break
                     continue
                 }
+                val now = System.currentTimeMillis()
+                lastReadAt?.let { previousReadAt ->
+                    val readGapMs = now - previousReadAt
+                    totalReadGapMs += readGapMs
+                    if (readGapMs > maxReadGapMs) maxReadGapMs = readGapMs
+                    if (readGapMs >= SLOW_READ_GAP_MS) slowReadGapCount += 1
+                }
+                lastReadAt = now
                 readCount += 1
                 capturedBytes += read.toLong()
                 activeCapturedBytes = capturedBytes
                 runCatching { audioCaptureOutput?.write(buffer, 0, read) }
                 val rms = pcmRms(buffer, read)
                 if (rms > peakRms) peakRms = rms
-                val now = System.currentTimeMillis()
                 rmsSum += rms
                 rmsCount += 1
                 if (speechStarted || rms >= SPEECH_RMS_THRESHOLD) {
@@ -306,6 +331,21 @@ open class VoskOfflineSpeechRecognizer(
                 .trim()
             val durationMs = System.currentTimeMillis() - startedAt
             val lastSpeechAtSnapshot = lastSpeechAt
+            diagnostics.record(
+                diagnosticSessionId,
+                "audio_capture_summary",
+                audioCaptureSummaryFields(
+                    wallDurationMs = durationMs,
+                    capturedBytes = capturedBytes,
+                    readCount = readCount,
+                    zeroReadCount = zeroReadCount,
+                    negativeReadCount = negativeReadCount,
+                    maxReadGapMs = maxReadGapMs,
+                    totalReadGapMs = totalReadGapMs,
+                    slowReadGapCount = slowReadGapCount
+                )
+            )
+            diagnostics.record(diagnosticSessionId, "transcript_quality", transcriptQualityFields(transcript))
             diagnostics.record(
                 diagnosticSessionId,
                 "vosk_final",
@@ -542,6 +582,55 @@ open class VoskOfflineSpeechRecognizer(
         )
     }
 
+    private fun audioCaptureSummaryFields(
+        wallDurationMs: Long,
+        capturedBytes: Long,
+        readCount: Int,
+        zeroReadCount: Int,
+        negativeReadCount: Int,
+        maxReadGapMs: Long,
+        totalReadGapMs: Long,
+        slowReadGapCount: Int
+    ): Map<String, Any?> {
+        val audioDurationMs = pcmDurationMs(capturedBytes)
+        val captureEfficiency = if (wallDurationMs > 0L) audioDurationMs.toDouble() / wallDurationMs.toDouble() else null
+        val bytesPerSecond = if (wallDurationMs > 0L) capturedBytes * 1000L / wallDurationMs else 0L
+        val readGapSamples = (readCount - 1).coerceAtLeast(0)
+        return mapOf(
+            "wallDurationMs" to wallDurationMs,
+            "audioDurationMs" to audioDurationMs,
+            "captureEfficiency" to captureEfficiency?.let(::rounded),
+            "capturedBytes" to capturedBytes,
+            "bytesPerSecond" to bytesPerSecond,
+            "readCount" to readCount,
+            "zeroReadCount" to zeroReadCount,
+            "negativeReadCount" to negativeReadCount,
+            "maxReadGapMs" to maxReadGapMs,
+            "averageReadGapMs" to average(totalReadGapMs.toDouble(), readGapSamples)?.let(::rounded),
+            "slowReadGapCount" to slowReadGapCount,
+            "slowReadGapThresholdMs" to SLOW_READ_GAP_MS
+        )
+    }
+
+    private fun transcriptQualityFields(transcript: String): Map<String, Any?> {
+        val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
+        val words = normalized.split(' ').filter { it.isNotBlank() }
+        val quality = when {
+            normalized.isBlank() -> "blank"
+            normalized in setOf("open", "launch", "start") -> "ambiguous_open"
+            words.size <= 1 -> "single_word"
+            normalized.length < 6 -> "short"
+            else -> "normal"
+        }
+        return mapOf(
+            "transcriptLength" to transcript.length,
+            "normalizedLength" to normalized.length,
+            "wordCount" to words.size,
+            "uniqueWordCount" to words.toSet().size,
+            "quality" to quality,
+            "ambiguousOpenCommand" to (normalized in setOf("open", "launch", "start"))
+        )
+    }
 
     private fun transcriptFields(transcript: String): Map<String, Any?> = mapOf(
         "transcriptLength" to transcript.length,
@@ -562,6 +651,7 @@ open class VoskOfflineSpeechRecognizer(
         const val SILENCE_AFTER_SPEECH_MS = 1_400L
         const val SPEECH_RMS_THRESHOLD = 350.0
         const val RMS_LOG_INTERVAL_MS = 500L
+        const val SLOW_READ_GAP_MS = 250L
         const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
     }

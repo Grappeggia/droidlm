@@ -25,6 +25,7 @@ import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
+import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalController
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.UiNode
@@ -108,6 +109,7 @@ class DroidLmExecutor(
     private val agentToolRegistry = AgentToolRegistry()
     private val agentVerifier = AgentVerifier()
     private val agentRecoveryPolicy = AgentRecoveryPolicy()
+    private val openAppPrefixes = listOf("open my ", "open the ", "open ", "launch my ", "launch the ", "launch ", "start my ", "start the ", "start ")
 
     suspend fun executeTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
@@ -120,6 +122,14 @@ class DroidLmExecutor(
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
         val action = parser.parse(stripped, packages)
         debugEvent(diagnosticSessionId, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
+        debugEvent(diagnosticSessionId, "transcript_quality", transcriptQualityFields(stripped))
+        openAppResolutionFields(stripped, packages, action)?.let { fields ->
+            debugEvent(diagnosticSessionId, "open_app_resolution", fields)
+        }
+        debugEvent(diagnosticSessionId, "voice_route_decision", voiceRouteDecisionFields(action, settings.executionMode))
+        plannerBypassReason(action)?.let { reason ->
+            debugEvent(diagnosticSessionId, "planner_bypass_reason", mapOf("reason" to reason, "action" to action.displayName()))
+        }
         _uiState.value = _uiState.value.copy(parsedAction = ActionUiFormatter.full(action))
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
 
@@ -990,10 +1000,119 @@ class DroidLmExecutor(
     private fun ensureNotCancelled(): ActionResult? =
         if (cancelled) ActionResult.fail("Task was cancelled", "CANCELLED") else null
 
+    private fun transcriptQualityFields(transcript: String): Map<String, Any?> {
+        val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
+        val words = normalized.split(' ').filter { it.isNotBlank() }
+        val quality = when {
+            normalized.isBlank() -> "blank"
+            isAmbiguousOpenCommand(normalized) -> "ambiguous_open"
+            words.size <= 1 -> "single_word"
+            normalized.length < 6 -> "short"
+            else -> "normal"
+        }
+        return mapOf(
+            "transcriptLength" to transcript.length,
+            "normalizedLength" to normalized.length,
+            "wordCount" to words.size,
+            "uniqueWordCount" to words.toSet().size,
+            "quality" to quality,
+            "ambiguousOpenCommand" to isAmbiguousOpenCommand(normalized),
+            "startsWithOpenPrefix" to (requestedOpenAppName(normalized) != null)
+        )
+    }
+
+    private fun voiceRouteDecisionFields(action: DroidLmAction, executionMode: ExecutionMode): Map<String, Any?> {
+        val route = when (action) {
+            is DroidLmAction.NeedLlmPlanning -> when (executionMode) {
+                ExecutionMode.LOCAL_RULE_FIRST -> "planning_disabled"
+                ExecutionMode.LOCAL_LLM_LOOP -> "local_llm_planning"
+                ExecutionMode.AGENT_LOOP -> "agent_planning"
+                ExecutionMode.MOBILERUN_CLOUD_TASK -> "mobilerun_planning"
+            }
+            else -> "local_parser"
+        }
+        return mapOf(
+            "route" to route,
+            "action" to action.displayName(),
+            "actionType" to action.javaClass.simpleName,
+            "executionMode" to executionMode.name,
+            "needsAdvancedPlanning" to (action is DroidLmAction.NeedLlmPlanning)
+        )
+    }
+
+    private fun plannerBypassReason(action: DroidLmAction): String? = when (action) {
+        is DroidLmAction.OpenApp -> "local_open_app_rule"
+        is DroidLmAction.OpenAppStoreListing -> "local_open_app_store_rule"
+        is DroidLmAction.NoOp -> "local_noop_or_clarification"
+        is DroidLmAction.NeedLlmPlanning -> null
+        else -> "local_rule_matched"
+    }
+
+    private fun openAppResolutionFields(transcript: String, packages: List<AppPackage>, action: DroidLmAction): Map<String, Any?>? {
+        val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
+        val requestedName = requestedOpenAppName(normalized) ?: when (action) {
+            is DroidLmAction.OpenApp -> action.appName
+            is DroidLmAction.OpenAppStoreListing -> action.appName
+            else -> null
+        } ?: return null
+        val candidates = packages.asSequence()
+            .mapNotNull { packageResolutionCandidate(requestedName, it) }
+            .take(MAX_OPEN_APP_CANDIDATES)
+            .toList()
+        return mapOf(
+            "requestedAppName" to requestedName,
+            "normalizedTranscriptLength" to normalized.length,
+            "action" to action.displayName(),
+            "actionType" to action.javaClass.simpleName,
+            "resolvedPackageName" to when (action) {
+                is DroidLmAction.OpenApp -> action.packageName
+                is DroidLmAction.OpenAppStoreListing -> action.packageName
+                else -> null
+            },
+            "resolvedAppName" to when (action) {
+                is DroidLmAction.OpenApp -> action.appName
+                is DroidLmAction.OpenAppStoreListing -> action.appName
+                else -> null
+            },
+            "installedPackageCount" to packages.size,
+            "candidateCount" to candidates.size,
+            "candidates" to candidates
+        )
+    }
+
+    private fun requestedOpenAppName(normalized: String): String? {
+        val prefix = openAppPrefixes.firstOrNull { normalized.startsWith(it) } ?: return null
+        return normalized.removePrefix(prefix).removeSuffix(" app").trim().takeIf { it.isNotBlank() }
+    }
+
+    private fun packageResolutionCandidate(requestedName: String, appPackage: AppPackage): Map<String, Any?>? {
+        val requested = requestedName.lowercase()
+        val label = appPackage.label.orEmpty()
+        val normalizedLabel = label.lowercase()
+        val normalizedPackage = appPackage.packageName.lowercase()
+        val matchType = when {
+            normalizedLabel == requested -> "label_exact"
+            normalizedPackage == requested -> "package_exact"
+            normalizedLabel.contains(requested) -> "label_contains_request"
+            requested.contains(normalizedLabel) && normalizedLabel.length > 2 -> "request_contains_label"
+            normalizedPackage.contains(requested) -> "package_contains_request"
+            else -> null
+        } ?: return null
+        return mapOf(
+            "matchType" to matchType,
+            "packageName" to appPackage.packageName,
+            "label" to label.take(MAX_NODE_TEXT_PREVIEW_CHARS),
+            "enabled" to appPackage.enabled,
+            "launchable" to appPackage.launchable,
+            "launchActivityConfigured" to !appPackage.launchActivity.isNullOrBlank()
+        )
+    }
+
     private companion object {
         val MISSING_OR_UNLAUNCHABLE_APP_ERRORS = setOf("APP_NOT_INSTALLED", "APP_DISABLED", "APP_NOT_LAUNCHABLE", "APP_NOT_FOUND")
         const val MAX_NODE_TEXT_PREVIEW_CHARS = 80
         const val MAX_NODE_ACTIONS_LOGGED = 12
+        const val MAX_OPEN_APP_CANDIDATES = 5
     }
 
 
