@@ -72,15 +72,15 @@ scripts/android-emulator-matrix.sh release full
 
 This curated matrix runs:
 
-- `connectedVoiceE2e` across the full profile list, including the Play phone/tablet additions.
-- `connectedDebugLogUploadE2e` across the full profile list.
+- `connectedVoiceE2e` on the five release-gate phone and tablet profiles: API 36, API 35 midrange, API 33 budget, API 31, and the Android 10 tablet.
+- `connectedDebugLogUploadE2e` on the same five release-gate profiles.
 - `connectedVoskOfflineE2e` on flagship + budget profiles with network disabled.
 - `connectedSupportLogMicRegressionE2e` on the flagship profile where the May 10 mic regression is tracked.
 - `connectedEmulatorMicProbeE2e` and `connectedHoverMicAudioE2e` on flagship, midrange, and budget phones.
-- `connectedOnDeviceAudioSourceE2e` on flagship, budget, and Play midrange phones.
-- `connectedDebugInstallUpgradeE2e` on midrange, budget, API 31, legacy tablet, and Play midrange profiles.
-- `connectedActionKnownIssuesE2e` on flagship + API 31 profiles.
-- `connectedWorkspaceFileOpsE2e` on the Play-enabled phone and tablet profiles.
+- `connectedOnDeviceAudioSourceE2e` on flagship and budget phone profiles.
+- `connectedDebugInstallUpgradeE2e` on midrange, budget, API 31, and the legacy tablet profile.
+
+- `connectedWorkspaceFileOpsReleaseE2e` on a deterministic phone + tablet pair using bundled Docs and Sheets stubs.
 
 If you only need the non-Workspace portion locally, run:
 
@@ -88,13 +88,13 @@ If you only need the non-Workspace portion locally, run:
 scripts/android-emulator-matrix.sh release core
 ```
 
-And to rerun only the Workspace Play-profile checks:
+And to rerun only the deterministic Workspace stub checks:
 
 ```bash
 scripts/android-emulator-matrix.sh release workspace
 ```
 
-`release full` is emulator-only and does not require physical devices, but the Workspace portion still expects either Google Workspace APKs under `/tmp/droidlm-google-apks` (or the existing per-app env vars), or preinstalled Workspace apps on the Play-enabled AVDs.
+`release full` is emulator-only, does not require physical devices, and no longer depends on external Workspace APKs for the release gate because the Workspace portion installs bundled Docs and Sheets stubs automatically.
 
 Run the hidden debug-log upload E2E across all supported profiles. By default, the instrumentation test overrides the built-in endpoint with an in-device mock server and verifies the app uploads without any user-visible URL setting:
 

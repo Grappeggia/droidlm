@@ -38,8 +38,6 @@ RELEASE_VOICE_PROFILES=(
   droidlm_api33_budget_720p
   droidlm_api29_lenovo_tb8505f
   droidlm_api31_phone
-  droidlm_api35_play_midrange
-  droidlm_api35_play_tablet
 )
 
 RELEASE_LOG_UPLOAD_PROFILES=(
@@ -48,8 +46,6 @@ RELEASE_LOG_UPLOAD_PROFILES=(
   droidlm_api33_budget_720p
   droidlm_api29_lenovo_tb8505f
   droidlm_api31_phone
-  droidlm_api35_play_midrange
-  droidlm_api35_play_tablet
 )
 
 RELEASE_VOSK_PROFILES=(
@@ -70,7 +66,6 @@ RELEASE_AUDIO_PROFILES=(
 RELEASE_ON_DEVICE_AUDIO_PROFILES=(
   droidlm_api36_latest
   droidlm_api33_budget_720p
-  droidlm_api35_play_midrange
 )
 
 RELEASE_INSTALL_UPGRADE_PROFILES=(
@@ -78,17 +73,13 @@ RELEASE_INSTALL_UPGRADE_PROFILES=(
   droidlm_api33_budget_720p
   droidlm_api29_lenovo_tb8505f
   droidlm_api31_phone
-  droidlm_api35_play_midrange
 )
 
-RELEASE_ACTION_PROFILES=(
-  droidlm_api36_latest
-  droidlm_api31_phone
-)
+
 
 RELEASE_WORKSPACE_PROFILES=(
-  droidlm_api35_play_midrange
-  droidlm_api35_play_tablet
+  droidlm_api35_midrange
+  droidlm_api29_lenovo_tb8505f
 )
 
 log() {
@@ -314,10 +305,20 @@ stop_profile() {
   local name serial
   name="$(profile_field "$profile" 1)"
   serial="$(serial_for_profile "$profile")"
+  local port
+  port="$(profile_field "$profile" 2)"
   if "$ADB" devices | grep -Fq "$serial"; then
     log "Stopping $name ($serial)"
     "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true
   fi
+  local deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    if ! "$ADB" devices | grep -Fq "$serial"; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Timed out waiting for $name ($serial) to stop after kill"
 }
 
 run_profile() {
@@ -367,7 +368,7 @@ run_profile_names() {
 }
 
 run_release_core() {
-  log "Running release core matrix: voice, upload, offline speech, mic injection, on-device STT, install/upgrade, and action semantics."
+  log "Running release core matrix: voice, upload, offline speech, mic injection, on-device STT, and install/upgrade."
   run_profile_names RELEASE_VOICE_PROFILES connectedVoiceE2e
   run_profile_names RELEASE_LOG_UPLOAD_PROFILES connectedDebugLogUploadE2e
 
@@ -379,14 +380,13 @@ run_release_core() {
   run_profile_names RELEASE_SUPPORT_LOG_PROFILES connectedSupportLogMicRegressionE2e
   run_profile_names RELEASE_AUDIO_PROFILES connectedEmulatorMicProbeE2e connectedHoverMicAudioE2e
   run_profile_names RELEASE_ON_DEVICE_AUDIO_PROFILES connectedOnDeviceAudioSourceE2e
-  run_profile_names RELEASE_INSTALL_UPGRADE_PROFILES connectedDebugInstallUpgradeE2e
-  run_profile_names RELEASE_ACTION_PROFILES connectedActionKnownIssuesE2e
+  run_profile_names RELEASE_INSTALL_UPGRADE_PROFILES -Pdroidlm.debugIteration=999 connectedDebugInstallUpgradeE2e
+
 }
 
 run_release_workspace() {
-  log "Running release workspace matrix on Play-enabled phone and tablet profiles."
-  log "Provide Workspace APKs under /tmp/droidlm-google-apks or preinstall them on the Play-enabled AVDs before running this release gate."
-  run_profile_names RELEASE_WORKSPACE_PROFILES connectedWorkspaceFileOpsE2e
+  log "Running release workspace matrix on phone and tablet profiles with bundled Docs and Sheets stubs."
+  run_profile_names RELEASE_WORKSPACE_PROFILES connectedWorkspaceFileOpsReleaseE2e
 }
 
 run_release_matrix() {

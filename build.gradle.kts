@@ -735,6 +735,34 @@ tasks.register("connectedWorkspaceFileOpsE2e") {
     }
 }
 
+tasks.register("connectedWorkspaceFileOpsReleaseE2e") {
+    group = "verification"
+    description = "Runs deterministic Workspace file operation E2E tests using bundled Docs and Sheets stubs."
+    dependsOn("installWorkspaceFixtures", ":docsStub:assembleDebug", ":sheetsStub:assembleDebug", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adb = project.androidAdbPath()
+        val docsStubApk = project(":docsStub").layout.buildDirectory.file("outputs/apk/debug/docsStub-debug.apk").get().asFile.absolutePath
+        val sheetsStubApk = project(":sheetsStub").layout.buildDirectory.file("outputs/apk/debug/sheetsStub-debug.apk").get().asFile.absolutePath
+        project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.docs")
+        project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.sheets")
+        project.adbOutput(adb, "install", "-r", docsStubApk)
+        project.adbOutput(adb, "install", "-r", sheetsStubApk)
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmWorkspaceFileOpsReleaseE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmWorkspaceFileOpsReleaseE2ETest.kt",
+                artifactSubdirectory = "workspace-file-ops-release"
+            )
+        )
+    }
+}
+
 gradle.projectsEvaluated {
     tasks.findByPath(":app:connectedDebugAndroidTest")?.mustRunAfter(tasks.findByPath(":ensureDriveForE2e"))
 }
@@ -751,7 +779,7 @@ tasks.register("connectedDebugInstallUpgradeE2e", org.gradle.api.tasks.Exec::cla
 tasks.register("connectedVoiceE2e") {
     group = "verification"
     description = "Runs DroidLM emulator voice invocation E2E tests. Requires a running emulator."
-    dependsOn("ensureDriveForE2e", ":app:installDebug", ":app:installDebugAndroidTest")
+    dependsOn("ensureDriveForE2e", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
 
     doLast {
         val adbPath = project.androidAdbPath()
@@ -781,7 +809,7 @@ tasks.register("connectedVoiceE2e") {
 tasks.register("connectedVoskOfflineE2e") {
     group = "verification"
     description = "Runs offline Vosk and shared support-log transcription instrumentation tests."
-    dependsOn(":app:installDebug", ":app:installDebugAndroidTest")
+    dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
 
     doLast {
         val adbPath = project.androidAdbPath()

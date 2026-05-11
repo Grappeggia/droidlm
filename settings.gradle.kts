@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "DroidLM"
 include(":app")
 include(":driveStub")
+include(":docsStub")
+include(":sheetsStub")
