@@ -27,6 +27,7 @@ PROFILES=(
   "droidlm_api35_midrange|5556|8556|pixel_6|system-images;android-35;google_apis;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone|phone,core,voice,audio"
   "droidlm_api33_budget_720p|5558|8558|medium_phone|system-images;android-33;google_apis;x86_64|720|1600|320|2048|2|256|Budget 720p installed-base phone|phone,core,voice,audio,budget"
   "droidlm_api29_lenovo_tb8505f|5560|8560|medium_tablet|system-images;android-29;google_apis;x86_64|800|1280|213|2048|2|256|Lenovo TB-8505F Android 10 tablet|tablet,core,voice,legacy"
+  "droidlm_api29_lenovo_stress|5568|8568|medium_tablet|system-images;android-29;google_apis;x86_64|800|1280|213|1536|1|192|Low-end Android 10 tablet stress profile|tablet,core,voice,legacy,budget,stress"
   "droidlm_api31_phone|5562|8562|medium_phone|system-images;android-31;google_apis;x86_64|1080|2340|420|3072|2|320|Android 12 permission and overlay baseline|phone,core,voice"
   "droidlm_api35_play_midrange|5564|8564|pixel_6|system-images;android-35;google_apis_playstore;x86_64|1080|2400|420|4096|2|384|Mainstream midrange phone with Google Play|phone,play,workspace"
   "droidlm_api35_play_tablet|5566|8566|medium_tablet|system-images;android-35;google_apis_playstore;x86_64|1600|2560|320|6144|4|512|Modern tablet with Google Play|tablet,play,workspace"
@@ -55,6 +56,12 @@ RELEASE_VOSK_PROFILES=(
 
 RELEASE_SUPPORT_LOG_PROFILES=(
   droidlm_api36_latest
+)
+
+RELEASE_CAPTURE_REGRESSION_PROFILES=(
+  "droidlm_api29_lenovo_tb8505f|16"
+  "droidlm_api33_budget_720p|8"
+  "droidlm_api29_lenovo_stress|8"
 )
 
 
@@ -363,8 +370,48 @@ run_profile_names() {
   done
 }
 
+run_capture_regression_profile() {
+  local entry="$1"
+  local profile_name stress_threads profile
+  profile_name="${entry%%|*}"
+  stress_threads="${entry#*|}"
+  profile="$(find_profile "$profile_name")"
+  local previous_record_hold="${DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS:-}"
+  local previous_cpu_stress="${DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS:-}"
+  local previous_timeout="${DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS:-}"
+  DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS=10000
+  DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS="$stress_threads"
+  DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS=120000
+  export DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS
+  set +e
+  run_profile "$profile" connectedHoverMicCaptureRegressionE2e
+  local status=$?
+  set -e
+  restore_env_var DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS "$previous_record_hold"
+  restore_env_var DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS "$previous_cpu_stress"
+  restore_env_var DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS "$previous_timeout"
+  return "$status"
+}
+
+restore_env_var() {
+  local name="$1"
+  local value="$2"
+  if [[ -n "$value" ]]; then
+    export "$name=$value"
+  else
+    unset "$name"
+  fi
+}
+
+run_release_capture_regression() {
+  local entry
+  for entry in "${RELEASE_CAPTURE_REGRESSION_PROFILES[@]}"; do
+    run_capture_regression_profile "$entry"
+  done
+}
+
 run_release_core() {
-  log "Running release core matrix: voice, upload, offline speech, support-log regression, on-device STT, and install/upgrade."
+  log "Running release core matrix: voice, upload, offline speech, capture regression, support-log regression, on-device STT, and install/upgrade."
   run_profile_names RELEASE_VOICE_PROFILES connectedVoiceE2e
   run_profile_names RELEASE_LOG_UPLOAD_PROFILES connectedDebugLogUploadE2e
 
@@ -373,6 +420,7 @@ run_release_core() {
   run_profile_names RELEASE_VOSK_PROFILES connectedVoskOfflineE2e
   DROIDLM_E2E_NETWORK_MODE="$previous_network_mode"
 
+  run_release_capture_regression
   run_profile_names RELEASE_SUPPORT_LOG_PROFILES connectedSupportLogMicRegressionE2e
 
   run_profile_names RELEASE_ON_DEVICE_AUDIO_PROFILES connectedOnDeviceAudioSourceE2e
@@ -444,6 +492,7 @@ Profiles:
   droidlm_api35_midrange
   droidlm_api33_budget_720p
   droidlm_api29_lenovo_tb8505f
+  droidlm_api29_lenovo_stress
   droidlm_api31_phone
   droidlm_api35_play_midrange
   droidlm_api35_play_tablet

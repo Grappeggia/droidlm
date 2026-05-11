@@ -13,6 +13,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Process
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,6 +23,10 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.log10
 import kotlin.math.sqrt
 
@@ -39,6 +45,66 @@ open class VoskOfflineSpeechRecognizer(
     private data class AudioRecordHandle(
         val recorder: AudioRecord,
         val fields: Map<String, Any?>
+    )
+
+    private data class AudioChunk(
+        val bytes: ByteArray,
+        val readAtMs: Long
+    )
+
+    private class AudioCaptureStats {
+        var capturedBytes: Long = 0L
+        var readCount: Int = 0
+        var zeroReadCount: Int = 0
+        var negativeReadCount: Int = 0
+        var lastReadAt: Long? = null
+        var maxReadGapMs: Long = 0L
+        var totalReadGapMs: Long = 0L
+        var queueCapacity: Int = 0
+        var maxQueueDepth: Int = 0
+        var queueOverflowCount: Int = 0
+        var queueDroppedChunks: Int = 0
+        var queueDroppedBytes: Long = 0L
+        var discardedChunks: Int = 0
+        var discardedBytes: Long = 0L
+        var firstReadDelayMs: Long? = null
+        var processedBytes: Long = 0L
+        var processedChunks: Int = 0
+        var processingTotalMs: Long = 0L
+        var processingMaxMs: Long = 0L
+        var processingSlowCount: Int = 0
+        var maxChunkAgeMs: Long = 0L
+        var totalChunkAgeMs: Long = 0L
+        var postStopDrainWallMs: Long = 0L
+        var slowReadGapCount: Int = 0
+        var finishedAtMs: Long = 0L
+    }
+
+    private data class AudioCaptureStatsSnapshot(
+        val capturedBytes: Long,
+        val readCount: Int,
+        val zeroReadCount: Int,
+        val negativeReadCount: Int,
+        val maxReadGapMs: Long,
+        val totalReadGapMs: Long,
+        val queueCapacity: Int,
+        val maxQueueDepth: Int,
+        val queueOverflowCount: Int,
+        val queueDroppedChunks: Int,
+        val queueDroppedBytes: Long,
+        val discardedChunks: Int,
+        val discardedBytes: Long,
+        val firstReadDelayMs: Long?,
+        val processedBytes: Long,
+        val processedChunks: Int,
+        val processingTotalMs: Long,
+        val processingMaxMs: Long,
+        val processingSlowCount: Int,
+        val maxChunkAgeMs: Long,
+        val totalChunkAgeMs: Long,
+        val postStopDrainWallMs: Long,
+        val slowReadGapCount: Int,
+        val finishedAtMs: Long
     )
 
     @Volatile private var activeAudioRecord: AudioRecord? = null
@@ -69,6 +135,7 @@ open class VoskOfflineSpeechRecognizer(
                 "audioDurationMs" to pcmDurationMs(activeCapturedBytes)
             )
         )
+        runCatching { activeAudioRecord?.stop() }
         return true
     }
 
@@ -202,15 +269,24 @@ open class VoskOfflineSpeechRecognizer(
         var speechStarted = false
         var firstSpeechAt: Long? = null
         var lastSpeechAt: Long? = null
-        val startedAt = System.currentTimeMillis()
-        var capturedBytes = 0L
-        var readCount = 0
-        var zeroReadCount = 0
-        var negativeReadCount = 0
-        var lastReadAt: Long? = null
-        var maxReadGapMs = 0L
-        var totalReadGapMs = 0L
-        var slowReadGapCount = 0
+        val startedAt = SystemClock.elapsedRealtime()
+        val audioQueueCapacity = audioQueueCapacityFor(maxDurationMs)
+        val queueHighWatermarkDepth = (audioQueueCapacity * 3 / 4).coerceAtLeast(1)
+        val audioQueue = LinkedBlockingQueue<AudioChunk>(audioQueueCapacity)
+        val captureFinished = AtomicBoolean(false)
+        val captureStopRequested = AtomicBoolean(false)
+        val captureStopReason = AtomicReference<String?>(null)
+        val statsLock = Any()
+        val captureStats = AudioCaptureStats()
+        synchronized(statsLock) { captureStats.queueCapacity = audioQueueCapacity }
+        var captureThread: Thread? = null
+        var slowReadLogCount = 0
+        var slowProcessingLogCount = 0
+        var queueWatermarkLogAt = 0L
+        var postStopDrainStartedAt: Long? = null
+        var postStopDrainStartProcessedBytes = 0L
+        var lastProcessedChunkReadAt: Long? = null
+        var joinTimeoutLogged = false
         val audioCaptureFile = debugLogStore?.createRetainedFile("audio", "pcm", "vosk")
         val audioCaptureOutput = audioCaptureFile?.let { runCatching { it.outputStream() }.getOrNull() }
         audioCaptureFile?.let {
@@ -230,13 +306,105 @@ open class VoskOfflineSpeechRecognizer(
         activeStartedAtMs = startedAt
         activeCapturedBytes = 0L
 
+        fun processedBytesSnapshot(): Long = synchronized(statsLock) { captureStats.processedBytes }
+
+        fun markCaptureStopReason(reason: String, fields: Map<String, Any?> = emptyMap()): Boolean {
+            val now = SystemClock.elapsedRealtime()
+            val marked = captureStopReason.compareAndSet(null, reason)
+            if (marked) {
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "audio_capture_stop_reason",
+                    mapOf(
+                        "reason" to reason,
+                        "elapsedMs" to (now - startedAt),
+                        "capturedBytes" to activeCapturedBytes,
+                        "audioDurationMs" to pcmDurationMs(activeCapturedBytes),
+                        "processedBytes" to processedBytesSnapshot(),
+                        "queueDepth" to audioQueue.size,
+                        "queueCapacity" to audioQueueCapacity
+                    ) + fields
+                )
+            }
+            return marked
+        }
+
+        fun requestCaptureStop(reason: String, fields: Map<String, Any?> = emptyMap()) {
+            markCaptureStopReason(reason, fields)
+            captureStopRequested.set(true)
+            runCatching { recorder.stop() }
+        }
+
+        fun joinCaptureThread(timeoutMs: Long) {
+            val thread = captureThread ?: return
+            thread.join(timeoutMs)
+            if (thread.isAlive && !joinTimeoutLogged) {
+                joinTimeoutLogged = true
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "audio_capture_join_timeout",
+                    mapOf(
+                        "timeoutMs" to timeoutMs,
+                        "stopReason" to captureStopReason.get(),
+                        "capturedBytes" to activeCapturedBytes,
+                        "audioDurationMs" to pcmDurationMs(activeCapturedBytes),
+                        "queueDepth" to audioQueue.size,
+                        "queueCapacity" to audioQueueCapacity
+                    )
+                )
+            }
+        }
+
+        fun recordQueueDepth(depth: Int) {
+            synchronized(statsLock) {
+                if (depth > captureStats.maxQueueDepth) captureStats.maxQueueDepth = depth
+            }
+        }
+
+        fun discardQueuedAudio(reason: String): Boolean {
+            val discarded = mutableListOf<AudioChunk>()
+            audioQueue.drainTo(discarded)
+            if (discarded.isEmpty()) return false
+            val discardedBytes = discarded.sumOf { it.bytes.size.toLong() }
+            synchronized(statsLock) {
+                captureStats.discardedChunks += discarded.size
+                captureStats.discardedBytes += discardedBytes
+            }
+            diagnostics.record(
+                diagnosticSessionId,
+                "audio_queue_discarded",
+                mapOf(
+                    "reason" to reason,
+                    "discardedChunks" to discarded.size,
+                    "discardedBytes" to discardedBytes,
+                    "discardedAudioDurationMs" to pcmDurationMs(discardedBytes),
+                    "queueCapacity" to audioQueueCapacity,
+                    "stopReason" to captureStopReason.get()
+                )
+            )
+            return true
+        }
+
         try {
             recorder.startRecording()
-            callbacks.onReady()
-            val recordingReadyAt = System.currentTimeMillis()
-            val modelLoadDurationMs = recordingReadyAt - modelLoadStartedAt
+            val recordingReadyAt = SystemClock.elapsedRealtime()
+            val modelLoadDurationMs = System.currentTimeMillis() - modelLoadStartedAt
             logs.log(ActionLogType.RECORDING_STARTED, "Built-in offline speech ready")
             diagnostics.record(diagnosticSessionId, "vosk_ready", mapOf("sampleRate" to SAMPLE_RATE))
+            diagnostics.record(
+                diagnosticSessionId,
+                "vosk_audio_recording_started",
+                mapOf(
+                    "recorderRecordingState" to recorder.recordingState,
+                    "expectedRecordingState" to AudioRecord.RECORDSTATE_RECORDING,
+                    "audioQueueCapacity" to audioQueueCapacity,
+                    "audioQueueCapacityMs" to pcmDurationMs(audioQueueCapacity.toLong() * BUFFER_BYTES)
+                )
+            )
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw IllegalStateException("Built-in offline speech could not start microphone recording.")
+            }
+            callbacks.onReady()
             diagnostics.record(
                 diagnosticSessionId,
                 "speech_ready_to_record",
@@ -245,72 +413,287 @@ open class VoskOfflineSpeechRecognizer(
                     "sampleRate" to SAMPLE_RATE,
                     "modelCachedBefore" to modelCachedBefore,
                     "modelLoadDurationMs" to modelLoadDurationMs,
-                    "captureStartDelayMs" to (recordingReadyAt - startedAt)
+                    "captureStartDelayMs" to (recordingReadyAt - startedAt),
+                    "audioQueueCapacity" to audioQueueCapacity,
+                    "audioQueueCapacityMs" to pcmDurationMs(audioQueueCapacity.toLong() * BUFFER_BYTES)
                 )
             )
 
-            val buffer = ByteArray(BUFFER_BYTES)
-            while (System.currentTimeMillis() - startedAt < maxDurationMs) {
-                val read = runCatching { recorder.read(buffer, 0, buffer.size) }.getOrDefault(0)
-                if (read <= 0) {
-                    if (read == 0) zeroReadCount += 1 else negativeReadCount += 1
-                    val elapsed = System.currentTimeMillis() - startedAt
-                    if (cancelRequested || (stopRequested && elapsed >= MIN_STOP_DURATION_MS)) break
-                    continue
-                }
-                val now = System.currentTimeMillis()
-                lastReadAt?.let { previousReadAt ->
-                    val readGapMs = now - previousReadAt
-                    totalReadGapMs += readGapMs
-                    if (readGapMs > maxReadGapMs) maxReadGapMs = readGapMs
-                    if (readGapMs >= SLOW_READ_GAP_MS) slowReadGapCount += 1
-                }
-                lastReadAt = now
-                readCount += 1
-                capturedBytes += read.toLong()
-                activeCapturedBytes = capturedBytes
-                runCatching { audioCaptureOutput?.write(buffer, 0, read) }
-                val rms = pcmRms(buffer, read)
-                if (rms > peakRms) peakRms = rms
-                rmsSum += rms
-                rmsCount += 1
-                if (speechStarted || rms >= SPEECH_RMS_THRESHOLD) {
-                    speechRmsSum += rms
-                    speechRmsCount += 1
-                } else {
-                    noiseRmsSum += rms
-                    noiseRmsCount += 1
-                }
-                if (now - lastRmsLogAt >= RMS_LOG_INTERVAL_MS) {
-                    lastRmsLogAt = now
+            captureThread = Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "audio_capture_thread_started",
+                    mapOf(
+                        "threadPriority" to runCatching { Process.getThreadPriority(Process.myTid()) }.getOrNull(),
+                        "bufferBytes" to BUFFER_BYTES,
+                        "bufferAudioMs" to pcmDurationMs(BUFFER_BYTES.toLong()),
+                        "queueCapacity" to audioQueueCapacity,
+                        "queueCapacityMs" to pcmDurationMs(audioQueueCapacity.toLong() * BUFFER_BYTES),
+                        "maxDurationMs" to maxDurationMs
+                    )
+                )
+                val buffer = ByteArray(BUFFER_BYTES)
+                try {
+                    while (!captureStopRequested.get()) {
+                        val beforeRead = SystemClock.elapsedRealtime()
+                        if (beforeRead - startedAt >= maxDurationMs) {
+                            markCaptureStopReason("max_duration")
+                            break
+                        }
+                        val read = runCatching { recorder.read(buffer, 0, buffer.size) }
+                            .getOrElse { error ->
+                                if (!captureStopRequested.get() && !cancelRequested) {
+                                    diagnostics.record(
+                                        diagnosticSessionId,
+                                        "vosk_audio_read_failed",
+                                        mapOf("message" to error.message, "errorClass" to error::class.java.name)
+                                    )
+                                    requestCaptureStop("read_error", mapOf("errorClass" to error::class.java.name, "message" to error.message))
+                                }
+                                0
+                            }
+                        val now = SystemClock.elapsedRealtime()
+                        if (read <= 0) {
+                            synchronized(statsLock) {
+                                if (read == 0) captureStats.zeroReadCount += 1 else captureStats.negativeReadCount += 1
+                            }
+                            val elapsed = now - startedAt
+                            if (cancelRequested) {
+                                requestCaptureStop("cancel")
+                                break
+                            }
+                            if (stopRequested && elapsed >= MIN_STOP_DURATION_MS) {
+                                requestCaptureStop("user_stop")
+                                break
+                            }
+                            continue
+                        }
+
+                        val chunkBytes = buffer.copyOf(read)
+                        var readGapMs: Long? = null
+                        var firstReadDelayMs: Long? = null
+                        synchronized(statsLock) {
+                            if (captureStats.firstReadDelayMs == null) {
+                                captureStats.firstReadDelayMs = now - startedAt
+                                firstReadDelayMs = captureStats.firstReadDelayMs
+                            }
+                            captureStats.lastReadAt?.let { previousReadAt ->
+                                readGapMs = now - previousReadAt
+                                captureStats.totalReadGapMs += readGapMs ?: 0L
+                                if ((readGapMs ?: 0L) > captureStats.maxReadGapMs) captureStats.maxReadGapMs = readGapMs ?: 0L
+                                if ((readGapMs ?: 0L) >= SLOW_READ_GAP_MS) captureStats.slowReadGapCount += 1
+                            }
+                            captureStats.lastReadAt = now
+                            captureStats.readCount += 1
+                            captureStats.capturedBytes += read.toLong()
+                            activeCapturedBytes = captureStats.capturedBytes
+                        }
+                        firstReadDelayMs?.let { delayMs ->
+                            diagnostics.record(
+                                diagnosticSessionId,
+                                "audio_capture_first_read",
+                                mapOf("firstReadDelayMs" to delayMs, "bytes" to read, "audioDurationMs" to pcmDurationMs(read.toLong()))
+                            )
+                        }
+                        readGapMs?.takeIf { it >= SLOW_READ_GAP_MS && slowReadLogCount < MAX_SLOW_READ_LOG_EVENTS }?.let { gapMs ->
+                            slowReadLogCount += 1
+                            diagnostics.record(
+                                diagnosticSessionId,
+                                "audio_capture_slow_read",
+                                mapOf(
+                                    "readGapMs" to gapMs,
+                                    "readCount" to synchronized(statsLock) { captureStats.readCount },
+                                    "capturedBytes" to activeCapturedBytes,
+                                    "audioDurationMs" to pcmDurationMs(activeCapturedBytes),
+                                    "queueDepth" to audioQueue.size,
+                                    "queueCapacity" to audioQueueCapacity,
+                                    "recorderRecordingState" to recorder.recordingState
+                                )
+                            )
+                        }
+                        runCatching { audioCaptureOutput?.write(chunkBytes) }
+                        val offered = audioQueue.offer(AudioChunk(chunkBytes, now))
+                        val queueDepth = audioQueue.size
+                        recordQueueDepth(queueDepth)
+                        if (!offered) {
+                            synchronized(statsLock) {
+                                captureStats.queueOverflowCount += 1
+                                captureStats.queueDroppedChunks += 1
+                                captureStats.queueDroppedBytes += read.toLong()
+                            }
+                            diagnostics.record(
+                                diagnosticSessionId,
+                                "audio_queue_overflow",
+                                mapOf(
+                                    "queueDepth" to queueDepth,
+                                    "queueCapacity" to audioQueueCapacity,
+                                    "droppedBytes" to read,
+                                    "capturedBytes" to activeCapturedBytes,
+                                    "audioDurationMs" to pcmDurationMs(activeCapturedBytes),
+                                    "processedBytes" to processedBytesSnapshot()
+                                )
+                            )
+                            requestCaptureStop("queue_overflow")
+                            break
+                        }
+                        if (queueDepth >= queueHighWatermarkDepth && now - queueWatermarkLogAt >= QUEUE_WATERMARK_LOG_INTERVAL_MS) {
+                            queueWatermarkLogAt = now
+                            diagnostics.record(
+                                diagnosticSessionId,
+                                "audio_queue_watermark",
+                                mapOf(
+                                    "queueDepth" to queueDepth,
+                                    "queueCapacity" to audioQueueCapacity,
+                                    "queuedAudioMs" to pcmDurationMs(queueDepth.toLong() * BUFFER_BYTES),
+                                    "capturedBytes" to activeCapturedBytes,
+                                    "processedBytes" to processedBytesSnapshot()
+                                )
+                            )
+                        }
+
+                        val elapsed = now - startedAt
+                        if (cancelRequested) {
+                            requestCaptureStop("cancel")
+                            break
+                        }
+                        if (stopRequested && elapsed >= MIN_STOP_DURATION_MS) {
+                            requestCaptureStop("user_stop")
+                            break
+                        }
+                    }
+                } finally {
+                    synchronized(statsLock) {
+                        if (captureStats.finishedAtMs == 0L) captureStats.finishedAtMs = SystemClock.elapsedRealtime()
+                    }
+                    markCaptureStopReason(if (captureStopRequested.get()) "capture_thread_exit" else "max_duration")
+                    val stats = captureStatsSnapshot(captureStats, statsLock)
                     diagnostics.record(
                         diagnosticSessionId,
-                        "vosk_rms",
-                        mapOf("rms" to rounded(rms), "peakRms" to rounded(peakRms), "speechStarted" to speechStarted, "speechRmsThreshold" to SPEECH_RMS_THRESHOLD)
+                        "audio_capture_thread_exit",
+                        audioQueueSummaryFields(stats) + audioCaptureSummaryFields(
+                            wallDurationMs = ((stats.finishedAtMs.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()) - startedAt).coerceAtLeast(0L),
+                            capturedBytes = stats.capturedBytes,
+                            readCount = stats.readCount,
+                            zeroReadCount = stats.zeroReadCount,
+                            negativeReadCount = stats.negativeReadCount,
+                            maxReadGapMs = stats.maxReadGapMs,
+                            totalReadGapMs = stats.totalReadGapMs,
+                            slowReadGapCount = stats.slowReadGapCount
+                        ) + mapOf("stopReason" to captureStopReason.get())
+                    )
+                    captureFinished.set(true)
+                }
+            }, "DroidLM-VoskAudioCapture").apply { start() }
+
+            while (!captureFinished.get() || audioQueue.isNotEmpty()) {
+                val now = SystemClock.elapsedRealtime()
+                val stopObserved = stopRequested || captureStopRequested.get()
+                if (stopObserved && postStopDrainStartedAt == null) {
+                    postStopDrainStartedAt = now
+                    postStopDrainStartProcessedBytes = processedBytesSnapshot()
+                    diagnostics.record(
+                        diagnosticSessionId,
+                        "audio_post_stop_drain_started",
+                        mapOf(
+                            "stopReason" to captureStopReason.get(),
+                            "queueDepth" to audioQueue.size,
+                            "queueCapacity" to audioQueueCapacity,
+                            "processedBytes" to postStopDrainStartProcessedBytes,
+                            "capturedBytes" to activeCapturedBytes
+                        )
                     )
                 }
-                if (rms >= SPEECH_RMS_THRESHOLD) {
-                    if (!speechStarted) firstSpeechAt = now
-                    speechStarted = true
-                    lastSpeechAt = now
-                }
-
-                if (recognizer.acceptWaveForm(buffer, read)) {
-                    val segmentJson = recognizer.result
-                    val text = parseText(segmentJson)
-                    if (text.isNotBlank()) {
-                        acceptedSegments += text
-                        callbacks.onPartial(text)
-                        diagnostics.record(diagnosticSessionId, "vosk_segment", transcriptFields(text) + confidenceFields(segmentJson))
+                if (stopObserved && captureFinished.get() && audioQueue.isNotEmpty()) {
+                    val drainStartedAt = postStopDrainStartedAt ?: now
+                    val drainWallMs = now - drainStartedAt
+                    val postStopProcessedAudioMs = pcmDurationMs((processedBytesSnapshot() - postStopDrainStartProcessedBytes).coerceAtLeast(0L))
+                    val stopReason = captureStopReason.get()
+                    val stoppedWithRecognizedSpeech = stopReason in setOf("user_stop", "silence_after_speech") && (speechStarted || postStopProcessedAudioMs > 0L)
+                    if (stoppedWithRecognizedSpeech || drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS || postStopProcessedAudioMs >= MAX_POST_STOP_DRAIN_AUDIO_MS) {
+                        synchronized(statsLock) { captureStats.postStopDrainWallMs = drainWallMs }
+                        val reason = when {
+                            stoppedWithRecognizedSpeech -> "${stopReason}_backlog"
+                            drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS -> "post_stop_drain_wall_cap"
+                            else -> "post_stop_drain_audio_cap"
+                        }
+                        discardQueuedAudio(reason)
+                        break
                     }
-                } else {
-                    val partial = parsePartial(recognizer.partialResult)
-                    if (partial.isNotBlank() && partial != lastPartial) {
-                        lastPartial = partial
+                }
+                val chunk = audioQueue.poll(50, TimeUnit.MILLISECONDS)
+                if (chunk != null) {
+                    val read = chunk.bytes.size
+                    val chunkAgeMs = (now - chunk.readAtMs).coerceAtLeast(0L)
+                    val rms = pcmRms(chunk.bytes, read)
+                    if (rms > peakRms) peakRms = rms
+                    rmsSum += rms
+                    rmsCount += 1
+                    if (speechStarted || rms >= SPEECH_RMS_THRESHOLD) {
+                        speechRmsSum += rms
+                        speechRmsCount += 1
+                    } else {
+                        noiseRmsSum += rms
+                        noiseRmsCount += 1
+                    }
+                    if (now - lastRmsLogAt >= RMS_LOG_INTERVAL_MS) {
+                        lastRmsLogAt = now
+                        diagnostics.record(
+                            diagnosticSessionId,
+                            "vosk_rms",
+                            mapOf("rms" to rounded(rms), "peakRms" to rounded(peakRms), "speechStarted" to speechStarted, "speechRmsThreshold" to SPEECH_RMS_THRESHOLD)
+                        )
+                    }
+                    if (rms >= SPEECH_RMS_THRESHOLD) {
+                        if (!speechStarted) firstSpeechAt = chunk.readAtMs
                         speechStarted = true
-                        lastSpeechAt = now
-                        callbacks.onPartial(partial)
-                        diagnostics.record(diagnosticSessionId, "vosk_partial", transcriptFields(partial))
+                        lastSpeechAt = chunk.readAtMs
+                    }
+
+                    val processingStartedAt = SystemClock.elapsedRealtime()
+                    if (recognizer.acceptWaveForm(chunk.bytes, read)) {
+                        val segmentJson = recognizer.result
+                        val text = parseText(segmentJson)
+                        if (text.isNotBlank()) {
+                            acceptedSegments += text
+                            callbacks.onPartial(text)
+                            diagnostics.record(diagnosticSessionId, "vosk_segment", transcriptFields(text) + confidenceFields(segmentJson))
+                        }
+                    } else {
+                        val partial = parsePartial(recognizer.partialResult)
+                        if (partial.isNotBlank() && partial != lastPartial) {
+                            lastPartial = partial
+                            speechStarted = true
+                            lastSpeechAt = chunk.readAtMs
+                            callbacks.onPartial(partial)
+                            diagnostics.record(diagnosticSessionId, "vosk_partial", transcriptFields(partial))
+                        }
+                    }
+                    val processingMs = SystemClock.elapsedRealtime() - processingStartedAt
+                    synchronized(statsLock) {
+                        captureStats.processedChunks += 1
+                        captureStats.processedBytes += read.toLong()
+                        captureStats.processingTotalMs += processingMs
+                        if (processingMs > captureStats.processingMaxMs) captureStats.processingMaxMs = processingMs
+                        if (processingMs >= SLOW_PROCESSING_MS) captureStats.processingSlowCount += 1
+                        captureStats.totalChunkAgeMs += chunkAgeMs
+                        if (chunkAgeMs > captureStats.maxChunkAgeMs) captureStats.maxChunkAgeMs = chunkAgeMs
+                    }
+                    lastProcessedChunkReadAt = chunk.readAtMs
+                    if (processingMs >= SLOW_PROCESSING_MS && slowProcessingLogCount < MAX_SLOW_PROCESSING_LOG_EVENTS) {
+                        slowProcessingLogCount += 1
+                        diagnostics.record(
+                            diagnosticSessionId,
+                            "vosk_processing_slow",
+                            mapOf(
+                                "processingMs" to processingMs,
+                                "chunkAgeMs" to chunkAgeMs,
+                                "queueDepth" to audioQueue.size,
+                                "queueCapacity" to audioQueueCapacity,
+                                "processedBytes" to processedBytesSnapshot(),
+                                "capturedBytes" to activeCapturedBytes
+                            )
+                        )
                     }
                 }
 
@@ -318,10 +701,71 @@ open class VoskOfflineSpeechRecognizer(
                 val silentLongEnough = speechStarted && elapsed >= MIN_DURATION_MS && lastSpeechAt?.let { now - it >= SILENCE_AFTER_SPEECH_MS } == true
                 val noSpeechTimeout = !speechStarted && elapsed >= INITIAL_NO_SPEECH_TIMEOUT_MS
                 val stopAfterTail = stopRequested && elapsed >= MIN_STOP_DURATION_MS
-                if (cancelRequested || stopAfterTail || silentLongEnough || noSpeechTimeout) break
-            }
+                when {
+                    cancelRequested -> requestCaptureStop("cancel")
+                    stopAfterTail -> requestCaptureStop("user_stop")
+                    silentLongEnough -> requestCaptureStop("silence_after_speech")
+                    noSpeechTimeout -> requestCaptureStop("initial_no_speech_timeout")
+                }
 
-            val finalResultJson = recognizer.finalResult
+                if (captureStopRequested.get() && captureFinished.get() && audioQueue.isNotEmpty()) {
+                    val drainStartedAt = postStopDrainStartedAt ?: now
+                    val drainWallMs = now - drainStartedAt
+                    val postStopProcessedAudioMs = pcmDurationMs((processedBytesSnapshot() - postStopDrainStartProcessedBytes).coerceAtLeast(0L))
+                    val trailingSilenceProcessed = speechStarted && lastSpeechAt?.let { lastSpeech ->
+                        lastProcessedChunkReadAt?.let { processedAt -> processedAt - lastSpeech >= SILENCE_AFTER_SPEECH_MS }
+                    } == true
+                    val queueOverflowed = synchronized(statsLock) { captureStats.queueOverflowCount > 0 }
+                    val discardReason = when {
+                        queueOverflowed -> "queue_overflow"
+                        trailingSilenceProcessed -> "tail_silence_after_speech"
+                        drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS -> "post_stop_drain_wall_cap"
+                        postStopProcessedAudioMs >= MAX_POST_STOP_DRAIN_AUDIO_MS -> "post_stop_drain_audio_cap"
+                        else -> null
+                    }
+                    if (discardReason != null) {
+                        synchronized(statsLock) { captureStats.postStopDrainWallMs = drainWallMs }
+                        discardQueuedAudio(discardReason)
+                        break
+                    }
+                }
+                if (captureStopRequested.get() && captureFinished.get() && audioQueue.isEmpty()) break
+            }
+            requestCaptureStop("recognition_loop_completed")
+            postStopDrainStartedAt?.let { drainStartedAt ->
+                synchronized(statsLock) {
+                    if (captureStats.postStopDrainWallMs == 0L) {
+                        captureStats.postStopDrainWallMs = (SystemClock.elapsedRealtime() - drainStartedAt).coerceAtLeast(0L)
+                    }
+                }
+            }
+            joinCaptureThread(2_000)
+
+            val preFinalStats = captureStatsSnapshot(captureStats, statsLock)
+            val finalResultJson = if (preFinalStats.discardedChunks > 0) {
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "vosk_final_result_skipped",
+                    mapOf(
+                        "reason" to "discarded_queued_audio",
+                        "discardedChunks" to preFinalStats.discardedChunks,
+                        "discardedBytes" to preFinalStats.discardedBytes,
+                        "discardedAudioDurationMs" to pcmDurationMs(preFinalStats.discardedBytes),
+                        "stopReason" to captureStopReason.get()
+                    )
+                )
+                "{}"
+            } else {
+                val finalResultStartedAt = SystemClock.elapsedRealtime()
+                diagnostics.record(diagnosticSessionId, "vosk_final_result_started", mapOf("stopReason" to captureStopReason.get()))
+                recognizer.finalResult.also {
+                    diagnostics.record(
+                        diagnosticSessionId,
+                        "vosk_final_result_completed",
+                        mapOf("durationMs" to (SystemClock.elapsedRealtime() - finalResultStartedAt), "stopReason" to captureStopReason.get())
+                    )
+                }
+            }
             val finalText = parseText(finalResultJson)
             val transcript = (acceptedSegments + finalText)
                 .map { it.trim() }
@@ -329,21 +773,30 @@ open class VoskOfflineSpeechRecognizer(
                 .joinToString(" ")
                 .ifBlank { lastPartial }
                 .trim()
-            val durationMs = System.currentTimeMillis() - startedAt
+            val stats = captureStatsSnapshot(captureStats, statsLock)
+            val durationMs = ((stats.finishedAtMs.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()) - startedAt).coerceAtLeast(0L)
             val lastSpeechAtSnapshot = lastSpeechAt
+            diagnostics.record(
+                diagnosticSessionId,
+                "vosk_processing_summary",
+                audioProcessingSummaryFields(stats) + audioQueueSummaryFields(stats) + mapOf(
+                    "stopReason" to captureStopReason.get(),
+                    "durationMs" to durationMs
+                )
+            )
             diagnostics.record(
                 diagnosticSessionId,
                 "audio_capture_summary",
                 audioCaptureSummaryFields(
                     wallDurationMs = durationMs,
-                    capturedBytes = capturedBytes,
-                    readCount = readCount,
-                    zeroReadCount = zeroReadCount,
-                    negativeReadCount = negativeReadCount,
-                    maxReadGapMs = maxReadGapMs,
-                    totalReadGapMs = totalReadGapMs,
-                    slowReadGapCount = slowReadGapCount
-                )
+                    capturedBytes = stats.capturedBytes,
+                    readCount = stats.readCount,
+                    zeroReadCount = stats.zeroReadCount,
+                    negativeReadCount = stats.negativeReadCount,
+                    maxReadGapMs = stats.maxReadGapMs,
+                    totalReadGapMs = stats.totalReadGapMs,
+                    slowReadGapCount = stats.slowReadGapCount
+                ) + audioQueueSummaryFields(stats) + audioProcessingSummaryFields(stats) + mapOf("stopReason" to captureStopReason.get())
             )
             diagnostics.record(diagnosticSessionId, "transcript_quality", transcriptQualityFields(transcript))
             diagnostics.record(
@@ -362,32 +815,61 @@ open class VoskOfflineSpeechRecognizer(
                     "speechStarted" to speechStarted,
                     "firstSpeechMs" to firstSpeechAt?.let { it - startedAt },
                     "lastSpeechMs" to lastSpeechAtSnapshot?.let { it - startedAt },
-                    "tailSilenceMs" to lastSpeechAtSnapshot?.let { System.currentTimeMillis() - it },
+                    "tailSilenceMs" to lastSpeechAtSnapshot?.let { SystemClock.elapsedRealtime() - it },
                     "speechRmsThreshold" to SPEECH_RMS_THRESHOLD,
                     "initialNoSpeechTimeoutMs" to INITIAL_NO_SPEECH_TIMEOUT_MS,
                     "silenceAfterSpeechMs" to SILENCE_AFTER_SPEECH_MS,
                     "stopRequested" to stopRequested,
                     "cancelRequested" to cancelRequested,
                     "peakRms" to rounded(peakRms),
-                    "readCount" to readCount,
-                    "zeroReadCount" to zeroReadCount,
-                    "negativeReadCount" to negativeReadCount,
-                    "capturedBytes" to capturedBytes,
-                    "audioDurationMs" to pcmDurationMs(capturedBytes)
+                    "readCount" to stats.readCount,
+                    "zeroReadCount" to stats.zeroReadCount,
+                    "negativeReadCount" to stats.negativeReadCount,
+                    "capturedBytes" to stats.capturedBytes,
+                    "audioDurationMs" to pcmDurationMs(stats.capturedBytes)
                 )
             )
+            if (stats.queueOverflowCount > 0) throw IllegalStateException("Built-in offline speech audio queue overflowed; capture was not fully recognized.")
             if (cancelRequested) throw IllegalStateException("Built-in offline speech cancelled.")
             if (transcript.isBlank()) throw IllegalStateException("Built-in offline speech did not hear a command.")
             logs.log(ActionLogType.RECORDING_STOPPED, "Built-in offline speech stopped after ${durationMs}ms")
             transcript
         } catch (error: Throwable) {
-            diagnostics.record(diagnosticSessionId, "vosk_error", mapOf("message" to error.message, "errorClass" to error::class.java.name, "recordingAgeMs" to activeRecordingAgeMs(), "capturedBytes" to capturedBytes, "audioDurationMs" to pcmDurationMs(capturedBytes)))
+            val stats = captureStatsSnapshot(captureStats, statsLock)
+            diagnostics.record(
+                diagnosticSessionId,
+                "vosk_error",
+                mapOf(
+                    "message" to error.message,
+                    "errorClass" to error::class.java.name,
+                    "recordingAgeMs" to activeRecordingAgeMs(),
+                    "capturedBytes" to stats.capturedBytes,
+                    "audioDurationMs" to pcmDurationMs(stats.capturedBytes),
+                    "stopReason" to captureStopReason.get(),
+                    "queueOverflowCount" to stats.queueOverflowCount,
+                    "discardedBytes" to stats.discardedBytes
+                )
+            )
             throw error
         } finally {
+            requestCaptureStop("cleanup")
+            runCatching { joinCaptureThread(2_000) }
+            runCatching { audioCaptureOutput?.flush() }
             runCatching { audioCaptureOutput?.close() }
+            val finalStats = captureStatsSnapshot(captureStats, statsLock)
             audioCaptureFile?.let { file ->
                 if (file.length() > 0L) {
-                    diagnostics.record(diagnosticSessionId, "debug_audio_capture_saved", mapOf("file" to file.name, "bytes" to file.length(), "audioDurationMs" to pcmDurationMs(file.length())))
+                    diagnostics.record(
+                        diagnosticSessionId,
+                        "debug_audio_capture_saved",
+                        mapOf(
+                            "file" to file.name,
+                            "bytes" to file.length(),
+                            "audioDurationMs" to pcmDurationMs(file.length()),
+                            "expectedCapturedBytes" to finalStats.capturedBytes,
+                            "fileLengthMatches" to (file.length() == finalStats.capturedBytes)
+                        )
+                    )
                 } else {
                     file.delete()
                 }
@@ -401,6 +883,39 @@ open class VoskOfflineSpeechRecognizer(
             runCatching { recognizer.close() }
         }
     }
+
+    private fun captureStatsSnapshot(
+        stats: AudioCaptureStats,
+        lock: Any
+    ): AudioCaptureStatsSnapshot = synchronized(lock) {
+        AudioCaptureStatsSnapshot(
+            capturedBytes = stats.capturedBytes,
+            readCount = stats.readCount,
+            zeroReadCount = stats.zeroReadCount,
+            negativeReadCount = stats.negativeReadCount,
+            maxReadGapMs = stats.maxReadGapMs,
+            totalReadGapMs = stats.totalReadGapMs,
+            slowReadGapCount = stats.slowReadGapCount,
+            queueCapacity = stats.queueCapacity,
+            maxQueueDepth = stats.maxQueueDepth,
+            queueOverflowCount = stats.queueOverflowCount,
+            queueDroppedChunks = stats.queueDroppedChunks,
+            queueDroppedBytes = stats.queueDroppedBytes,
+            discardedChunks = stats.discardedChunks,
+            discardedBytes = stats.discardedBytes,
+            firstReadDelayMs = stats.firstReadDelayMs,
+            processedBytes = stats.processedBytes,
+            processedChunks = stats.processedChunks,
+            processingTotalMs = stats.processingTotalMs,
+            processingMaxMs = stats.processingMaxMs,
+            processingSlowCount = stats.processingSlowCount,
+            maxChunkAgeMs = stats.maxChunkAgeMs,
+            totalChunkAgeMs = stats.totalChunkAgeMs,
+            postStopDrainWallMs = stats.postStopDrainWallMs,
+            finishedAtMs = stats.finishedAtMs
+        )
+    }
+
 
     suspend fun transcribePcm16Mono(
         pcm: ByteArray,
@@ -527,10 +1042,16 @@ open class VoskOfflineSpeechRecognizer(
     }
 
     private fun activeRecordingAgeMs(): Long =
-        activeStartedAtMs.takeIf { it > 0L }?.let { System.currentTimeMillis() - it } ?: 0L
+        activeStartedAtMs.takeIf { it > 0L }?.let { SystemClock.elapsedRealtime() - it } ?: 0L
 
     private fun pcmDurationMs(bytes: Long): Long =
         (bytes * 1000L) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+    private fun audioQueueCapacityFor(maxDurationMs: Long): Int {
+        val chunkDurationMs = pcmDurationMs(BUFFER_BYTES.toLong()).coerceAtLeast(1L)
+        val chunksForDuration = ((maxDurationMs.coerceAtLeast(0L) + chunkDurationMs - 1L) / chunkDurationMs).coerceAtLeast(1L)
+        return chunksForDuration.coerceIn(MIN_AUDIO_QUEUE_CAPACITY.toLong(), MAX_AUDIO_QUEUE_CAPACITY.toLong()).toInt()
+    }
 
 
     private fun isModelCached(): Boolean = synchronized(modelLock) { cachedModel != null }
@@ -612,6 +1133,36 @@ open class VoskOfflineSpeechRecognizer(
         )
     }
 
+    private fun audioQueueSummaryFields(stats: AudioCaptureStatsSnapshot): Map<String, Any?> = mapOf(
+        "queueCapacity" to stats.queueCapacity,
+        "queueCapacityMs" to pcmDurationMs(stats.queueCapacity.toLong() * BUFFER_BYTES),
+        "maxQueueDepth" to stats.maxQueueDepth,
+        "maxQueuedAudioMs" to pcmDurationMs(stats.maxQueueDepth.toLong() * BUFFER_BYTES),
+        "queueOverflowCount" to stats.queueOverflowCount,
+        "queueDroppedChunks" to stats.queueDroppedChunks,
+        "queueDroppedBytes" to stats.queueDroppedBytes,
+        "queueDroppedAudioDurationMs" to pcmDurationMs(stats.queueDroppedBytes),
+        "discardedChunks" to stats.discardedChunks,
+        "discardedBytes" to stats.discardedBytes,
+        "discardedAudioDurationMs" to pcmDurationMs(stats.discardedBytes),
+        "firstReadDelayMs" to stats.firstReadDelayMs
+    )
+
+    private fun audioProcessingSummaryFields(stats: AudioCaptureStatsSnapshot): Map<String, Any?> = mapOf(
+        "processedChunks" to stats.processedChunks,
+        "processedBytes" to stats.processedBytes,
+        "processedAudioDurationMs" to pcmDurationMs(stats.processedBytes),
+        "averageProcessingMs" to average(stats.processingTotalMs.toDouble(), stats.processedChunks)?.let(::rounded),
+        "maxProcessingMs" to stats.processingMaxMs,
+        "slowProcessingCount" to stats.processingSlowCount,
+        "slowProcessingThresholdMs" to SLOW_PROCESSING_MS,
+        "averageChunkAgeMs" to average(stats.totalChunkAgeMs.toDouble(), stats.processedChunks)?.let(::rounded),
+        "maxChunkAgeMs" to stats.maxChunkAgeMs,
+        "postStopDrainWallMs" to stats.postStopDrainWallMs,
+        "maxPostStopDrainWallMs" to MAX_POST_STOP_DRAIN_WALL_MS,
+        "maxPostStopDrainAudioMs" to MAX_POST_STOP_DRAIN_AUDIO_MS
+    )
+
     private fun transcriptQualityFields(transcript: String): Map<String, Any?> {
         val normalized = SpeechTextNormalizer.normalizeForRecognition(transcript)
         val words = normalized.split(' ').filter { it.isNotBlank() }
@@ -652,6 +1203,14 @@ open class VoskOfflineSpeechRecognizer(
         const val SPEECH_RMS_THRESHOLD = 350.0
         const val RMS_LOG_INTERVAL_MS = 500L
         const val SLOW_READ_GAP_MS = 250L
+        const val SLOW_PROCESSING_MS = 250L
+        const val MAX_SLOW_READ_LOG_EVENTS = 8
+        const val MAX_SLOW_PROCESSING_LOG_EVENTS = 8
+        const val QUEUE_WATERMARK_LOG_INTERVAL_MS = 1_000L
+        const val MIN_AUDIO_QUEUE_CAPACITY = 8
+        const val MAX_AUDIO_QUEUE_CAPACITY = 1_024
+        const val MAX_POST_STOP_DRAIN_WALL_MS = 3_000L
+        const val MAX_POST_STOP_DRAIN_AUDIO_MS = 2_500L
         const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
     }

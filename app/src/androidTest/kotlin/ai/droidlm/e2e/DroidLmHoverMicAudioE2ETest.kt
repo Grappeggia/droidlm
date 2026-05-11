@@ -24,6 +24,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(AndroidJUnit4::class)
 class DroidLmHoverMicAudioE2ETest {
@@ -96,6 +97,129 @@ class DroidLmHoverMicAudioE2ETest {
                     "Expected injected mic audio to produce an Open Google Drive transcript or launch Drive; state=${app.speechRecognitionController.state.value}",
                     waitForTranscriptOrDrive(45_000)
                 )
+            }
+        }
+    }
+
+    @Test
+    fun hoverRecordOpenGoogleDriveAudioCapturesEnoughPcm() {
+        runBlocking {
+            val markerPath = args.getString("micAudioMarkerPath")
+                ?: throw AssertionError("micAudioMarkerPath instrumentation arg is required")
+            val recordHoldMs = longArg("captureRecordHoldMs", 5_000L)
+            val injectBeforeListening = booleanArg("captureInjectBeforeListening", false)
+            val assertMetrics = booleanArg("captureAssertMetrics", true)
+            val minAudioDurationMs = longArg("captureMinAudioDurationMs", 2_200L)
+            val minCaptureEfficiency = doubleArg("captureMinEfficiency", 0.65)
+            val maxReadGapMsAllowed = longArg("captureMaxReadGapMs", 1_000L)
+            val maxCompletionLatencyMs = longArg("captureMaxCompletionLatencyMs", 8_000L)
+            val cpuStressThreads = intArg("captureCpuStressThreads", 0)
+            val memoryPressureMb = intArg("captureMemoryPressureMb", 0)
+            val stress = startCpuStressThreads(cpuStressThreads)
+            val memoryPressure = allocateMemoryPressure(memoryPressureMb)
+            try {
+                app.settingsRepository.updateDebugLoggingEnabled(true)
+                assertTrue("Expected debug logging to enable for capture regression diagnostics", waitForDebugLoggingEnabled(5_000))
+                app.speechDiagnosticsLogger.clear()
+                SystemClock.sleep(250)
+                app.actionLogRepository.clear()
+                app.executor.cancelActive()
+                app.speechRecognitionController.clear()
+
+                targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
+                val device = UiDevice.getInstance(instrumentation)
+                val recordButton = device.wait(
+                    Until.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION)),
+                    5_000
+                ) ?: throw AssertionError("Expected floating record button to be visible")
+
+                recordButton.click()
+                assertTrue(
+                    "Expected open-google-drive capture regression run to activate speech recognition quickly; state=${app.speechRecognitionController.state.value}",
+                    waitForActive(750)
+                )
+                if (injectBeforeListening) {
+                    executeShell("mkdir -p ${markerPath.substringBeforeLast('/')}")
+                    executeShell("touch $markerPath")
+                }
+                assertRecordButtonStaysActive(device, 2_000)
+                assertTrue(
+                    "Expected open-google-drive capture regression run to reach listening state before injected audio completes; state=${app.speechRecognitionController.state.value}",
+                    waitForListening(20_000)
+                )
+                if (!injectBeforeListening) {
+                    executeShell("mkdir -p ${markerPath.substringBeforeLast('/')}")
+                    executeShell("touch $markerPath")
+                }
+                SystemClock.sleep(recordHoldMs)
+
+                val stopButton = device.wait(
+                    Until.findObject(By.desc(FloatingControlOverlayService.RECORD_BUTTON_CONTENT_DESCRIPTION)),
+                    2_000
+                ) ?: throw AssertionError("Expected floating record button to remain visible for stop tap")
+                stopButton.click()
+
+                assertTrue(
+                    "Expected speech session to finish after stop tap; speech=${app.speechRecognitionController.state.value}; execution=${app.executor.uiState.value}; events=${diagnosticEventSummary()}",
+                    waitForSpeechSessionToFinish(45_000)
+                )
+
+                val events = readDiagnosticEvents()
+                val primarySessionEvents = latestCompletedSessionEvents(events)
+                val capture = primarySessionEvents.lastOrNull { it.optString("event") == "audio_capture_summary" }
+                    ?: throw AssertionError("Expected audio_capture_summary for open-google-drive capture run. Events=$primarySessionEvents")
+                val finalEvent = primarySessionEvents.lastOrNull { it.optString("event") == "vosk_final" }
+                val finalTranscript = finalEvent
+                    ?.optString("transcript")
+                    ?.lowercase()
+                    ?.trim()
+                    .orEmpty()
+                val stopRequestEvent = primarySessionEvents.lastOrNull { it.optString("event") == "vosk_stop_requested" }
+                    ?: primarySessionEvents.lastOrNull { it.optString("event") == "audio_capture_stop_reason" }
+                val completionLatencyMs = if (stopRequestEvent != null && finalEvent != null) {
+                    (finalEvent.optLong("tMs") - stopRequestEvent.optLong("tMs")).coerceAtLeast(0L)
+                } else {
+                    Long.MAX_VALUE
+                }
+                val audioDurationMs = capture.optLong("audioDurationMs")
+                val wallDurationMs = capture.optLong("wallDurationMs")
+                val captureEfficiency = capture.optDouble("captureEfficiency")
+                val maxReadGapMs = capture.optLong("maxReadGapMs")
+                val queueOverflowCount = capture.optLong("queueOverflowCount")
+                val summary = JSONObject()
+                    .put("audioDurationMs", audioDurationMs)
+                    .put("wallDurationMs", wallDurationMs)
+                    .put("captureEfficiency", captureEfficiency)
+                    .put("maxReadGapMs", maxReadGapMs)
+                    .put("readCount", capture.optLong("readCount"))
+                    .put("slowReadGapCount", capture.optLong("slowReadGapCount"))
+                    .put("queueOverflowCount", queueOverflowCount)
+                    .put("maxQueueDepth", capture.optLong("maxQueueDepth"))
+                    .put("queueCapacity", capture.optLong("queueCapacity"))
+                    .put("discardedAudioDurationMs", capture.optLong("discardedAudioDurationMs"))
+                    .put("postStopDrainWallMs", capture.optLong("postStopDrainWallMs"))
+                    .put("completionLatencyMs", completionLatencyMs)
+                    .put("maxCompletionLatencyMs", maxCompletionLatencyMs)
+                    .put("transcript", finalTranscript)
+                    .put("cpuStressThreads", cpuStressThreads)
+                    .put("memoryPressureMb", memoryPressureMb)
+                    .put("recordHoldMs", recordHoldMs)
+                    .put("injectBeforeListening", injectBeforeListening)
+                    .put("memoryPressureBytes", memoryPressure?.size ?: 0)
+                println("DROIDLM_CAPTURE_METRICS $summary")
+
+                if (assertMetrics) {
+                    assertTrue(
+                        "Expected live emulator mic capture to retain most audio, avoid queue overflow, and finish promptly after stop; metrics=$summary; capture=$capture; events=${compactEvents(primarySessionEvents)}",
+                        audioDurationMs >= minAudioDurationMs &&
+                            captureEfficiency >= minCaptureEfficiency &&
+                            maxReadGapMs < maxReadGapMsAllowed &&
+                            queueOverflowCount == 0L &&
+                            completionLatencyMs <= maxCompletionLatencyMs
+                    )
+                }
+            } finally {
+                stress.close()
             }
         }
     }
@@ -253,14 +377,14 @@ class DroidLmHoverMicAudioE2ETest {
             val speech = app.speechRecognitionController.state.value
             val execution = app.executor.uiState.value
             val settled = !speech.isActive && !speech.isListening && !speech.isStarting &&
-                (speech.finalTranscript.isNotBlank() || execution.status == "Error")
+                (speech.finalTranscript.isNotBlank() || speech.errorMessage?.isNotBlank() == true || execution.status == "Error")
             if (settled) return true
             SystemClock.sleep(100)
         }
         val speech = app.speechRecognitionController.state.value
         val execution = app.executor.uiState.value
         return !speech.isActive && !speech.isListening && !speech.isStarting &&
-            (speech.finalTranscript.isNotBlank() || execution.status == "Error")
+            (speech.finalTranscript.isNotBlank() || speech.errorMessage?.isNotBlank() == true || execution.status == "Error")
     }
 
     private fun readDiagnosticEvents(): List<JSONObject> {
@@ -269,6 +393,80 @@ class DroidLmHoverMicAudioE2ETest {
         return exported.readLines()
             .filter { it.isNotBlank() }
             .map(::JSONObject)
+    }
+
+    private fun latestCompletedSessionEvents(events: List<JSONObject>): List<JSONObject> {
+        val sessionId = events.lastOrNull { event ->
+            event.optString("event") in setOf("audio_capture_summary", "vosk_final", "push_to_talk_execution_failed", "push_to_talk_failed")
+        }?.optString("sessionId")
+            ?: throw AssertionError("Expected a completed speech session in diagnostics. Events=$events")
+        return events.filter { event -> event.optString("sessionId") == sessionId }
+    }
+
+    private fun diagnosticEventSummary(): String = runCatching {
+        compactEvents(readDiagnosticEvents())
+    }.getOrElse { error ->
+        "<diagnostics unavailable: ${error.message}>"
+    }
+
+    private fun compactEvents(events: List<JSONObject>): String = events.joinToString(prefix = "[", postfix = "]") { event ->
+        val fields = listOf(
+            event.optString("event"),
+            event.optString("sessionId"),
+            event.optString("transcript"),
+            event.optString("message"),
+            event.optString("errorCode"),
+            event.optString("audioDurationMs"),
+            event.optString("wallDurationMs"),
+            event.optString("captureEfficiency"),
+            event.optString("maxReadGapMs")
+        ).filter { it.isNotBlank() }
+        fields.joinToString("/")
+    }
+
+    private fun intArg(name: String, defaultValue: Int): Int =
+        args.getString(name)?.toIntOrNull() ?: defaultValue
+
+    private fun longArg(name: String, defaultValue: Long): Long =
+        args.getString(name)?.toLongOrNull() ?: defaultValue
+
+    private fun doubleArg(name: String, defaultValue: Double): Double =
+        args.getString(name)?.toDoubleOrNull() ?: defaultValue
+
+    private fun booleanArg(name: String, defaultValue: Boolean): Boolean =
+        args.getString(name)?.toBooleanStrictOrNull() ?: defaultValue
+
+    private fun startCpuStressThreads(threadCount: Int): AutoCloseable {
+        if (threadCount <= 0) return AutoCloseable { }
+        val running = AtomicBoolean(true)
+        val workers = (1..threadCount).map { index ->
+            Thread({
+                var value = index.toLong()
+                while (running.get()) {
+                    value = value * 1_103_515_245L + 12_345L
+                    value = value xor (value ushr 17)
+                    if (value == Long.MIN_VALUE) Thread.yield()
+                }
+            }, "droidlm-capture-stress-$index").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        return AutoCloseable {
+            running.set(false)
+            workers.forEach { worker -> runCatching { worker.join(1_000L) } }
+        }
+    }
+
+    private fun allocateMemoryPressure(megabytes: Int): ByteArray? {
+        if (megabytes <= 0) return null
+        val bytes = ByteArray(megabytes * 1024 * 1024)
+        var index = 0
+        while (index < bytes.size) {
+            bytes[index] = (index and 0xff).toByte()
+            index += 4096
+        }
+        return bytes
     }
 
     private fun diagnosticsLogFile(): File = File(targetContext.cacheDir, "droidlm-diagnostics/speech-diagnostics.jsonl")

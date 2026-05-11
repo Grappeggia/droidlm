@@ -481,7 +481,8 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
     }.apply { start() }
 
     var played = false
-    val deadline = System.currentTimeMillis() + 60_000L
+    val instrumentationTimeoutMs = System.getenv("DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS")?.toLongOrNull() ?: 60_000L
+    val deadline = System.currentTimeMillis() + instrumentationTimeoutMs
     while (instrumentation.isAlive && System.currentTimeMillis() < deadline) {
         val marker = adbOutput(adb, "shell", "if", "[", "-f", markerPath, "];", "then", "echo", "ready;", "fi")
         if (!played && marker.contains("ready")) {
@@ -913,6 +914,58 @@ tasks.register("connectedHoverMicAudioE2e") {
             methodName = "hoverRecordCapturesInjectedOpenGoogleDriveAudio",
             audioFile = audioFile,
             speechDelayMs = 250L
+        )
+    }
+}
+
+tasks.register("connectedHoverMicCaptureRegressionE2e") {
+    group = "verification"
+    description = "Runs hover-widget mic capture diagnostics for the Vosk live-capture starvation regression."
+    dependsOn(":driveStub:assembleDebug", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adbPath = project.androidAdbPath()
+        if (project.micInjectionMode() == "pulse") project.ensureVirtualMicForE2e()
+        project.ensureEmulatorHostAudioForE2e(adbPath)
+        if (!project.isPackageInstalled(adbPath, "com.google.android.apps.docs")) {
+            val stubApk = project(":driveStub").layout.buildDirectory.file("outputs/apk/debug/driveStub-debug.apk").get().asFile.absolutePath
+            project.adbOutput(adbPath, "install", "-r", stubApk)
+        }
+        val sourceAudioFile = file("build/e2e-audio/open-google-drive.wav")
+        val audioFile = file("build/e2e-audio/open-google-drive-hover-16k-mono.wav")
+        project.prepareOpenGoogleDriveE2eWav(sourceAudioFile)
+        project.convertAudioToWav(sourceAudioFile, audioFile)
+        project.checkEmulatorGrpcStatus(audioFile)
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        val instrumentationArgs = mutableMapOf("preferOfflineSpeechRecognition" to "true")
+        mapOf(
+            "DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS" to "captureRecordHoldMs",
+            "DROIDLM_E2E_CAPTURE_INJECT_BEFORE_LISTENING" to "captureInjectBeforeListening",
+            "DROIDLM_E2E_CAPTURE_ASSERT_METRICS" to "captureAssertMetrics",
+            "DROIDLM_E2E_CAPTURE_MIN_AUDIO_DURATION_MS" to "captureMinAudioDurationMs",
+            "DROIDLM_E2E_CAPTURE_MIN_EFFICIENCY" to "captureMinEfficiency",
+            "DROIDLM_E2E_CAPTURE_MAX_READ_GAP_MS" to "captureMaxReadGapMs",
+            "DROIDLM_E2E_CAPTURE_MAX_COMPLETION_LATENCY_MS" to "captureMaxCompletionLatencyMs",
+            "DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS" to "captureCpuStressThreads",
+            "DROIDLM_E2E_CAPTURE_MEMORY_PRESSURE_MB" to "captureMemoryPressureMb"
+        ).forEach { (envName, argName) ->
+            System.getenv(envName)?.takeIf { it.isNotBlank() }?.let { value -> instrumentationArgs[argName] = value }
+        }
+        val speechDelayMs = System.getenv("DROIDLM_E2E_CAPTURE_SPEECH_DELAY_MS")?.toLongOrNull() ?: 250L
+        project.runMicInjectedInstrumentedTest(
+            adb = adbPath,
+            suite = AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmHoverMicAudioE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmHoverMicAudioE2ETest.kt",
+                artifactSubdirectory = "hover-mic-capture-regression",
+                instrumentationArgs = instrumentationArgs
+            ),
+            methodName = "hoverRecordOpenGoogleDriveAudioCapturesEnoughPcm",
+            audioFile = audioFile,
+            speechDelayMs = speechDelayMs
         )
     }
 }
