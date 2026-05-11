@@ -96,11 +96,21 @@ PY
 
 release_tags() {
   require_command "$GH"
-  "$GH" release list \
-    --repo "$REPO" \
-    --limit "$RELEASE_LIMIT" \
-    --json tagName,isPrerelease,publishedAt \
-    --jq '.[] | select(.isPrerelease and (.tagName | test("-debug\\.[0-9]+$"))) | .tagName'
+  local output status attempt
+  for attempt in 1 2 3; do
+    if output=$("$GH" release list \
+      --repo "$REPO" \
+      --limit "$RELEASE_LIMIT" \
+      --json tagName,isPrerelease,publishedAt \
+      --jq '.[] | select(.isPrerelease and (.tagName | test("-(debug\\.)?[0-9]+$"))) | .tagName' 2>&1); then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    status=$?
+    log "GitHub release list failed (attempt $attempt/3): $output"
+    sleep "$((attempt * 2))"
+  done
+  return "$status"
 }
 
 resolve_release_tags() {
@@ -114,7 +124,9 @@ resolve_release_tags() {
   fi
 
   if [[ -z "$latest_tag" || -z "$baseline_tag" ]]; then
-    mapfile -t tags < <(release_tags)
+    local tag_output
+    tag_output="$(release_tags)" || fail "Could not fetch debug prereleases from $REPO"
+    mapfile -t tags <<< "$tag_output"
     [[ ${#tags[@]} -ge 2 ]] || fail "Expected at least two debug prereleases in $REPO"
     if [[ -n "$latest_apk_override" ]]; then
       latest_tag="${latest_tag:-local-debug}"
