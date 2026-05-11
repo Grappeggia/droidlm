@@ -426,47 +426,60 @@ private fun OnboardingPage(
     onDismissPlannerKeySetup: () -> Unit,
     onDone: () -> Unit,
     onOpenSettings: () -> Unit
-) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-    DroidCard {
-        Text("Let's set up DroidLM", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
-        Text(
-            "Complete the essentials once. DroidLM uses Android on-device speech recognition; OpenAI is only for planning after speech is recognized.",
-            color = DroidLmColors.TextMuted
+) {
+    var showOpenAiKeyDialog by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        DroidCard {
+            Text("Let's set up DroidLM", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
+            Text(
+                "Complete the essentials once. DroidLM uses Android on-device speech recognition; OpenAI is only for planning after speech is recognized.",
+                color = DroidLmColors.TextMuted
+            )
+        }
+        SetupStatusCard(
+            accessibilityEnabled = accessibilityEnabled,
+            micGranted = micGranted,
+            notificationGranted = notificationGranted,
+            overlayRunning = overlayRunning,
+            overlayGranted = overlayGranted,
+            overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
+            settings = settings,
+            onOpenAccessibility = onOpenAccessibility,
+            onRequestMicPermission = onRequestMicPermission,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            onOpenOverlayPermission = onOpenOverlayPermission,
+            onStartOverlay = onStartOverlay,
+            onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
+            speechRecognition = speechRecognition,
+            onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
         )
+        DroidCard { SpeechSetupCard(settings, speechRecognition, viewModel) }
+        OpenAiKeySetupCard(
+            settings = settings,
+            plannerKeySetup = plannerKeySetup,
+            onOpen = { showOpenAiKeyDialog = true }
+        )
+        DroidCard {
+            Text("Diagnostics", fontWeight = FontWeight.SemiBold)
+            ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
+            Text("Optional, but useful if speech setup fails. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
+        }
+        DroidCard {
+            Button(onClick = onDone) { Text("Start using DroidLM") }
+            OutlinedButton(onClick = onOpenSettings) { Text("Review all settings") }
+        }
     }
-    SetupStatusCard(
-        accessibilityEnabled = accessibilityEnabled,
-        micGranted = micGranted,
-        notificationGranted = notificationGranted,
-        overlayRunning = overlayRunning,
-        overlayGranted = overlayGranted,
-        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
-        settings = settings,
-        onOpenAccessibility = onOpenAccessibility,
-        onRequestMicPermission = onRequestMicPermission,
-        onRequestNotificationPermission = onRequestNotificationPermission,
-        onOpenOverlayPermission = onOpenOverlayPermission,
-        onStartOverlay = onStartOverlay,
-        onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
-        speechRecognition = speechRecognition,
-        onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
-    )
-    DroidCard { SpeechSetupCard(settings, speechRecognition, viewModel) }
-    PlannerSettingsCard(
-        settings = settings,
-        plannerKeySetup = plannerKeySetup,
-        onSave = onSaveOpenAiKey,
-        onClear = onClearOpenAiKey,
-        onCancel = onDismissPlannerKeySetup
-    )
-    DroidCard {
-        Text("Diagnostics", fontWeight = FontWeight.SemiBold)
-        ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
-        Text("Optional, but useful if speech setup fails. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
-    }
-    DroidCard {
-        Button(onClick = onDone) { Text("Start using DroidLM") }
-        OutlinedButton(onClick = onOpenSettings) { Text("Review all settings") }
+
+    if (showOpenAiKeyDialog) {
+        OpenAiKeyDialog(
+            settings = settings,
+            plannerKeySetup = plannerKeySetup,
+            onSave = onSaveOpenAiKey,
+            onClear = onClearOpenAiKey,
+            onCancel = onDismissPlannerKeySetup,
+            onDismiss = { showOpenAiKeyDialog = false }
+        )
     }
 }
 
@@ -584,14 +597,15 @@ private fun SetupStatusCard(
     Spacer(Modifier.height(10.dp))
     SetupStatusRow("Enabled", enabledItems)
     SetupStatusRow("Missing", missingItems)
-    Spacer(Modifier.height(12.dp))
-    FloatingControlsSetupCard(
-        overlayRunning = overlayRunning,
-        overlayGranted = overlayGranted,
-        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
-        onOpenOverlayPermission = onOpenOverlayPermission,
-        onStartOverlay = onStartOverlay
-    )
+    if (!overlayRunning) {
+        Spacer(Modifier.height(12.dp))
+        FloatingControlsSetupCard(
+            overlayGranted = overlayGranted,
+            overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
+            onOpenOverlayPermission = onOpenOverlayPermission,
+            onStartOverlay = onStartOverlay
+        )
+    }
 }
 
 private data class SetupStatusItem(
@@ -618,25 +632,22 @@ private fun SetupStatusRow(label: String, items: List<SetupStatusItem>) {
 
 @Composable
 private fun FloatingControlsSetupCard(
-    overlayRunning: Boolean,
     overlayGranted: Boolean,
     overlayPermissionNeedsRetry: Boolean,
     onOpenOverlayPermission: () -> Unit,
     onStartOverlay: () -> Unit
 ) {
     val title = when {
-        overlayRunning -> "Controls are running"
         overlayGranted -> "Ready to start"
         overlayPermissionNeedsRetry -> "Still off"
         else -> "Permission needed"
     }
     val message = when {
-        overlayRunning -> "The floating record button is visible over other apps."
         overlayGranted -> "Android already allows DroidLM to display over other apps. Start the controls when you need them."
         overlayPermissionNeedsRetry -> "Android still has this permission off. Open the DroidLM settings page and turn on Allow display over other apps."
         else -> "DroidLM needs Android's display-over-apps permission before it can show the floating record button."
     }
-    val container = if (overlayRunning || overlayGranted) DroidLmColors.SuccessSurface else DroidLmColors.WarningSurface
+    val container = if (overlayGranted) DroidLmColors.SuccessSurface else DroidLmColors.WarningSurface
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -647,14 +658,12 @@ private fun FloatingControlsSetupCard(
             Text("Floating controls", fontWeight = FontWeight.SemiBold)
             Text(title, fontWeight = FontWeight.Bold)
             Text(message, color = DroidLmColors.TextMuted)
-            if (!overlayRunning) {
-                val buttonLabel = when {
-                    overlayGranted -> "Start controls"
-                    overlayPermissionNeedsRetry -> "Try setup again"
-                    else -> "Set up controls"
-                }
-                Button(onClick = if (overlayGranted) onStartOverlay else onOpenOverlayPermission) { Text(buttonLabel) }
+            val buttonLabel = when {
+                overlayGranted -> "Start controls"
+                overlayPermissionNeedsRetry -> "Try setup again"
+                else -> "Set up controls"
             }
+            Button(onClick = if (overlayGranted) onStartOverlay else onOpenOverlayPermission) { Text(buttonLabel) }
         }
     }
 }
@@ -717,6 +726,71 @@ private fun ConfirmationCard(
         OutlinedButton(onClick = onCancel) { Text("Cancel") }
     }
 }
+
+@Composable
+private fun OpenAiKeySetupCard(
+    settings: DroidLmSettings,
+    plannerKeySetup: PlannerKeySetupRequest?,
+    onOpen: () -> Unit
+) = DroidCard {
+    Text("OpenAI planning", fontWeight = FontWeight.SemiBold)
+    Text("Status: ${if (settings.openAiApiKeyConfigured) "Configured" else "Not configured"}", color = DroidLmColors.TextMuted)
+    plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
+    Button(onClick = onOpen) { Text("OpenAI Key") }
+}
+
+@Composable
+private fun OpenAiKeyDialog(
+    settings: DroidLmSettings,
+    plannerKeySetup: PlannerKeySetupRequest?,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKey by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("OpenAI API key") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Status: ${if (settings.openAiApiKeyConfigured) "Configured" else "Not configured"}")
+                plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
+                if (!settings.openAiApiKeyConfigured) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("OpenAI API key") }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (!settings.openAiApiKeyConfigured) {
+                Button(onClick = {
+                    onSave(apiKey)
+                    apiKey = ""
+                    onDismiss()
+                }) { Text("Save Key") }
+            } else {
+                OutlinedButton(onClick = onClear) { Text("Clear Key") }
+            }
+        },
+        dismissButton = {
+            if (!settings.openAiApiKeyConfigured) {
+                OutlinedButton(onClick = {
+                    onCancel()
+                    onDismiss()
+                }) { Text("Cancel") }
+            } else {
+                OutlinedButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
+}
+
 
 @Composable
 private fun PlannerSettingsCard(
