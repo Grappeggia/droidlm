@@ -453,13 +453,9 @@ private fun OnboardingPage(
             onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
             speechRecognition = speechRecognition,
             onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
+            onOpenAiKey = { showOpenAiKeyDialog = true }
         )
         DroidCard { SpeechSetupCard(settings, speechRecognition, viewModel) }
-        OpenAiKeySetupCard(
-            settings = settings,
-            plannerKeySetup = plannerKeySetup,
-            onOpen = { showOpenAiKeyDialog = true }
-        )
         DroidCard {
             Text("Diagnostics", fontWeight = FontWeight.SemiBold)
             ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
@@ -564,12 +560,14 @@ private fun SetupStatusCard(
     onEnableOcr: () -> Unit,
     speechRecognition: SpeechRecognitionUiState,
     onOpenSpeechSettings: () -> Unit,
+    onOpenAiKey: (() -> Unit)? = null
 ) = DroidCard {
-    val baseItems = listOf(
+    val baseItems = listOfNotNull(
         SetupStatusItem("Accessibility", accessibilityEnabled, onOpenAccessibility),
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
         SetupStatusItem("Notifications", notificationGranted, onRequestNotificationPermission),
-        SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr)
+        SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr),
+        onOpenAiKey?.let { SetupStatusItem("OpenAI Key", settings.openAiApiKeyConfigured, it) }
     )
     val languageItem = when {
         settings.preferOfflineSpeechRecognition -> {
@@ -725,18 +723,6 @@ private fun ConfirmationCard(
         Button(onClick = onConfirm) { Text("Confirm") }
         OutlinedButton(onClick = onCancel) { Text("Cancel") }
     }
-}
-
-@Composable
-private fun OpenAiKeySetupCard(
-    settings: DroidLmSettings,
-    plannerKeySetup: PlannerKeySetupRequest?,
-    onOpen: () -> Unit
-) = DroidCard {
-    Text("OpenAI planning", fontWeight = FontWeight.SemiBold)
-    Text("Status: ${if (settings.openAiApiKeyConfigured) "Configured" else "Not configured"}", color = DroidLmColors.TextMuted)
-    plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
-    Button(onClick = onOpen) { Text("OpenAI Key") }
 }
 
 @Composable
