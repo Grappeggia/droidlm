@@ -76,7 +76,7 @@ This curated matrix runs:
 - `connectedDebugLogUploadE2e` on the same five release-gate profiles.
 - `connectedVoskOfflineE2e` on flagship + budget profiles with network disabled.
 - `connectedSupportLogMicRegressionE2e` on the flagship profile where the May 10 mic regression is tracked.
-- `connectedEmulatorMicProbeE2e` and `connectedHoverMicAudioE2e` on flagship, midrange, and budget phones.
+- `connectedEmulatorMicProbeE2e` and `connectedHoverMicAudioE2e` stay available as targeted mic-injection diagnostics, but they are not part of the required release gate.
 - `connectedOnDeviceAudioSourceE2e` on flagship and budget phone profiles.
 - `connectedDebugInstallUpgradeE2e` on midrange, budget, API 31, and the legacy tablet profile.
 

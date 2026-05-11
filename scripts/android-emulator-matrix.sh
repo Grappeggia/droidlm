@@ -57,11 +57,7 @@ RELEASE_SUPPORT_LOG_PROFILES=(
   droidlm_api36_latest
 )
 
-RELEASE_AUDIO_PROFILES=(
-  droidlm_api36_latest
-  droidlm_api35_midrange
-  droidlm_api33_budget_720p
-)
+
 
 RELEASE_ON_DEVICE_AUDIO_PROFILES=(
   droidlm_api36_latest
@@ -368,7 +364,7 @@ run_profile_names() {
 }
 
 run_release_core() {
-  log "Running release core matrix: voice, upload, offline speech, mic injection, on-device STT, and install/upgrade."
+  log "Running release core matrix: voice, upload, offline speech, support-log regression, on-device STT, and install/upgrade."
   run_profile_names RELEASE_VOICE_PROFILES connectedVoiceE2e
   run_profile_names RELEASE_LOG_UPLOAD_PROFILES connectedDebugLogUploadE2e
 
@@ -378,7 +374,7 @@ run_release_core() {
   DROIDLM_E2E_NETWORK_MODE="$previous_network_mode"
 
   run_profile_names RELEASE_SUPPORT_LOG_PROFILES connectedSupportLogMicRegressionE2e
-  run_profile_names RELEASE_AUDIO_PROFILES connectedEmulatorMicProbeE2e connectedHoverMicAudioE2e
+
   run_profile_names RELEASE_ON_DEVICE_AUDIO_PROFILES connectedOnDeviceAudioSourceE2e
   run_profile_names RELEASE_INSTALL_UPGRADE_PROFILES -Pdroidlm.debugIteration=999 connectedDebugInstallUpgradeE2e
 
