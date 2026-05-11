@@ -4,8 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val baseVersionCode = 27
-val baseVersionName = "0.1.26"
+val baseVersionCode = 28
+val baseVersionName = "0.1.27"
 
 val releaseStoreFile = System.getenv("DROIDLM_RELEASE_STORE_FILE")
 val releaseStorePassword = System.getenv("DROIDLM_RELEASE_STORE_PASSWORD")

@@ -5,6 +5,8 @@ import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
+import ai.droidlm.update.DebugUpdatePhase
+import ai.droidlm.update.DebugUpdateUiState
 
 import ai.droidlm.ui.DroidLmViewModel
 import ai.droidlm.voice.SpeechRecognitionUiState
@@ -850,6 +852,12 @@ private fun SettingsCard(
     ) { uri ->
         uri?.let(viewModel::saveDebugLogsToUri)
     }
+    val debugUpdateState by viewModel.debugUpdateState.collectAsState()
+    val debugInstallPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        viewModel.resumePendingDebugBuildInstall()
+    }
 
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
@@ -913,6 +921,46 @@ private fun SettingsCard(
                 OutlinedButton(onClick = { showDebugShareDialog = false }) { Text("Cancel") }
             }
         )
+    }
+    if (debugUpdateState.visible) {
+        DebugBuildUpgradeSection(
+            state = debugUpdateState,
+            onUpgrade = viewModel::upgradeToLatestDebugBuild,
+            onAllowInstall = {
+                debugInstallPermissionLauncher.launch(viewModel.debugBuildInstallPermissionIntent())
+            }
+        )
+    }
+}
+
+@Composable
+private fun DebugBuildUpgradeSection(
+    state: DebugUpdateUiState,
+    onUpgrade: () -> Unit,
+    onAllowInstall: () -> Unit
+) {
+    Text("Build updates", fontWeight = FontWeight.SemiBold)
+    Text(
+        "Downloads the newest GitHub debug prerelease for this debug app and opens Android's package installer.",
+        color = DroidLmColors.TextMuted
+    )
+    state.statusMessage?.takeIf { it.isNotBlank() }?.let { message ->
+        Text(
+            message,
+            color = if (state.phase == DebugUpdatePhase.ERROR) DroidLmColors.Danger else DroidLmColors.TextMuted
+        )
+    }
+    val buttonLabel = when {
+        state.requiresInstallPermission -> "Allow Install"
+        state.isBusy -> "Working..."
+        else -> "Upgrade to Latest Debug Build"
+    }
+    Button(
+        enabled = !state.isBusy,
+        onClick = if (state.requiresInstallPermission) onAllowInstall else onUpgrade,
+        colors = ButtonDefaults.buttonColors(containerColor = DroidLmColors.Accent)
+    ) {
+        Text(buttonLabel)
     }
 }
 

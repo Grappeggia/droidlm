@@ -21,6 +21,7 @@ import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.safety.SafetyClassifier
 import ai.droidlm.settings.SettingsRepository
+import ai.droidlm.update.DebugBuildUpdater
 import ai.droidlm.textedit.TextEditingController
 import ai.droidlm.voice.CommandRecorder
 import ai.droidlm.voice.ManualWakeWordEngine
@@ -80,6 +81,8 @@ class DroidLMApp : Application() {
         private set
     lateinit var manualWakeWordEngine: ManualWakeWordEngine
         private set
+    lateinit var debugBuildUpdater: DebugBuildUpdater
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -107,6 +110,7 @@ class DroidLMApp : Application() {
         workspaceFileOperationController = WorkspaceFileOperationController(this, textEditingController, actionLogRepository)
         safetyClassifier = SafetyClassifier()
         mobilerunCloudClient = MobilerunCloudClient(settingsRepository, actionLogRepository, speechDiagnosticsLogger)
+        debugBuildUpdater = DebugBuildUpdater(this)
         executor = DroidLmExecutor(
             settingsRepository = settingsRepository,
             openAiClient = openAiClient,

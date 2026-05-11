@@ -2,6 +2,10 @@ package ai.droidlm.ui
 
 import ai.droidlm.DroidLMApp
 import ai.droidlm.diagnostics.DebugLogUploadEndpoint
+import ai.droidlm.update.DebugBuildPreparationResult
+import ai.droidlm.update.DebugUpdatePhase
+import ai.droidlm.update.DebugUpdateUiState
+import ai.droidlm.update.PreparedDebugBuild
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
@@ -43,6 +47,10 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
     private val _accessibilityEnabled = MutableStateFlow(false)
     val accessibilityEnabled: StateFlow<Boolean> = _accessibilityEnabled.asStateFlow()
 
+    private val _debugUpdateState = MutableStateFlow(DebugUpdateUiState())
+    val debugUpdateState: StateFlow<DebugUpdateUiState> = _debugUpdateState.asStateFlow()
+    private var pendingDebugBuild: PreparedDebugBuild? = null
+
     fun refreshAccessibility() {
         viewModelScope.launch { _accessibilityEnabled.value = app.portalController.isAccessibilityEnabled() }
     }
@@ -54,6 +62,97 @@ class DroidLmViewModel(application: Application) : AndroidViewModel(application)
         return granted
     }
 
+
+    fun upgradeToLatestDebugBuild() {
+        if (!app.debugBuildUpdater.isSupported) return
+        viewModelScope.launch {
+            pendingDebugBuild = null
+            _debugUpdateState.value = DebugUpdateUiState(
+                phase = DebugUpdatePhase.CHECKING,
+                statusMessage = "Checking GitHub and downloading the latest debug build..."
+            )
+            when (val result = app.debugBuildUpdater.prepareLatestInstall()) {
+                is DebugBuildPreparationResult.ReadyToInstall -> continueDebugBuildInstall(result.build)
+                is DebugBuildPreparationResult.AlreadyLatest -> {
+                    _debugUpdateState.value = DebugUpdateUiState(
+                        phase = DebugUpdatePhase.ALREADY_LATEST,
+                        statusMessage = "Already on the latest published debug build (${result.availableVersionName}).",
+                        availableVersionName = result.availableVersionName
+                    )
+                    app.actionLogRepository.log(
+                        ActionLogType.ACTION_RESULT,
+                        "Already on latest published debug build",
+                        result.availableVersionName
+                    )
+                }
+                is DebugBuildPreparationResult.Failure -> {
+                    _debugUpdateState.value = DebugUpdateUiState(
+                        phase = DebugUpdatePhase.ERROR,
+                        statusMessage = result.message
+                    )
+                    app.actionLogRepository.log(
+                        ActionLogType.ERROR,
+                        "Debug build upgrade failed: ${result.message}",
+                        result.errorCode
+                    )
+                }
+            }
+        }
+    }
+
+    fun debugBuildInstallPermissionIntent(): Intent = app.debugBuildUpdater.installPermissionIntent()
+
+    fun resumePendingDebugBuildInstall() {
+        val build = pendingDebugBuild ?: return
+        continueDebugBuildInstall(build)
+    }
+
+    private fun continueDebugBuildInstall(build: PreparedDebugBuild) {
+        pendingDebugBuild = build
+        if (!app.debugBuildUpdater.canRequestPackageInstalls()) {
+            _debugUpdateState.value = DebugUpdateUiState(
+                phase = DebugUpdatePhase.AWAITING_INSTALL_PERMISSION,
+                statusMessage = "Downloaded ${build.versionName}. Allow DroidLM to install unknown apps to continue.",
+                availableVersionName = build.versionName
+            )
+            app.actionLogRepository.log(
+                ActionLogType.ACTION_RESULT,
+                "Downloaded debug build and waiting for install permission",
+                build.versionName
+            )
+            return
+        }
+
+        _debugUpdateState.value = DebugUpdateUiState(
+            phase = DebugUpdatePhase.OPENING_INSTALLER,
+            statusMessage = "Opening Android package installer for ${build.versionName}...",
+            availableVersionName = build.versionName
+        )
+        runCatching { app.debugBuildUpdater.launchInstaller(build) }
+            .onSuccess {
+                pendingDebugBuild = null
+                _debugUpdateState.value = DebugUpdateUiState(
+                    statusMessage = "Installer opened for ${build.versionName}. Finish the upgrade in Android's package installer.",
+                    availableVersionName = build.versionName
+                )
+                app.actionLogRepository.log(
+                    ActionLogType.ACTION_RESULT,
+                    "Opened installer for debug build ${build.versionName}",
+                    build.tagName
+                )
+            }
+            .onFailure { error ->
+                _debugUpdateState.value = DebugUpdateUiState(
+                    phase = DebugUpdatePhase.ERROR,
+                    statusMessage = "Could not open Android package installer: ${error.message}",
+                    availableVersionName = build.versionName
+                )
+                app.actionLogRepository.log(
+                    ActionLogType.ERROR,
+                    "Could not open debug build installer: ${error.message}"
+                )
+            }
+    }
     fun startListening() {
         ContextCompat.startForegroundService(
             app,
