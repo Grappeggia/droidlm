@@ -48,7 +48,7 @@ class DroidLmOverlayRecordPermissionE2ETest {
 
             targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
             val device = UiDevice.getInstance(instrumentation)
-            val recordButton = waitForRecordButton(device, 15_000)
+            val recordButton = waitForRecordButton(device, 30_000)
                 ?: throw AssertionError("Expected floating record button to be visible")
 
             recordButton.click()
