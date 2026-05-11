@@ -14,6 +14,21 @@ class DebugBuildUpdaterTest {
         assertEquals(12, parsed?.iteration)
     }
 
+    @Test fun parseDebugTagParsesCompactVersionAndIteration() {
+        val parsed = parseDebugTag("v0.2.27-3")
+        assertNotNull(parsed)
+        assertEquals(0, parsed?.major)
+        assertEquals(2, parsed?.minor)
+        assertEquals(27, parsed?.patch)
+        assertEquals(3, parsed?.iteration)
+        assertEquals("0.2.27-3", parsed?.compactName)
+    }
+
+    @Test fun compactDebugVersionNameDisplaysIterationWithoutChannelSuffix() {
+        assertEquals("0.2.27-3", compactDebugVersionName("0.2.27-debug.3"))
+        assertEquals("0.2.27-3", compactDebugVersionName("0.2.27-3"))
+    }
+
     @Test fun latestDebugReleaseFromJsonPrefersNewestDebugPrerelease() {
         val json = """
             [
@@ -34,6 +49,14 @@ class DebugBuildUpdaterTest {
                 ]
               },
               {
+                "tag_name": "v0.1.27-11",
+                "prerelease": true,
+                "published_at": "2026-05-13T00:00:00Z",
+                "assets": [
+                  {"name": "DroidLM-0.1.27-11-debug.apk", "browser_download_url": "https://example.com/v0.1.27-11.apk"}
+                ]
+              },
+              {
                 "tag_name": "v0.1.27",
                 "prerelease": false,
                 "published_at": "2026-05-12T00:00:00Z",
@@ -46,9 +69,9 @@ class DebugBuildUpdaterTest {
 
         val release = latestDebugReleaseFromJson(json)
         assertNotNull(release)
-        assertEquals("v0.1.27-debug.10", release?.tagName)
-        assertEquals("DroidLM-0.1.27-debug.10-debug.apk", release?.assetName)
-        assertEquals("https://example.com/v0.1.27-debug.10.apk", release?.assetUrl)
+        assertEquals("v0.1.27-11", release?.tagName)
+        assertEquals("DroidLM-0.1.27-11-debug.apk", release?.assetName)
+        assertEquals("https://example.com/v0.1.27-11.apk", release?.assetUrl)
     }
 
     @Test fun latestDebugReleaseFromJsonFallsBackToAnyApkOnDebugPrerelease() {
@@ -74,6 +97,10 @@ class DebugBuildUpdaterTest {
         assertEquals(
             "DroidLM-0.1.27-debug.1-debug.apk",
             expectedDebugAssetName("v0.1.27-debug.1")
+        )
+        assertEquals(
+            "DroidLM-0.2.27-3-debug.apk",
+            expectedDebugAssetName("v0.2.27-3")
         )
     }
 }

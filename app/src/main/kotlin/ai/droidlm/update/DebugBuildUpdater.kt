@@ -26,7 +26,7 @@ private const val RELEASE_LIMIT = 30
 private const val USER_AGENT = "DroidLM-Debug-Updater"
 private const val CACHE_DIRECTORY_NAME = "debug-updates"
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
-private val DEBUG_TAG_REGEX = Regex("^v(\\d+)\\.(\\d+)\\.(\\d+)-debug\\.(\\d+)$")
+private val DEBUG_VERSION_REGEX = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-debug\\.|-)(\\d+)$")
 
 data class PreparedDebugBuild(
     val tagName: String,
@@ -64,6 +64,9 @@ internal data class DebugTagVersion(
     val patch: Int,
     val iteration: Int
 ) : Comparable<DebugTagVersion> {
+    val compactName: String
+        get() = "$major.$minor.$patch-$iteration"
+
     override fun compareTo(other: DebugTagVersion): Int = compareValuesBy(
         this,
         other,
@@ -141,13 +144,14 @@ class DebugBuildUpdater(
             )
         }
 
-        val availableVersionName = archiveInfo.versionName?.takeIf { it.isNotBlank() } ?: release.tagName.removePrefix("v")
+        val rawAvailableVersionName = archiveInfo.versionName?.takeIf { it.isNotBlank() } ?: release.tagName.removePrefix("v")
+        val availableVersionName = compactDebugVersionName(rawAvailableVersionName) ?: rawAvailableVersionName
         val availableVersionCode = PackageInfoCompat.getLongVersionCode(archiveInfo)
         val installedVersionCode = PackageInfoCompat.getLongVersionCode(installedInfo)
         if (availableVersionCode <= installedVersionCode) {
             apkFile.delete()
             return@withContext DebugBuildPreparationResult.AlreadyLatest(
-                installedVersionName = installedInfo.versionName,
+                installedVersionName = compactDebugVersionName(installedInfo.versionName),
                 installedVersionCode = installedVersionCode,
                 availableVersionName = availableVersionName,
                 availableVersionCode = availableVersionCode
@@ -352,8 +356,15 @@ internal fun latestDebugReleaseFromJson(json: String): GitHubDebugRelease? {
         .maxByOrNull { release -> release.version }
 }
 
-internal fun parseDebugTag(tagName: String): DebugTagVersion? {
-    val match = DEBUG_TAG_REGEX.matchEntire(tagName) ?: return null
+internal fun parseDebugTag(tagName: String): DebugTagVersion? = parseDebugVersion(tagName)
+
+internal fun compactDebugVersionName(versionName: String?): String? {
+    val trimmed = versionName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    return parseDebugVersion(trimmed)?.compactName ?: trimmed
+}
+
+private fun parseDebugVersion(value: String): DebugTagVersion? {
+    val match = DEBUG_VERSION_REGEX.matchEntire(value) ?: return null
     return DebugTagVersion(
         major = match.groupValues[1].toInt(),
         minor = match.groupValues[2].toInt(),

@@ -263,8 +263,14 @@ class OpenAiClient(
                 }
             }
         } catch (error: IOException) {
-            errorMessage = error.message ?: "Network error"
-            errorCode = if (error is SocketTimeoutException || errorMessage?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
+            val rawErrorMessage = error.message ?: "Network error"
+            val isTimeout = error is SocketTimeoutException || rawErrorMessage.contains("timeout", ignoreCase = true)
+            errorMessage = if (isTimeout && !rawErrorMessage.contains("timeout", ignoreCase = true)) {
+                "Network timeout: $rawErrorMessage"
+            } else {
+                rawErrorMessage
+            }
+            errorCode = if (isTimeout) "TIMEOUT" else "NETWORK_ERROR"
             RelayCallResult.Failure(errorMessage.orEmpty(), errorCode, error)
         } catch (error: Throwable) {
             errorMessage = error.message ?: error::class.java.name

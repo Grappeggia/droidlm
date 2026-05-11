@@ -7,6 +7,7 @@ import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.update.DebugUpdatePhase
 import ai.droidlm.update.DebugUpdateUiState
+import ai.droidlm.update.compactDebugVersionName
 
 import ai.droidlm.ui.DroidLmViewModel
 import ai.droidlm.voice.SpeechRecognitionUiState
@@ -1023,7 +1024,7 @@ private fun appVersionName(context: Context): String {
         @Suppress("DEPRECATION")
         context.packageManager.getPackageInfo(context.packageName, 0)
     }
-    return packageInfo.versionName ?: "unknown"
+    return compactDebugVersionName(packageInfo.versionName) ?: "unknown"
 }
 
 private fun displayLanguage(languageTag: String): String {
