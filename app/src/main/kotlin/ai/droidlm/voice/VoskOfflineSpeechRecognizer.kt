@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
@@ -50,6 +51,14 @@ open class VoskOfflineSpeechRecognizer(
     private data class AudioChunk(
         val bytes: ByteArray,
         val readAtMs: Long
+    )
+
+    private data class BatchTranscriptionResult(
+        val transcript: String,
+        val finalResultJson: String,
+        val segmentCount: Int,
+        val processedBytes: Long,
+        val durationMs: Long
     )
 
     private class AudioCaptureStats {
@@ -273,6 +282,8 @@ open class VoskOfflineSpeechRecognizer(
         val audioQueueCapacity = audioQueueCapacityFor(maxDurationMs)
         val queueHighWatermarkDepth = (audioQueueCapacity * 3 / 4).coerceAtLeast(1)
         val audioQueue = LinkedBlockingQueue<AudioChunk>(audioQueueCapacity)
+        val capturedPcmLock = Any()
+        val capturedPcm = ByteArrayOutputStream()
         val captureFinished = AtomicBoolean(false)
         val captureStopRequested = AtomicBoolean(false)
         val captureStopReason = AtomicReference<String?>(null)
@@ -285,8 +296,9 @@ open class VoskOfflineSpeechRecognizer(
         var queueWatermarkLogAt = 0L
         var postStopDrainStartedAt: Long? = null
         var postStopDrainStartProcessedBytes = 0L
-        var lastProcessedChunkReadAt: Long? = null
+
         var joinTimeoutLogged = false
+        var liveProcessingAbandonedLogged = false
         val audioCaptureFile = debugLogStore?.createRetainedFile("audio", "pcm", "vosk")
         val audioCaptureOutput = audioCaptureFile?.let { runCatching { it.outputStream() }.getOrNull() }
         audioCaptureFile?.let {
@@ -361,29 +373,36 @@ open class VoskOfflineSpeechRecognizer(
             }
         }
 
-        fun discardQueuedAudio(reason: String): Boolean {
-            val discarded = mutableListOf<AudioChunk>()
-            audioQueue.drainTo(discarded)
-            if (discarded.isEmpty()) return false
-            val discardedBytes = discarded.sumOf { it.bytes.size.toLong() }
+        fun capturedPcmBytes(): ByteArray = synchronized(capturedPcmLock) { capturedPcm.toByteArray() }
+
+        fun liveTranscript(): String = (acceptedSegments + lastPartial)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim()
+
+        fun recordLiveProcessingAbandoned(now: Long) {
+            if (liveProcessingAbandonedLogged || audioQueue.isEmpty()) return
+            liveProcessingAbandonedLogged = true
+            val queueDepth = audioQueue.size
             synchronized(statsLock) {
-                captureStats.discardedChunks += discarded.size
-                captureStats.discardedBytes += discardedBytes
+                captureStats.postStopDrainWallMs = postStopDrainStartedAt?.let { now - it } ?: 0L
             }
             diagnostics.record(
                 diagnosticSessionId,
-                "audio_queue_discarded",
+                "vosk_live_processing_abandoned",
                 mapOf(
-                    "reason" to reason,
-                    "discardedChunks" to discarded.size,
-                    "discardedBytes" to discardedBytes,
-                    "discardedAudioDurationMs" to pcmDurationMs(discardedBytes),
-                    "queueCapacity" to audioQueueCapacity,
-                    "stopReason" to captureStopReason.get()
+                    "reason" to "capture_first_finalizer",
+                    "stopReason" to captureStopReason.get(),
+                    "queueDepth" to queueDepth,
+                    "queuedAudioMs" to pcmDurationMs(queueDepth.toLong() * BUFFER_BYTES),
+                    "capturedBytes" to activeCapturedBytes,
+                    "processedBytes" to processedBytesSnapshot(),
+                    "liveTranscriptLength" to liveTranscript().length
                 )
             )
-            return true
         }
+
 
         try {
             recorder.startRecording()
@@ -512,6 +531,7 @@ open class VoskOfflineSpeechRecognizer(
                                 )
                             )
                         }
+                        synchronized(capturedPcmLock) { capturedPcm.write(chunkBytes, 0, chunkBytes.size) }
                         runCatching { audioCaptureOutput?.write(chunkBytes) }
                         val offered = audioQueue.offer(AudioChunk(chunkBytes, now))
                         val queueDepth = audioQueue.size
@@ -531,11 +551,11 @@ open class VoskOfflineSpeechRecognizer(
                                     "droppedBytes" to read,
                                     "capturedBytes" to activeCapturedBytes,
                                     "audioDurationMs" to pcmDurationMs(activeCapturedBytes),
-                                    "processedBytes" to processedBytesSnapshot()
+                                    "processedBytes" to processedBytesSnapshot(),
+                                    "finalizer" to "capture_first_batch"
                                 )
                             )
-                            requestCaptureStop("queue_overflow")
-                            break
+                            continue
                         }
                         if (queueDepth >= queueHighWatermarkDepth && now - queueWatermarkLogAt >= QUEUE_WATERMARK_LOG_INTERVAL_MS) {
                             queueWatermarkLogAt = now
@@ -604,22 +624,9 @@ open class VoskOfflineSpeechRecognizer(
                         )
                     )
                 }
-                if (stopObserved && captureFinished.get() && audioQueue.isNotEmpty()) {
-                    val drainStartedAt = postStopDrainStartedAt ?: now
-                    val drainWallMs = now - drainStartedAt
-                    val postStopProcessedAudioMs = pcmDurationMs((processedBytesSnapshot() - postStopDrainStartProcessedBytes).coerceAtLeast(0L))
-                    val stopReason = captureStopReason.get()
-                    val stoppedWithRecognizedSpeech = stopReason in setOf("user_stop", "silence_after_speech") && (speechStarted || postStopProcessedAudioMs > 0L)
-                    if (stoppedWithRecognizedSpeech || drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS || postStopProcessedAudioMs >= MAX_POST_STOP_DRAIN_AUDIO_MS) {
-                        synchronized(statsLock) { captureStats.postStopDrainWallMs = drainWallMs }
-                        val reason = when {
-                            stoppedWithRecognizedSpeech -> "${stopReason}_backlog"
-                            drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS -> "post_stop_drain_wall_cap"
-                            else -> "post_stop_drain_audio_cap"
-                        }
-                        discardQueuedAudio(reason)
-                        break
-                    }
+                if (stopObserved && captureFinished.get()) {
+                    recordLiveProcessingAbandoned(now)
+                    break
                 }
                 val chunk = audioQueue.poll(50, TimeUnit.MILLISECONDS)
                 if (chunk != null) {
@@ -679,7 +686,7 @@ open class VoskOfflineSpeechRecognizer(
                         captureStats.totalChunkAgeMs += chunkAgeMs
                         if (chunkAgeMs > captureStats.maxChunkAgeMs) captureStats.maxChunkAgeMs = chunkAgeMs
                     }
-                    lastProcessedChunkReadAt = chunk.readAtMs
+
                     if (processingMs >= SLOW_PROCESSING_MS && slowProcessingLogCount < MAX_SLOW_PROCESSING_LOG_EVENTS) {
                         slowProcessingLogCount += 1
                         diagnostics.record(
@@ -708,28 +715,10 @@ open class VoskOfflineSpeechRecognizer(
                     noSpeechTimeout -> requestCaptureStop("initial_no_speech_timeout")
                 }
 
-                if (captureStopRequested.get() && captureFinished.get() && audioQueue.isNotEmpty()) {
-                    val drainStartedAt = postStopDrainStartedAt ?: now
-                    val drainWallMs = now - drainStartedAt
-                    val postStopProcessedAudioMs = pcmDurationMs((processedBytesSnapshot() - postStopDrainStartProcessedBytes).coerceAtLeast(0L))
-                    val trailingSilenceProcessed = speechStarted && lastSpeechAt?.let { lastSpeech ->
-                        lastProcessedChunkReadAt?.let { processedAt -> processedAt - lastSpeech >= SILENCE_AFTER_SPEECH_MS }
-                    } == true
-                    val queueOverflowed = synchronized(statsLock) { captureStats.queueOverflowCount > 0 }
-                    val discardReason = when {
-                        queueOverflowed -> "queue_overflow"
-                        trailingSilenceProcessed -> "tail_silence_after_speech"
-                        drainWallMs >= MAX_POST_STOP_DRAIN_WALL_MS -> "post_stop_drain_wall_cap"
-                        postStopProcessedAudioMs >= MAX_POST_STOP_DRAIN_AUDIO_MS -> "post_stop_drain_audio_cap"
-                        else -> null
-                    }
-                    if (discardReason != null) {
-                        synchronized(statsLock) { captureStats.postStopDrainWallMs = drainWallMs }
-                        discardQueuedAudio(discardReason)
-                        break
-                    }
+                if (captureStopRequested.get() && captureFinished.get()) {
+                    recordLiveProcessingAbandoned(now)
+                    break
                 }
-                if (captureStopRequested.get() && captureFinished.get() && audioQueue.isEmpty()) break
             }
             requestCaptureStop("recognition_loop_completed")
             postStopDrainStartedAt?.let { drainStartedAt ->
@@ -742,37 +731,38 @@ open class VoskOfflineSpeechRecognizer(
             joinCaptureThread(2_000)
 
             val preFinalStats = captureStatsSnapshot(captureStats, statsLock)
-            val finalResultJson = if (preFinalStats.discardedChunks > 0) {
-                diagnostics.record(
-                    diagnosticSessionId,
-                    "vosk_final_result_skipped",
-                    mapOf(
-                        "reason" to "discarded_queued_audio",
-                        "discardedChunks" to preFinalStats.discardedChunks,
-                        "discardedBytes" to preFinalStats.discardedBytes,
-                        "discardedAudioDurationMs" to pcmDurationMs(preFinalStats.discardedBytes),
-                        "stopReason" to captureStopReason.get()
-                    )
+            val capturedPcmBytes = capturedPcmBytes()
+            diagnostics.record(
+                diagnosticSessionId,
+                "vosk_capture_first_final_started",
+                mapOf(
+                    "stopReason" to captureStopReason.get(),
+                    "capturedBytes" to capturedPcmBytes.size,
+                    "audioDurationMs" to pcmDurationMs(capturedPcmBytes.size.toLong()),
+                    "batchChunkBytes" to BATCH_BUFFER_BYTES,
+                    "liveProcessedBytes" to preFinalStats.processedBytes,
+                    "liveProcessedAudioDurationMs" to pcmDurationMs(preFinalStats.processedBytes),
+                    "liveProcessedChunks" to preFinalStats.processedChunks,
+                    "liveQueueDepth" to audioQueue.size,
+                    "liveQueueDroppedBytes" to preFinalStats.queueDroppedBytes,
+                    "liveTranscriptLength" to liveTranscript().length
                 )
-                "{}"
-            } else {
-                val finalResultStartedAt = SystemClock.elapsedRealtime()
-                diagnostics.record(diagnosticSessionId, "vosk_final_result_started", mapOf("stopReason" to captureStopReason.get()))
-                recognizer.finalResult.also {
-                    diagnostics.record(
-                        diagnosticSessionId,
-                        "vosk_final_result_completed",
-                        mapOf("durationMs" to (SystemClock.elapsedRealtime() - finalResultStartedAt), "stopReason" to captureStopReason.get())
-                    )
-                }
-            }
-            val finalText = parseText(finalResultJson)
-            val transcript = (acceptedSegments + finalText)
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .joinToString(" ")
-                .ifBlank { lastPartial }
-                .trim()
+            )
+            val batchResult = transcribeCapturedPcm(model, capturedPcmBytes, SAMPLE_RATE.toFloat())
+            diagnostics.record(
+                diagnosticSessionId,
+                "vosk_capture_first_final_completed",
+                mapOf(
+                    "durationMs" to batchResult.durationMs,
+                    "processedBytes" to batchResult.processedBytes,
+                    "processedAudioDurationMs" to pcmDurationMs(batchResult.processedBytes),
+                    "segmentCount" to batchResult.segmentCount,
+                    "transcriptLength" to batchResult.transcript.length,
+                    "stopReason" to captureStopReason.get()
+                )
+            )
+            val finalResultJson = batchResult.finalResultJson
+            val transcript = batchResult.transcript
             val stats = captureStatsSnapshot(captureStats, statsLock)
             val durationMs = ((stats.finishedAtMs.takeIf { it > 0L } ?: SystemClock.elapsedRealtime()) - startedAt).coerceAtLeast(0L)
             val lastSpeechAtSnapshot = lastSpeechAt
@@ -811,6 +801,9 @@ open class VoskOfflineSpeechRecognizer(
                     speechRmsCount = speechRmsCount
                 ) + mapOf(
                     "provider" to VOSK_PROVIDER_LABEL,
+                    "finalizer" to "capture_first_batch",
+                    "batchFinalDurationMs" to batchResult.durationMs,
+                    "liveTranscriptLength" to liveTranscript().length,
                     "durationMs" to durationMs,
                     "speechStarted" to speechStarted,
                     "firstSpeechMs" to firstSpeechAt?.let { it - startedAt },
@@ -829,7 +822,6 @@ open class VoskOfflineSpeechRecognizer(
                     "audioDurationMs" to pcmDurationMs(stats.capturedBytes)
                 )
             )
-            if (stats.queueOverflowCount > 0) throw IllegalStateException("Built-in offline speech audio queue overflowed; capture was not fully recognized.")
             if (cancelRequested) throw IllegalStateException("Built-in offline speech cancelled.")
             if (transcript.isBlank()) throw IllegalStateException("Built-in offline speech did not hear a command.")
             logs.log(ActionLogType.RECORDING_STOPPED, "Built-in offline speech stopped after ${durationMs}ms")
@@ -917,6 +909,43 @@ open class VoskOfflineSpeechRecognizer(
     }
 
 
+    private fun transcribeCapturedPcm(
+        model: Model,
+        pcm: ByteArray,
+        sampleRate: Float
+    ): BatchTranscriptionResult {
+        val recognizer = Recognizer(model, sampleRate)
+        val startedAt = SystemClock.elapsedRealtime()
+        return try {
+            var offset = 0
+            val segments = mutableListOf<String>()
+            while (offset < pcm.size) {
+                val length = minOf(BATCH_BUFFER_BYTES, pcm.size - offset)
+                val chunk = pcm.copyOfRange(offset, offset + length)
+                if (recognizer.acceptWaveForm(chunk, chunk.size)) {
+                    parseText(recognizer.result).takeIf { it.isNotBlank() }?.let { segments += it }
+                }
+                offset += length
+            }
+            val finalResultJson = recognizer.finalResult
+            val finalText = parseText(finalResultJson)
+            val transcript = (segments + finalText)
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+                .trim()
+            BatchTranscriptionResult(
+                transcript = transcript,
+                finalResultJson = finalResultJson,
+                segmentCount = segments.size,
+                processedBytes = offset.toLong(),
+                durationMs = SystemClock.elapsedRealtime() - startedAt
+            )
+        } finally {
+            runCatching { recognizer.close() }
+        }
+    }
+
     suspend fun transcribePcm16Mono(
         pcm: ByteArray,
         sampleRate: Float = SAMPLE_RATE.toFloat(),
@@ -929,27 +958,21 @@ open class VoskOfflineSpeechRecognizer(
         val modelCachedBefore = isModelCached()
         val modelLoadStartedAt = System.currentTimeMillis()
         diagnostics.record(diagnosticSessionId, "vosk_file_model_loading", mapOf("bytes" to pcm.size, "sampleRate" to sampleRate, "audioDurationMs" to pcmDurationMs(pcm.size.toLong()), "modelCachedBefore" to modelCachedBefore, "coldStart" to !modelCachedBefore))
-        val recognizer = Recognizer(loadModel(), sampleRate)
+        val model = loadModel()
         diagnostics.record(diagnosticSessionId, "vosk_file_model_ready", mapOf("model" to ASSET_MODEL_NAME, "loadDurationMs" to (System.currentTimeMillis() - modelLoadStartedAt), "modelCachedBefore" to modelCachedBefore, "coldStart" to !modelCachedBefore))
-        try {
-            var offset = 0
-            val segments = mutableListOf<String>()
-            while (offset < pcm.size) {
-                val length = minOf(BUFFER_BYTES, pcm.size - offset)
-                val chunk = pcm.copyOfRange(offset, offset + length)
-                if (recognizer.acceptWaveForm(chunk, chunk.size)) {
-                    parseText(recognizer.result).takeIf { it.isNotBlank() }?.let { segments += it }
-                }
-                offset += length
-            }
-            val finalResultJson = recognizer.finalResult
-            val finalText = parseText(finalResultJson)
-            val transcript = (segments + finalText).filter { it.isNotBlank() }.joinToString(" ").trim()
-            diagnostics.record(diagnosticSessionId, "vosk_file_final", transcriptFields(transcript) + confidenceFields(finalResultJson) + mapOf("provider" to VOSK_PROVIDER_LABEL, "audioDurationMs" to pcmDurationMs(pcm.size.toLong())))
-            transcript
-        } finally {
-            runCatching { recognizer.close() }
-        }
+        val result = transcribeCapturedPcm(model, pcm, sampleRate)
+        diagnostics.record(
+            diagnosticSessionId,
+            "vosk_file_final",
+            transcriptFields(result.transcript) + confidenceFields(result.finalResultJson) + mapOf(
+                "provider" to VOSK_PROVIDER_LABEL,
+                "audioDurationMs" to pcmDurationMs(pcm.size.toLong()),
+                "batchChunkBytes" to BATCH_BUFFER_BYTES,
+                "durationMs" to result.durationMs,
+                "segmentCount" to result.segmentCount
+            )
+        )
+        result.transcript
     }
 
     private fun loadModel(): Model = synchronized(modelLock) {
@@ -1193,6 +1216,7 @@ open class VoskOfflineSpeechRecognizer(
     private companion object {
         const val ASSET_MODEL_NAME = "vosk-model-en-us-0.22-lgraph"
         const val READY_MARKER = ".droidlm-model-ready"
+        const val BATCH_BUFFER_BYTES = 32_768
         const val SAMPLE_RATE = 16_000
         const val BYTES_PER_SAMPLE = 2
         const val BUFFER_BYTES = 4_096
