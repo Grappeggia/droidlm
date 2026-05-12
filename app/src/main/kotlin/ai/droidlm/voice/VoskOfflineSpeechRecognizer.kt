@@ -61,6 +61,16 @@ open class VoskOfflineSpeechRecognizer(
         val durationMs: Long
     )
 
+    private data class CapturedPcmWindow(
+        val bytes: ByteArray,
+        val sourceBytes: Int,
+        val startByte: Int,
+        val endByte: Int
+    ) {
+        val trimmed: Boolean
+            get() = startByte > 0 || endByte < sourceBytes
+    }
+
     private class AudioCaptureStats {
         var capturedBytes: Long = 0L
         var readCount: Int = 0
@@ -732,6 +742,7 @@ open class VoskOfflineSpeechRecognizer(
 
             val preFinalStats = captureStatsSnapshot(captureStats, statsLock)
             val capturedPcmBytes = capturedPcmBytes()
+            val capturedPcmWindow = speechWindowForTranscription(capturedPcmBytes)
             diagnostics.record(
                 diagnosticSessionId,
                 "vosk_capture_first_final_started",
@@ -739,6 +750,11 @@ open class VoskOfflineSpeechRecognizer(
                     "stopReason" to captureStopReason.get(),
                     "capturedBytes" to capturedPcmBytes.size,
                     "audioDurationMs" to pcmDurationMs(capturedPcmBytes.size.toLong()),
+                    "transcriptionBytes" to capturedPcmWindow.bytes.size,
+                    "transcriptionAudioDurationMs" to pcmDurationMs(capturedPcmWindow.bytes.size.toLong()),
+                    "trimmedForTranscription" to capturedPcmWindow.trimmed,
+                    "trimStartMs" to pcmDurationMs(capturedPcmWindow.startByte.toLong()),
+                    "trimEndMs" to pcmDurationMs(capturedPcmWindow.endByte.toLong()),
                     "batchChunkBytes" to BATCH_BUFFER_BYTES,
                     "liveProcessedBytes" to preFinalStats.processedBytes,
                     "liveProcessedAudioDurationMs" to pcmDurationMs(preFinalStats.processedBytes),
@@ -748,7 +764,19 @@ open class VoskOfflineSpeechRecognizer(
                     "liveTranscriptLength" to liveTranscript().length
                 )
             )
-            val batchResult = transcribeCapturedPcm(model, capturedPcmBytes, SAMPLE_RATE.toFloat())
+            var batchResult = transcribeCapturedPcm(model, capturedPcmWindow.bytes, SAMPLE_RATE.toFloat())
+            if (batchResult.transcript.isBlank() && capturedPcmWindow.trimmed) {
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "vosk_capture_first_full_retry_started",
+                    mapOf(
+                        "reason" to "trimmed_batch_blank",
+                        "capturedBytes" to capturedPcmBytes.size,
+                        "audioDurationMs" to pcmDurationMs(capturedPcmBytes.size.toLong())
+                    )
+                )
+                batchResult = transcribeCapturedPcm(model, capturedPcmBytes, SAMPLE_RATE.toFloat())
+            }
             diagnostics.record(
                 diagnosticSessionId,
                 "vosk_capture_first_final_completed",
@@ -756,6 +784,8 @@ open class VoskOfflineSpeechRecognizer(
                     "durationMs" to batchResult.durationMs,
                     "processedBytes" to batchResult.processedBytes,
                     "processedAudioDurationMs" to pcmDurationMs(batchResult.processedBytes),
+                    "sourceBytes" to capturedPcmWindow.sourceBytes,
+                    "trimmedForTranscription" to capturedPcmWindow.trimmed,
                     "segmentCount" to batchResult.segmentCount,
                     "transcriptLength" to batchResult.transcript.length,
                     "stopReason" to captureStopReason.get()
@@ -916,6 +946,8 @@ open class VoskOfflineSpeechRecognizer(
     ): BatchTranscriptionResult {
         val recognizer = Recognizer(model, sampleRate)
         val startedAt = SystemClock.elapsedRealtime()
+        val originalPriority = runCatching { Process.getThreadPriority(Process.myTid()) }.getOrNull()
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
         return try {
             var offset = 0
             val segments = mutableListOf<String>()
@@ -942,8 +974,36 @@ open class VoskOfflineSpeechRecognizer(
                 durationMs = SystemClock.elapsedRealtime() - startedAt
             )
         } finally {
+            originalPriority?.let { priority -> runCatching { Process.setThreadPriority(priority) } }
             runCatching { recognizer.close() }
         }
+    }
+
+    private fun speechWindowForTranscription(pcm: ByteArray): CapturedPcmWindow {
+        if (pcm.isEmpty()) return CapturedPcmWindow(pcm, sourceBytes = 0, startByte = 0, endByte = 0)
+        var firstSpeechByte = -1
+        var lastSpeechEndByte = -1
+        var offset = 0
+        while (offset < pcm.size) {
+            val length = minOf(SPEECH_TRIM_WINDOW_BYTES, pcm.size - offset)
+            if (pcmRms(pcm, offset, length) >= SPEECH_RMS_THRESHOLD) {
+                if (firstSpeechByte < 0) firstSpeechByte = offset
+                lastSpeechEndByte = offset + length
+            }
+            offset += length
+        }
+        if (firstSpeechByte < 0 || lastSpeechEndByte <= firstSpeechByte) {
+            return CapturedPcmWindow(pcm, sourceBytes = pcm.size, startByte = 0, endByte = pcm.size)
+        }
+        val startByte = alignPcmByte((firstSpeechByte - SPEECH_TRIM_PADDING_BYTES).coerceAtLeast(0))
+        val endByte = alignPcmByte((lastSpeechEndByte + SPEECH_TRIM_PADDING_BYTES).coerceAtMost(pcm.size))
+            .coerceAtLeast(startByte)
+        val windowBytes = if (startByte == 0 && endByte == pcm.size) {
+            pcm
+        } else {
+            pcm.copyOfRange(startByte, endByte)
+        }
+        return CapturedPcmWindow(windowBytes, sourceBytes = pcm.size, startByte = startByte, endByte = endByte)
     }
 
     suspend fun transcribePcm16Mono(
@@ -1051,11 +1111,14 @@ open class VoskOfflineSpeechRecognizer(
 
     private fun parsePartial(json: String): String = runCatching { JSONObject(json).optString("partial").trim() }.getOrDefault("")
 
-    private fun pcmRms(buffer: ByteArray, length: Int): Double {
+    private fun pcmRms(buffer: ByteArray, length: Int): Double = pcmRms(buffer, 0, length)
+
+    private fun pcmRms(buffer: ByteArray, offset: Int, length: Int): Double {
         var sum = 0.0
         var count = 0
-        var index = 0
-        while (index + 1 < length) {
+        var index = offset.coerceAtLeast(0)
+        val end = (index + length).coerceAtMost(buffer.size)
+        while (index + 1 < end) {
             val sample = ((buffer[index + 1].toInt() shl 8) or (buffer[index].toInt() and 0xff)).toShort().toInt()
             sum += sample.toDouble() * sample.toDouble()
             count += 1
@@ -1063,6 +1126,8 @@ open class VoskOfflineSpeechRecognizer(
         }
         return if (count == 0) 0.0 else sqrt(sum / count)
     }
+
+    private fun alignPcmByte(value: Int): Int = value - (value % BYTES_PER_SAMPLE)
 
     private fun activeRecordingAgeMs(): Long =
         activeStartedAtMs.takeIf { it > 0L }?.let { SystemClock.elapsedRealtime() - it } ?: 0L
@@ -1217,6 +1282,8 @@ open class VoskOfflineSpeechRecognizer(
         const val ASSET_MODEL_NAME = "vosk-model-en-us-0.22-lgraph"
         const val READY_MARKER = ".droidlm-model-ready"
         const val BATCH_BUFFER_BYTES = 32_768
+        const val SPEECH_TRIM_WINDOW_BYTES = 3_200
+        const val SPEECH_TRIM_PADDING_BYTES = 16_000
         const val SAMPLE_RATE = 16_000
         const val BYTES_PER_SAMPLE = 2
         const val BUFFER_BYTES = 4_096
