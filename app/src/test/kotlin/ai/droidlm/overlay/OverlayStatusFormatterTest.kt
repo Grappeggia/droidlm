@@ -36,7 +36,7 @@ class OverlayStatusFormatterTest {
             isStopping = true
         )
         assertEquals("Processing speech...", label)
-        assertEquals("×", OverlayStatusFormatter.recordButton(true, "Idle", isStopping = true))
+        assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle", isStopping = true))
     }
 
     @Test fun executingShowsCancelButton() {

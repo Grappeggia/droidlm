@@ -25,7 +25,7 @@ object OverlayStatusFormatter {
     }
 
     fun recordButton(isActive: Boolean, executionStatus: String, isStopping: Boolean = false): String = when {
-        isStopping -> "×"
+        isStopping -> "■"
         isActive -> "■"
         executionStatus !in IDLE_STATUSES -> "×"
         else -> "●"
