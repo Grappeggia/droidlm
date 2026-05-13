@@ -788,13 +788,20 @@ class FloatingControlOverlayService : Service() {
             updateOverlayText()
             val speech = deps.speechRecognitionController.state.value
             val execution = deps.executor.uiState.value
-            if (speech.isStarting || speech.isListening || speech.isStopping) {
+            if (speech.isStarting || speech.isListening) {
                 deps.speechDiagnosticsLogger.record(
                     diagnosticSessionId,
                     "overlay_record_stopping_active_speech",
-                    mapOf("speechStopping" to speech.isStopping)
+                    mapOf("speechStopping" to false)
                 )
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING, diagnosticSessionId))
+            } else if (speech.isStopping) {
+                deps.speechDiagnosticsLogger.record(
+                    diagnosticSessionId,
+                    "overlay_record_ignored_while_stopping",
+                    mapOf("executionStatus" to execution.status)
+                )
+                deps.speechDiagnosticsLogger.endSession(diagnosticSessionId, "speech_already_stopping")
             } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
                 deps.speechDiagnosticsLogger.record(
                     diagnosticSessionId,
