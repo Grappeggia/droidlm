@@ -2,6 +2,8 @@ package ai.droidlm.overlay
 
 import ai.droidlm.MainActivity
 import ai.droidlm.di.appGraph
+import ai.droidlm.execution.PendingConfirmation
+import ai.droidlm.execution.PendingPlan
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.permissions.RecordingPermissionActivity
 import ai.droidlm.voice.WakeWordForegroundService
@@ -14,6 +16,7 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
@@ -92,6 +95,30 @@ internal object FloatingOverlayDismissTarget {
     }
 }
 
+private sealed interface OverlayPendingDecision {
+    val headerLabel: String
+    val title: String
+    val details: String
+    val primaryButtonLabel: String
+    val secondaryButtonLabel: String
+
+    data class Confirmation(val pending: PendingConfirmation) : OverlayPendingDecision {
+        override val headerLabel: String = "Confirm action"
+        override val title: String = "Confirmation required"
+        override val details: String = OverlayStatusFormatter.confirmationDetails(pending)
+        override val primaryButtonLabel: String = "Confirm"
+        override val secondaryButtonLabel: String = "Cancel"
+    }
+
+    data class Plan(val pending: PendingPlan) : OverlayPendingDecision {
+        override val headerLabel: String = "Review plan"
+        override val title: String = if (pending.plan.isSafe) "Plan ready" else "Review plan"
+        override val details: String = OverlayStatusFormatter.fullPlan(pending.plan)
+        override val primaryButtonLabel: String = "Run plan"
+        override val secondaryButtonLabel: String = "Reject"
+    }
+}
+
 class FloatingControlOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val deps by lazy { applicationContext.appGraph().overlayServiceDeps() }
@@ -101,12 +128,15 @@ class FloatingControlOverlayService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var stateJob: Job? = null
     private var recordButton: Button? = null
-    private var acceptPlanButton: Button? = null
-    private var rejectPlanButton: Button? = null
+    private var primaryDecisionButton: Button? = null
+    private var secondaryDecisionButton: Button? = null
     private var enableAccessibilityButton: Button? = null
     private var checkAccessibilityButton: Button? = null
     private var moreButton: Button? = null
     private var statusText: TextView? = null
+    private var reviewCard: LinearLayout? = null
+    private var reviewTitleText: TextView? = null
+    private var reviewDetailsText: TextView? = null
     private var accessibilityEnabled: Boolean = false
     private var accessibilitySettingsOpened: Boolean = false
     private var accessibilityPollingJob: Job? = null
@@ -242,6 +272,7 @@ class FloatingControlOverlayService : Service() {
         val edgePadding = (1.6f * density).toInt().coerceAtLeast(1)
         val verticalPadding = (1.2f * density).toInt().coerceAtLeast(1)
         val buttonSize = (48 * density).toInt()
+        val reviewSpacing = (6 * density).toInt()
         fun Button.applySquareButton(size: Int) {
             minWidth = size
             minimumWidth = size
@@ -250,6 +281,19 @@ class FloatingControlOverlayService : Service() {
             this.layoutParams = LinearLayout.LayoutParams(size, size)
             setPadding(0, 0, 0, 0)
             setTextColor(Color.WHITE)
+        }
+        fun Button.applyActionButton(minWidthDp: Float) {
+            minWidth = (minWidthDp * density).toInt()
+            minimumWidth = (minWidthDp * density).toInt()
+            minHeight = (40 * density).toInt()
+            setPadding((10 * density).toInt(), 0, (10 * density).toInt(), 0)
+            setTextColor(Color.WHITE)
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -260,6 +304,11 @@ class FloatingControlOverlayService : Service() {
                 setColor(Color.argb(232, 21, 61, 59))
                 setStroke((1 * density).toInt(), Color.TRANSPARENT)
             }
+        }
+        val reviewBackground = GradientDrawable().apply {
+            cornerRadius = 10 * density
+            setColor(Color.argb(236, 26, 34, 52))
+            setStroke((1 * density).toInt(), Color.argb(100, 255, 255, 255))
         }
 
         recordButton = Button(this).apply {
@@ -273,24 +322,9 @@ class FloatingControlOverlayService : Service() {
             text = "Tap circle to speak"
             textSize = 13f
             setTextColor(Color.WHITE)
-            maxWidth = (220 * density).toInt()
+            maxLines = 2
             setPadding(edgePadding, 0, edgePadding, 0)
-        }
-        acceptPlanButton = Button(this).apply {
-            text = "✓"
-            contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
-            textSize = 16f
-            applySquareButton(buttonSize)
-            visibility = View.GONE
-            setOnClickListener { acceptPendingPlan() }
-        }
-        rejectPlanButton = Button(this).apply {
-            text = "N"
-            contentDescription = REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION
-            textSize = 16f
-            applySquareButton(buttonSize)
-            visibility = View.GONE
-            setOnClickListener { rejectPendingPlan() }
+            this.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         enableAccessibilityButton = Button(this).apply {
             text = "Enable"
@@ -323,16 +357,66 @@ class FloatingControlOverlayService : Service() {
             applySquareButton(buttonSize)
             setOnClickListener { openFullApp() }
         }
+        reviewTitleText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.argb(220, 255, 255, 255))
+            setTypeface(typeface, Typeface.BOLD)
+        }
+        reviewDetailsText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            maxWidth = (300 * density).toInt()
+            setLineSpacing(0f, 1.08f)
+        }
+        primaryDecisionButton = Button(this).apply {
+            text = "Confirm"
+            contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
+            textSize = 13f
+            applyActionButton(76f)
+            visibility = View.GONE
+            setOnClickListener { acceptPendingDecision() }
+        }
+        secondaryDecisionButton = Button(this).apply {
+            text = "Cancel"
+            contentDescription = REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION
+            textSize = 13f
+            applyActionButton(72f)
+            visibility = View.GONE
+            setOnClickListener { rejectPendingDecision() }
+        }
+        val reviewActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, reviewSpacing, 0, 0)
+            addView(primaryDecisionButton)
+            addView(secondaryDecisionButton)
+        }
+        (secondaryDecisionButton?.layoutParams as? LinearLayout.LayoutParams)?.marginStart = reviewSpacing
+        reviewCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding((10 * density).toInt(), (9 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
+            background = reviewBackground
+            this.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = reviewSpacing
+            }
+            addView(reviewTitleText)
+            addView(reviewDetailsText)
+            addView(reviewActions)
+        }
 
         pill.addView(recordButton)
-        pill.addView(acceptPlanButton)
-        pill.addView(rejectPlanButton)
+        pill.addView(statusText)
         pill.addView(enableAccessibilityButton)
         pill.addView(checkAccessibilityButton)
         pill.addView(moreButton)
-        pill.addView(statusText)
+        container.addView(pill)
+        container.addView(reviewCard)
         attachDragHandler(pill, layoutParams)
-        return pill
+        return container
     }
 
     private fun attachDragHandler(view: View, layoutParams: WindowManager.LayoutParams) {
@@ -584,31 +668,38 @@ class FloatingControlOverlayService : Service() {
             launch {
                 deps.executor.pendingPlan.collect { updateOverlayText() }
             }
+            launch {
+                deps.executor.pendingConfirmation.collect { updateOverlayText() }
+            }
         }
     }
 
     private fun updateOverlayText() {
-        val pendingPlan = deps.executor.pendingPlan.value
         val speech = deps.speechRecognitionController.state.value
         val execution = deps.executor.uiState.value
-        val hasPendingPlan = pendingPlan != null
+        val pendingDecision = currentPendingDecision()
+        updateReviewCard(pendingDecision)
         if (!accessibilityEnabled) {
             recordButton?.visibility = View.GONE
-            acceptPlanButton?.visibility = View.GONE
-            rejectPlanButton?.visibility = View.GONE
             enableAccessibilityButton?.visibility = View.VISIBLE
             checkAccessibilityButton?.visibility = View.VISIBLE
             moreButton?.visibility = View.VISIBLE
-            statusText?.text = OverlayStatusFormatter.accessibilitySetupLabel(settingsOpened = accessibilitySettingsOpened)
+            statusText?.text = if (pendingDecision != null) {
+                "Review action and enable Accessibility"
+            } else {
+                OverlayStatusFormatter.accessibilitySetupLabel(settingsOpened = accessibilitySettingsOpened)
+            }
             return
         }
         recordButton?.visibility = View.VISIBLE
         enableAccessibilityButton?.visibility = View.GONE
         checkAccessibilityButton?.visibility = View.GONE
-        acceptPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
-        rejectPlanButton?.visibility = if (hasPendingPlan) View.VISIBLE else View.GONE
-        moreButton?.visibility = if (hasPendingPlan) View.GONE else View.VISIBLE
-        val recordText = OverlayStatusFormatter.recordButton(speech.isActive, execution.status)
+        moreButton?.visibility = View.VISIBLE
+        val recordText = OverlayStatusFormatter.recordButton(
+            isActive = speech.isActive,
+            executionStatus = execution.status,
+            isStopping = speech.isStopping
+        )
         if (recordText != lastRecordButtonText) {
             lastRecordButtonText = recordText
             deps.speechDiagnosticsLogger.record(
@@ -628,7 +719,7 @@ class FloatingControlOverlayService : Service() {
             statusText?.text = message
             return
         }
-        statusText?.text = pendingPlan?.let { OverlayStatusFormatter.compactPlan(it.plan) } ?: OverlayStatusFormatter.label(
+        statusText?.text = pendingDecision?.headerLabel ?: OverlayStatusFormatter.label(
             isStarting = speech.isStarting,
             isListening = speech.isListening,
             partialTranscript = speech.partialTranscript,
@@ -637,6 +728,37 @@ class FloatingControlOverlayService : Service() {
             lastResult = execution.lastResult,
             isStopping = speech.isStopping
         )
+    }
+
+    private fun currentPendingDecision(): OverlayPendingDecision? {
+        deps.executor.pendingConfirmation.value?.let { return OverlayPendingDecision.Confirmation(it) }
+        deps.executor.pendingPlan.value?.let { return OverlayPendingDecision.Plan(it) }
+        return null
+    }
+
+    private fun updateReviewCard(decision: OverlayPendingDecision?) {
+        reviewCard?.visibility = if (decision == null) View.GONE else View.VISIBLE
+        primaryDecisionButton?.visibility = if (decision == null) View.GONE else View.VISIBLE
+        secondaryDecisionButton?.visibility = if (decision == null) View.GONE else View.VISIBLE
+        when (decision) {
+            null -> {
+                reviewTitleText?.text = ""
+                reviewDetailsText?.text = ""
+            }
+            is OverlayPendingDecision.Confirmation -> {
+                reviewTitleText?.text = decision.title
+                reviewDetailsText?.text = decision.details
+                primaryDecisionButton?.text = decision.primaryButtonLabel
+                secondaryDecisionButton?.text = decision.secondaryButtonLabel
+            }
+            is OverlayPendingDecision.Plan -> {
+                reviewTitleText?.text = decision.title
+                reviewDetailsText?.text = decision.details
+                primaryDecisionButton?.text = decision.primaryButtonLabel
+                secondaryDecisionButton?.text = decision.secondaryButtonLabel
+            }
+        }
+        if (decision != null) overlayView?.post { applySafeOverlayPosition(persist = true) }
     }
 
     private fun toggleRecord() {
@@ -666,11 +788,15 @@ class FloatingControlOverlayService : Service() {
             updateOverlayText()
             val speech = deps.speechRecognitionController.state.value
             val execution = deps.executor.uiState.value
-            if (speech.isActive) {
+            if (speech.isStarting || speech.isListening) {
                 deps.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_stopping_active_speech")
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_STOP_LISTENING, diagnosticSessionId))
-            } else if (execution.status !in setOf("Idle", "Error", "Cancelled")) {
-                deps.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_cancelling_execution", mapOf("executionStatus" to execution.status))
+            } else if (speech.isStopping || execution.status !in setOf("Idle", "Error", "Cancelled")) {
+                deps.speechDiagnosticsLogger.record(
+                    diagnosticSessionId,
+                    "overlay_record_cancelling_execution",
+                    mapOf("executionStatus" to execution.status, "speechStopping" to speech.isStopping)
+                )
                 startService(WakeWordForegroundService.intent(this@FloatingControlOverlayService, WakeWordForegroundService.ACTION_CANCEL, diagnosticSessionId))
             } else if (!hasMicPermission()) {
                 deps.speechDiagnosticsLogger.record(diagnosticSessionId, "overlay_record_missing_mic_permission")
@@ -684,13 +810,41 @@ class FloatingControlOverlayService : Service() {
         }
     }
 
-    private fun acceptPendingPlan() {
-        deps.speechDiagnosticsLogger.record(null, "overlay_accept_pending_plan", overlayLifecycleFields(mapOf("hasPendingPlan" to (deps.executor.pendingPlan.value != null))))
+    private fun acceptPendingDecision() {
+        val pendingConfirmation = deps.executor.pendingConfirmation.value
+        if (pendingConfirmation != null) {
+            deps.speechDiagnosticsLogger.record(
+                null,
+                "overlay_accept_pending_confirmation",
+                overlayLifecycleFields(mapOf("hasPendingConfirmation" to true))
+            )
+            deps.executor.respondToConfirmation(true)
+            return
+        }
+        deps.speechDiagnosticsLogger.record(
+            null,
+            "overlay_accept_pending_plan",
+            overlayLifecycleFields(mapOf("hasPendingPlan" to (deps.executor.pendingPlan.value != null)))
+        )
         scope.launch { deps.executor.acceptPendingPlan(false) }
     }
 
-    private fun rejectPendingPlan() {
-        deps.speechDiagnosticsLogger.record(null, "overlay_reject_pending_plan", overlayLifecycleFields(mapOf("hasPendingPlan" to (deps.executor.pendingPlan.value != null))))
+    private fun rejectPendingDecision() {
+        val pendingConfirmation = deps.executor.pendingConfirmation.value
+        if (pendingConfirmation != null) {
+            deps.speechDiagnosticsLogger.record(
+                null,
+                "overlay_reject_pending_confirmation",
+                overlayLifecycleFields(mapOf("hasPendingConfirmation" to true))
+            )
+            deps.executor.respondToConfirmation(false)
+            return
+        }
+        deps.speechDiagnosticsLogger.record(
+            null,
+            "overlay_reject_pending_plan",
+            overlayLifecycleFields(mapOf("hasPendingPlan" to (deps.executor.pendingPlan.value != null)))
+        )
         deps.executor.rejectPendingPlan()
     }
 
@@ -837,7 +991,8 @@ class FloatingControlOverlayService : Service() {
         "speechActive" to deps.speechRecognitionController.state.value.isActive,
         "speechListening" to deps.speechRecognitionController.state.value.isListening,
         "executionStatus" to deps.executor.uiState.value.status,
-        "hasPendingPlan" to (deps.executor.pendingPlan.value != null)
+        "hasPendingPlan" to (deps.executor.pendingPlan.value != null),
+        "hasPendingConfirmation" to (deps.executor.pendingConfirmation.value != null)
     ) + extra
 
     private fun overlayType(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -857,8 +1012,8 @@ class FloatingControlOverlayService : Service() {
         const val ACTION_MIC_PERMISSION_READY = "ai.droidlm.action.MIC_PERMISSION_READY"
         const val RECORD_BUTTON_CONTENT_DESCRIPTION = "DroidLM record command"
         const val MORE_BUTTON_CONTENT_DESCRIPTION = "DroidLM open full app"
-        const val ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM accept plan"
-        const val REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM reject plan"
+        const val ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM approve pending action"
+        const val REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION = "DroidLM reject pending action"
         const val ENABLE_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION = "DroidLM enable Accessibility service"
         const val CHECK_ACCESSIBILITY_BUTTON_CONTENT_DESCRIPTION = "DroidLM check Accessibility service"
 

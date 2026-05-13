@@ -40,6 +40,7 @@ open class VoskOfflineSpeechRecognizer(
     data class Callbacks(
         val onStarting: () -> Unit = {},
         val onReady: () -> Unit = {},
+        val onStopping: (String) -> Unit = {},
         val onPartial: (String) -> Unit = {}
     )
 
@@ -347,6 +348,7 @@ open class VoskOfflineSpeechRecognizer(
                         "queueCapacity" to audioQueueCapacity
                     ) + fields
                 )
+                if (reason in STOPPING_CALLBACK_REASONS) callbacks.onStopping(reason)
             }
             return marked
         }
@@ -1304,5 +1306,12 @@ open class VoskOfflineSpeechRecognizer(
         const val MAX_POST_STOP_DRAIN_AUDIO_MS = 2_500L
         const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
+        private val STOPPING_CALLBACK_REASONS = setOf(
+            "user_stop",
+            "silence_after_speech",
+            "initial_no_speech_timeout",
+            "max_duration",
+            "read_error"
+        )
     }
 }

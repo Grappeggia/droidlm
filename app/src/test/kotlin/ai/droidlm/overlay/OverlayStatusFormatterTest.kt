@@ -1,5 +1,6 @@
 package ai.droidlm.overlay
 
+import ai.droidlm.execution.PendingConfirmation
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.relay.PlanPreview
 import ai.droidlm.relay.PlanPreviewStep
@@ -35,7 +36,7 @@ class OverlayStatusFormatterTest {
             isStopping = true
         )
         assertEquals("Processing speech...", label)
-        assertEquals("■", OverlayStatusFormatter.recordButton(true, "Idle"))
+        assertEquals("×", OverlayStatusFormatter.recordButton(true, "Idle", isStopping = true))
     }
 
     @Test fun executingShowsCancelButton() {
@@ -127,6 +128,38 @@ class OverlayStatusFormatterTest {
         assertEquals("Plan: Open Drive", OverlayStatusFormatter.compactPlan(plan))
     }
 
+    @Test fun fullPlanIncludesSummaryRiskAndDetailedSteps() {
+        val plan = PlanPreview(
+            model = "gpt-5.4-nano",
+            summary = "Open Sheets and type a value",
+            riskLevel = "MEDIUM",
+            requiresConfirmation = true,
+            steps = listOf(
+                PlanPreviewStep(1, DroidLmAction.OpenApp("Google Sheets", "com.google.android.apps.docs.editors.sheets", "open app"), "Open Google Sheets", "open app", false),
+                PlanPreviewStep(2, DroidLmAction.TypeText("hello", false, "type in selected cell"), "Type hello", "type in selected cell", false)
+            )
+        )
+
+        assertEquals(
+            "Open Sheets and type a value\nRisk: MEDIUM; confirmation required\n1. Open Google Sheets\n2. Type text\n   type in selected cell",
+            OverlayStatusFormatter.fullPlan(plan)
+        )
+    }
+
+    @Test fun confirmationDetailsIncludesTranscriptActionReasonAndPrompt() {
+        val pending = PendingConfirmation(
+            id = "pending-1",
+            transcript = "open google docs",
+            actionLabel = "Open Google Docs in Play Store",
+            reason = "The app is not installed.",
+            prompt = "Confirm this DroidLM action?"
+        )
+
+        assertEquals(
+            "Transcript: open google docs\nAction: Open Google Docs in Play Store\nReason: The app is not installed.\nConfirm this DroidLM action?",
+            OverlayStatusFormatter.confirmationDetails(pending)
+        )
+    }
 
     @Test fun overlayYStaysAboveBottomGestureArea() {
         val safeY = FloatingOverlayBounds.safeY(

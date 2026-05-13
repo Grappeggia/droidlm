@@ -51,6 +51,37 @@ class SpeechRecognitionControllerTest {
         assertFalse(controller.state.value.isStopping)
     }
 
+    @Test fun voskAutoStopTransitionsToStoppingBeforeFinalTranscript() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        Shadows.shadowOf(context).grantPermissions(Manifest.permission.RECORD_AUDIO)
+        val logs = ActionLogRepository()
+        val diagnostics = SpeechDiagnosticsLogger(context, SettingsRepository(context), logs)
+        val fakeVosk = FakeVoskRecognizer(context, logs, diagnostics)
+        val controller = SpeechRecognitionController(context, logs, diagnostics, fakeVosk)
+
+        val recognition = async {
+            controller.recognizeCommand(
+                preferOffline = true,
+                maxDurationMs = 20_000L,
+                languageTag = "en-US",
+                diagnosticSessionId = "test-session"
+            )
+        }
+        fakeVosk.ready.await()
+
+        fakeVosk.signalStopping("silence_after_speech")
+
+        assertFalse(controller.state.value.isListening)
+        assertTrue(controller.state.value.isStopping)
+        assertTrue(controller.state.value.isActive)
+
+        fakeVosk.completeTranscript("open google docs")
+
+        assertEquals("open google docs", recognition.await())
+        assertFalse(controller.state.value.isStopping)
+        assertEquals("open google docs", controller.state.value.finalTranscript)
+    }
+
     private class FakeVoskRecognizer(
         context: Context,
         logs: ActionLogRepository,
@@ -58,6 +89,7 @@ class SpeechRecognitionControllerTest {
     ) : VoskOfflineSpeechRecognizer(context, logs, diagnostics) {
         val ready = CompletableDeferred<Unit>()
         private val transcript = CompletableDeferred<String>()
+        private lateinit var callbacks: Callbacks
         var stopCalls = 0
             private set
         var cancelCalls = 0
@@ -65,6 +97,10 @@ class SpeechRecognitionControllerTest {
 
         fun completeTranscript(value: String) {
             transcript.complete(value)
+        }
+
+        fun signalStopping(reason: String) {
+            callbacks.onStopping(reason)
         }
 
         override fun supportsLanguage(languageTag: String): Boolean = true
@@ -75,6 +111,7 @@ class SpeechRecognitionControllerTest {
             diagnosticSessionId: String?,
             callbacks: Callbacks
         ): String {
+            this.callbacks = callbacks
             callbacks.onStarting()
             callbacks.onReady()
             ready.complete(Unit)

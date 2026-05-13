@@ -524,6 +524,16 @@ class SpeechRecognitionController(
                                 providerLabel = VOSK_PROVIDER_LABEL
                             )
                         },
+                        onStopping = {
+                            _state.value = _state.value.copy(
+                                isStarting = false,
+                                isListening = false,
+                                isStopping = true,
+                                partialTranscript = "",
+                                errorMessage = null,
+                                providerLabel = VOSK_PROVIDER_LABEL
+                            )
+                        },
                         onPartial = { partial ->
                             _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null, providerLabel = VOSK_PROVIDER_LABEL)
                         }
