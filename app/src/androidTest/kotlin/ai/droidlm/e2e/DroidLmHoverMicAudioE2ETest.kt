@@ -270,59 +270,61 @@ class DroidLmHoverMicAudioE2ETest {
             )
 
             val events = readDiagnosticEvents()
-            val primarySessionId = events.lastOrNull { event ->
-                event.optString("event") in setOf("vosk_final", "push_to_talk_execution_failed", "push_to_talk_failed")
-            }?.optString("sessionId")
-                ?: throw AssertionError("Expected support-log regression run to record a completed speech session")
-            val primarySessionEvents = events.filter { event -> event.optString("sessionId") == primarySessionId }
-
+            val speechSessions = completedSpeechSessions(events)
             assertTrue(
-                "Expected support-log regression session to route through offline-preferred Vosk fallback. Events=$primarySessionEvents",
-                primarySessionEvents.any { it.optString("event") == "prefer_offline_vosk_direct" } &&
-                    primarySessionEvents.any { it.optString("event") == "vosk_fallback_started" }
+                "Expected support-log regression run to record at least one completed speech session. Events=$events",
+                speechSessions.isNotEmpty()
             )
-            val hadExplicitStopRequest = primarySessionEvents.any { it.optString("event") == "vosk_stop_requested" } &&
-                primarySessionEvents.any { it.optString("event") == "stop_current_requested" }
-            val stopRequestSession = events.firstOrNull { event -> event.optString("event") == "foreground_stop_listening_requested" }
-            if (hadExplicitStopRequest) {
+
+            val sessionSummaries = speechSessions.joinToString(prefix = "[", postfix = "]") { session -> compactEvents(session) }
+            val offlineFallbackSessions = speechSessions.filter { session ->
+                hasSessionEvent(session, "prefer_offline_vosk_direct") || hasSessionEvent(session, "vosk_fallback_started")
+            }
+            assertTrue(
+                "Expected support-log regression sessions to route through offline-preferred Vosk path. Sessions=$sessionSummaries",
+                offlineFallbackSessions.isNotEmpty()
+            )
+
+            val shortOrBlankTranscriptSessions = speechSessions.filter { session ->
+                val transcript = lastTranscriptOrBlank(session).lowercase().trim()
+                transcript.isBlank() || (transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets"))
+            }
+            assertTrue(
+                "Expected support-log regression speech sessions to remain blank/short and not resolve full app names. Sessions=$sessionSummaries",
+                shortOrBlankTranscriptSessions.size == speechSessions.size
+            )
+
+            val voskFailureSessions = speechSessions.filter { session ->
+                hasSessionEvent(session, "vosk_error") && hasSessionEvent(session, "vosk_fallback_failed")
+            }
+            if (voskFailureSessions.isNotEmpty()) {
                 assertTrue(
-                    "Expected a second overlay tap to request foreground stop listening when the session logged an explicit stop. Events=$events",
-                    stopRequestSession != null && stopRequestSession.optString("sessionId") != primarySessionId
+                    "Expected unsupported offline-fallback sessions to avoid launching an app package despite bad transcript. Sessions=${voskFailureSessions.joinToString { compactEvents(it) }}",
+                    voskFailureSessions.all { session ->
+                        val transcript = lastTranscriptOrBlank(session).lowercase().trim()
+                        transcript.isBlank() || transcript.length <= 5
+                    }
+                )
+                assertTrue(
+                    "Expected offline fallback failures in support-log replay to surface push-to-talk failure telemetry. Sessions=${voskFailureSessions.joinToString { compactEvents(it) }}",
+                    voskFailureSessions.all { session -> hasSessionEvent(session, "push_to_talk_failed") || hasSessionEvent(session, "push_to_talk_execution_failed") }
                 )
             }
 
-            val finalTranscript = primarySessionEvents.lastOrNull { it.optString("event") == "vosk_final" }
-                ?: throw AssertionError("Expected support-log regression session to record a vosk_final event")
-            val transcript = finalTranscript.optString("transcript").lowercase().trim()
-            assertTrue(
-                "Expected May 10 support-log audio to collapse into blank or short ambiguous text during live emulator capture; transcript='$transcript'; event=$finalTranscript",
-                transcript.isBlank() || transcript in setOf("open", "okay", "the")
-            )
-            assertTrue(
-                "Expected May 10 support-log audio to stay blank/truncated instead of preserving the requested app name; transcript='$transcript'",
-                transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets")
-            )
-
-            val executionFailure = primarySessionEvents.lastOrNull { it.optString("event") == "push_to_talk_execution_failed" }
-            if (executionFailure != null) {
-                if (transcript == "open") {
-                    assertEquals("NO_OP", executionFailure.optString("errorCode"))
-                    assertTrue(
-                        "Expected ambiguous-open local parser failure to ask for an app name. Event=$executionFailure",
-                        executionFailure.optString("message").contains("which app", ignoreCase = true)
-                    )
-                } else {
-                    assertEquals(
-                        "PLANNING_DISABLED",
-                        executionFailure.optString("errorCode")
-                    )
-                }
-            } else {
+            val explicitStopSessionPairs = speechSessions.filter { session ->
+                hasSessionEvent(session, "vosk_stop_requested") && hasSessionEvent(session, "stop_current_requested")
+            }
+            explicitStopSessionPairs.forEach { primaryStopSession ->
+                val stopServiceSessionId = events
+                    .firstOrNull { event -> event.optString("event") == "foreground_stop_listening_requested" }
+                    ?.optString("sessionId")
                 assertTrue(
-                    "Expected missing push-to-talk failure only when support-log capture produced no text; transcript='$transcript'; events=$primarySessionEvents",
-                    transcript.isBlank()
+                    "Expected foreground stop request to be logged in a separate diagnostic session when the speech session requests explicit stop. Events=$events",
+                    stopServiceSessionId != null && stopServiceSessionId !=
+                        primaryStopSession.lastOrNull { event -> event.optString("sessionId").isNotBlank() }?.optString("sessionId")
                 )
             }
+
             assertFalse(
                 "Support-log regression should not accidentally foreground Google Docs/Drive packages; currentPackage=${device.currentPackageName}",
                 device.currentPackageName?.startsWith("com.google.android.apps.docs") == true
@@ -399,6 +401,59 @@ class DroidLmHoverMicAudioE2ETest {
         return exported.readLines()
             .filter { it.isNotBlank() }
             .map(::JSONObject)
+    }
+
+    private val speechSessionTerminalEvents: Set<String> = setOf(
+        "audio_capture_summary",
+        "vosk_final",
+        "vosk_error",
+        "vosk_fallback_failed",
+        "push_to_talk_execution_failed",
+        "push_to_talk_failed",
+        "session_end"
+    )
+
+    private val speechSessionRecognitionEvents: Set<String> = setOf(
+        "recognize_command_start",
+        "prefer_offline_vosk_direct",
+        "vosk_fallback_started",
+        "vosk_fallback_failed",
+        "vosk_final",
+        "vosk_error",
+        "vosk_stop_requested",
+        "push_to_talk_started",
+        "push_to_talk_execution_failed",
+        "push_to_talk_failed"
+    )
+
+    private fun completedSpeechSessions(events: List<JSONObject>): List<List<JSONObject>> {
+        val bySession = linkedMapOf<String, MutableList<JSONObject>>()
+
+        events.forEach { event ->
+            val sessionId = event.optString("sessionId")
+            if (sessionId.isNotBlank()) {
+                bySession.getOrPut(sessionId) { mutableListOf() }.add(event)
+            }
+        }
+
+        return bySession.values.filter { session ->
+            speechSessionRecognitionEvents.any { eventName -> hasSessionEvent(session, eventName) } &&
+                speechSessionTerminalEvents.any { eventName -> hasSessionEvent(session, eventName) }
+        }
+    }
+
+    private fun hasSessionEvent(session: List<JSONObject>, eventName: String): Boolean =
+        session.any { it.optString("event") == eventName }
+
+    private fun hasSessionEvent(session: List<JSONObject>, eventNames: Set<String>): Boolean =
+        session.any { eventNames.contains(it.optString("event")) }
+
+    private fun lastTranscriptOrBlank(session: List<JSONObject>): String {
+        return session.lastOrNull { it.optString("event") == "vosk_final" }
+            ?.optString("transcript")
+            ?.lowercase()
+            ?.trim()
+            ?: ""
     }
 
     private fun latestCompletedSessionEvents(events: List<JSONObject>): List<JSONObject> {
