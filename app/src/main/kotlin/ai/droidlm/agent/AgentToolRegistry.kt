@@ -1,6 +1,7 @@
 package ai.droidlm.agent
 
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.intent.DroidLmActionContract
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.RelayClient
@@ -156,6 +157,14 @@ class AgentToolRegistry(
             AgentToolSpec("APPEND_DOCUMENT_NOTE", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("SET_CURRENT_SHEET_CELL", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("ADD_SPREADSHEET_ROW", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true)
-        )
+        ).also(::validateContractCoverage)
+
+        private fun validateContractCoverage(specs: List<AgentToolSpec>) {
+            val specNames = specs.map { it.name }.toSet()
+            val contractNames = DroidLmActionContract.supportedActions.toSet()
+            require(specNames == contractNames) {
+                "Agent tool specs must match DroidLmActionContract. Missing specs=${contractNames - specNames}; extra specs=${specNames - contractNames}"
+            }
+        }
     }
 }

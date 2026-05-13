@@ -8,6 +8,7 @@ import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.context.UiContextJson
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.NetworkDiagnostics
+import ai.droidlm.intent.DroidLmActionContract
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.displayName
 import ai.droidlm.portal.AppPackage
@@ -131,7 +132,7 @@ class OpenAiClient(
           ]
         }
         Each step object must include an action field and all required fields for that action.
-        Supported actions: OPEN_APP, OPEN_APP_STORE_LISTING, OPEN_SETTINGS, TAP_NODE, FOCUS_NODE, TAP, LONG_PRESS, SWIPE, SCROLL, TAP_TEXT, LONG_PRESS_NODE, WAIT_FOR_UI, PRESS_IME_ACTION, DIALOG_ACTION, OPEN_MENU, SELECT_TAB, SET_TOGGLE, EXPAND_COLLAPSE, SET_SLIDER, REFRESH, FIND_TEXT_ON_SCREEN, OPEN_NOTIFICATIONS, OPEN_QUICK_SETTINGS, OPEN_RECENTS, SWITCH_APP, OPEN_URL, OPEN_DEEP_LINK, PICK_FROM_CHOOSER, PICK_FILE, PICK_PHOTO, SHARE_TO_APP, PERMISSION_DECISION, TYPE_TEXT, GLOBAL_BACK, GLOBAL_HOME, TAKE_SCREENSHOT, FOCUS_EDITABLE, SET_SELECTION, INSERT_TEXT, REPLACE_SELECTION, SET_FULL_TEXT, MOVE_CURSOR, TAP_TEXT_ANCHOR, OCR_SCREEN, ANALYZE_SCREENSHOT, INSERT_TEXT_AT_ANCHOR, REPLACE_TEXT_RANGE, APPEND_TEXT, PREPEND_TEXT, SELECT_ALL, DELETE_SELECTED_TEXT, VERIFY_TEXT_CHANGE, FORMAT_CURRENT_LINE_AS_BULLET, REPLACE_CURRENT_DOCUMENT_TEXT, APPEND_DOCUMENT_NOTE, SET_CURRENT_SHEET_CELL, ADD_SPREADSHEET_ROW, ASK_CONFIRMATION, DONE, NO_OP.
+        Supported actions: ${DroidLmActionContract.supportedActionsPrompt}
         Use OPEN_APP only when the target package appears in installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING with the requested packageName. If the command does not include an app name, return NO_OP with a brief clarification instead of guessing.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
@@ -465,6 +466,7 @@ class OpenAiClient(
 
     private fun repairPrompt(source: String, invalidJson: String, errorMessage: String): String = """
         Repair this DroidLM $source JSON so it is valid for the original intent.
+        Supported actions: ${DroidLmActionContract.supportedActionsPrompt}
         Return JSON only. Keep the same meaning. Prefer semantic Android actions like SCROLL, TAP_TEXT, LONG_PRESS_NODE, WAIT_FOR_UI, DIALOG_ACTION, OPEN_MENU, SELECT_TAB, SET_TOGGLE, EXPAND_COLLAPSE, SET_SLIDER, REFRESH, OPEN_NOTIFICATIONS, OPEN_QUICK_SETTINGS, OPEN_RECENTS, OPEN_URL, and OPEN_DEEP_LINK when they fit.
         If coordinates are missing for a scroll intent, convert it to SCROLL with a direction.
         If coordinates are missing for a long-press on a UI element, convert it to LONG_PRESS_NODE using nodeId or text.
