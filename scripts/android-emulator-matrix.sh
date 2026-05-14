@@ -372,17 +372,27 @@ run_profile_names() {
 
 run_capture_regression_profile() {
   local entry="$1"
-  local profile_name stress_threads profile
+  local profile_name stress_threads profile completion_latency_ms
   profile_name="${entry%%|*}"
   stress_threads="${entry#*|}"
   profile="$(find_profile "$profile_name")"
   local previous_record_hold="${DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS:-}"
   local previous_cpu_stress="${DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS:-}"
   local previous_timeout="${DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS:-}"
+  local previous_completion_latency="${DROIDLM_E2E_CAPTURE_MAX_COMPLETION_LATENCY_MS:-}"
   DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS=10000
   DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS="$stress_threads"
   DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS=120000
+  completion_latency_ms="$previous_completion_latency"
+  if [[ -z "$completion_latency_ms" && "$profile_name" == "droidlm_api29_lenovo_stress" ]]; then
+    completion_latency_ms=10000
+  fi
   export DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS
+  if [[ -n "$completion_latency_ms" ]]; then
+    export DROIDLM_E2E_CAPTURE_MAX_COMPLETION_LATENCY_MS="$completion_latency_ms"
+  else
+    unset DROIDLM_E2E_CAPTURE_MAX_COMPLETION_LATENCY_MS
+  fi
   set +e
   run_profile "$profile" connectedHoverMicCaptureRegressionE2e
   local status=$?
@@ -390,6 +400,7 @@ run_capture_regression_profile() {
   restore_env_var DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS "$previous_record_hold"
   restore_env_var DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS "$previous_cpu_stress"
   restore_env_var DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS "$previous_timeout"
+  restore_env_var DROIDLM_E2E_CAPTURE_MAX_COMPLETION_LATENCY_MS "$previous_completion_latency"
   return "$status"
 }
 
