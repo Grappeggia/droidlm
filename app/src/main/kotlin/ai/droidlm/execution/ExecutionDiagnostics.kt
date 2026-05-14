@@ -65,7 +65,7 @@ internal class ExecutionDiagnostics(
     fun voiceRouteDecisionFields(action: DroidLmAction, executionMode: ExecutionMode): Map<String, Any?> {
         val route = when (action) {
             is DroidLmAction.NeedLlmPlanning -> when (executionMode) {
-                ExecutionMode.LOCAL_RULE_FIRST -> "planning_disabled"
+                ExecutionMode.LOCAL_RULE_FIRST -> "plan_preview"
                 ExecutionMode.LOCAL_LLM_LOOP -> "local_llm_planning"
                 ExecutionMode.AGENT_LOOP -> "agent_planning"
                 ExecutionMode.MOBILERUN_CLOUD_TASK -> "mobilerun_planning"

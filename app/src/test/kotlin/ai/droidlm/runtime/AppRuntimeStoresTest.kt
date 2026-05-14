@@ -10,6 +10,7 @@ import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.ScreenshotResult
 import ai.droidlm.textedit.EditableTarget
 import android.graphics.Rect
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -27,6 +28,22 @@ class AppRuntimeStoresTest {
 
         runtime.setRunning(false)
         assertFalse(runtime.isRunning.value)
+    }
+
+    @Test fun overlayRuntimeStoresAndClearsNotices() {
+        val runtime = OverlayRuntime()
+
+        assertNull(runtime.notice.value)
+
+        runtime.showNotice("Uploaded", "gs://bucket/object.zip", OverlayNoticeKind.SUCCESS)
+
+        assertEquals("Uploaded", runtime.notice.value?.title)
+        assertEquals("gs://bucket/object.zip", runtime.notice.value?.details)
+        assertEquals(OverlayNoticeKind.SUCCESS, runtime.notice.value?.kind)
+
+        runtime.clearNotice()
+
+        assertNull(runtime.notice.value)
     }
 
     @Test fun listeningRuntimeStartsStoppedAndToggles() {

@@ -6,6 +6,8 @@ import ai.droidlm.execution.PendingConfirmation
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.permissions.RecordingPermissionActivity
+import ai.droidlm.runtime.OverlayNotice
+import ai.droidlm.runtime.OverlayNoticeKind
 import ai.droidlm.voice.WakeWordForegroundService
 import android.Manifest
 import android.app.Service
@@ -99,23 +101,35 @@ private sealed interface OverlayPendingDecision {
     val headerLabel: String
     val title: String
     val details: String
-    val primaryButtonLabel: String
-    val secondaryButtonLabel: String
+    val primaryButtonLabel: String?
+    val secondaryButtonLabel: String?
 
     data class Confirmation(val pending: PendingConfirmation) : OverlayPendingDecision {
         override val headerLabel: String = "Confirm action"
         override val title: String = "Confirmation required"
         override val details: String = OverlayStatusFormatter.confirmationDetails(pending)
-        override val primaryButtonLabel: String = "Confirm"
-        override val secondaryButtonLabel: String = "Cancel"
+        override val primaryButtonLabel: String? = "Confirm"
+        override val secondaryButtonLabel: String? = "Cancel"
     }
 
     data class Plan(val pending: PendingPlan) : OverlayPendingDecision {
         override val headerLabel: String = "Review plan"
         override val title: String = if (pending.plan.isSafe) "Plan ready" else "Review plan"
         override val details: String = OverlayStatusFormatter.fullPlan(pending.plan)
-        override val primaryButtonLabel: String = "Run plan"
-        override val secondaryButtonLabel: String = "Reject"
+        override val primaryButtonLabel: String? = "Run plan"
+        override val secondaryButtonLabel: String? = "Reject"
+    }
+
+    data class Notice(val notice: OverlayNotice) : OverlayPendingDecision {
+        override val headerLabel: String = notice.title
+        override val title: String = when (notice.kind) {
+            OverlayNoticeKind.SUCCESS -> "Done"
+            OverlayNoticeKind.ERROR -> "Action needed"
+            OverlayNoticeKind.INFO -> notice.title
+        }
+        override val details: String = notice.details.ifBlank { notice.title }
+        override val primaryButtonLabel: String? = null
+        override val secondaryButtonLabel: String? = "Dismiss"
     }
 }
 
@@ -130,6 +144,7 @@ class FloatingControlOverlayService : Service() {
     private var recordButton: Button? = null
     private var primaryDecisionButton: Button? = null
     private var secondaryDecisionButton: Button? = null
+    private var reviewActions: LinearLayout? = null
     private var enableAccessibilityButton: Button? = null
     private var checkAccessibilityButton: Button? = null
     private var moreButton: Button? = null
@@ -374,7 +389,7 @@ class FloatingControlOverlayService : Service() {
             textSize = 13f
             applyActionButton(76f)
             visibility = View.GONE
-            setOnClickListener { acceptPendingDecision() }
+            setOnClickListener { performPrimaryCardAction() }
         }
         secondaryDecisionButton = Button(this).apply {
             text = "Cancel"
@@ -382,9 +397,9 @@ class FloatingControlOverlayService : Service() {
             textSize = 13f
             applyActionButton(72f)
             visibility = View.GONE
-            setOnClickListener { rejectPendingDecision() }
+            setOnClickListener { performSecondaryCardAction() }
         }
-        val reviewActions = LinearLayout(this).apply {
+        reviewActions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
             setPadding(0, reviewSpacing, 0, 0)
@@ -405,7 +420,7 @@ class FloatingControlOverlayService : Service() {
             }
             addView(reviewTitleText)
             addView(reviewDetailsText)
-            addView(reviewActions)
+            reviewActions?.let { addView(it) }
         }
 
         pill.addView(recordButton)
@@ -671,6 +686,9 @@ class FloatingControlOverlayService : Service() {
             launch {
                 deps.executor.pendingConfirmation.collect { updateOverlayText() }
             }
+            launch {
+                deps.overlayRuntime.notice.collect { updateOverlayText() }
+            }
         }
     }
 
@@ -733,13 +751,12 @@ class FloatingControlOverlayService : Service() {
     private fun currentPendingDecision(): OverlayPendingDecision? {
         deps.executor.pendingConfirmation.value?.let { return OverlayPendingDecision.Confirmation(it) }
         deps.executor.pendingPlan.value?.let { return OverlayPendingDecision.Plan(it) }
+        deps.overlayRuntime.notice.value?.let { return OverlayPendingDecision.Notice(it) }
         return null
     }
 
     private fun updateReviewCard(decision: OverlayPendingDecision?) {
         reviewCard?.visibility = if (decision == null) View.GONE else View.VISIBLE
-        primaryDecisionButton?.visibility = if (decision == null) View.GONE else View.VISIBLE
-        secondaryDecisionButton?.visibility = if (decision == null) View.GONE else View.VISIBLE
         when (decision) {
             null -> {
                 reviewTitleText?.text = ""
@@ -748,16 +765,27 @@ class FloatingControlOverlayService : Service() {
             is OverlayPendingDecision.Confirmation -> {
                 reviewTitleText?.text = decision.title
                 reviewDetailsText?.text = decision.details
-                primaryDecisionButton?.text = decision.primaryButtonLabel
-                secondaryDecisionButton?.text = decision.secondaryButtonLabel
             }
             is OverlayPendingDecision.Plan -> {
                 reviewTitleText?.text = decision.title
                 reviewDetailsText?.text = decision.details
-                primaryDecisionButton?.text = decision.primaryButtonLabel
-                secondaryDecisionButton?.text = decision.secondaryButtonLabel
+            }
+            is OverlayPendingDecision.Notice -> {
+                reviewTitleText?.text = decision.title
+                reviewDetailsText?.text = decision.details
             }
         }
+        val primaryLabel = decision?.primaryButtonLabel
+        primaryDecisionButton?.visibility = if (primaryLabel != null) View.VISIBLE else View.GONE
+        if (primaryLabel != null) {
+            primaryDecisionButton?.text = primaryLabel
+        }
+        val secondaryLabel = decision?.secondaryButtonLabel
+        secondaryDecisionButton?.visibility = if (secondaryLabel != null) View.VISIBLE else View.GONE
+        if (secondaryLabel != null) {
+            secondaryDecisionButton?.text = secondaryLabel
+        }
+        reviewActions?.visibility = if (primaryLabel != null || secondaryLabel != null) View.VISIBLE else View.GONE
         if (decision != null) overlayView?.post { applySafeOverlayPosition(persist = true) }
     }
 
@@ -771,6 +799,7 @@ class FloatingControlOverlayService : Service() {
             )
         )
         transientStatusMessage = null
+        deps.overlayRuntime.clearNotice()
         scope.launch {
             val currentAccessibilityEnabled = deps.portalController.isAccessibilityEnabled()
             deps.speechDiagnosticsLogger.record(
@@ -821,7 +850,7 @@ class FloatingControlOverlayService : Service() {
         }
     }
 
-    private fun acceptPendingDecision() {
+    private fun performPrimaryCardAction() {
         val pendingConfirmation = deps.executor.pendingConfirmation.value
         if (pendingConfirmation != null) {
             deps.speechDiagnosticsLogger.record(
@@ -840,7 +869,7 @@ class FloatingControlOverlayService : Service() {
         scope.launch { deps.executor.acceptPendingPlan(false) }
     }
 
-    private fun rejectPendingDecision() {
+    private fun performSecondaryCardAction() {
         val pendingConfirmation = deps.executor.pendingConfirmation.value
         if (pendingConfirmation != null) {
             deps.speechDiagnosticsLogger.record(
@@ -849,6 +878,10 @@ class FloatingControlOverlayService : Service() {
                 overlayLifecycleFields(mapOf("hasPendingConfirmation" to true))
             )
             deps.executor.respondToConfirmation(false)
+            return
+        }
+        if (deps.overlayRuntime.notice.value != null) {
+            deps.overlayRuntime.clearNotice()
             return
         }
         deps.speechDiagnosticsLogger.record(

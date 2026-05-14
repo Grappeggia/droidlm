@@ -8,6 +8,7 @@ import ai.droidlm.update.PreparedDebugBuild
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
+import ai.droidlm.runtime.OverlayNoticeKind
 import ai.droidlm.settings.TranscriptionProvider
 import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
@@ -288,10 +289,20 @@ class DroidLmViewModel(
 
     fun shareDebugLogs(issueDescription: String) = viewModelScope.launch {
         deps.debugLogStore.recordEvent("upload_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
+        deps.overlayRuntime.showNotice(
+            title = "Uploading debug logs",
+            details = "Preparing the bundle for upload.",
+            kind = OverlayNoticeKind.INFO
+        )
         val file = withContext(Dispatchers.IO) { deps.debugLogStore.createBundle(issueDescription) }
         if (file == null) {
             deps.debugLogStore.recordEvent("upload_empty")
             deps.actionLogRepository.log(ActionLogType.ERROR, "No debug logs to upload")
+            deps.overlayRuntime.showNotice(
+                title = "Debug log upload failed",
+                details = "No debug logs are available to upload.",
+                kind = OverlayNoticeKind.ERROR
+            )
             return@launch
         }
 
@@ -305,6 +316,11 @@ class DroidLmViewModel(
                 ActionLogType.ERROR,
                 "Debug log upload endpoint is not configured",
                 "NO_DEBUG_LOG_UPLOAD_URL"
+            )
+            deps.overlayRuntime.showNotice(
+                title = "Debug log upload failed",
+                details = "Debug log upload endpoint is not configured.",
+                kind = OverlayNoticeKind.ERROR
             )
             return@launch
         }
@@ -324,6 +340,11 @@ class DroidLmViewModel(
                     )
                 )
                 deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
+                deps.overlayRuntime.showNotice(
+                    title = "Debug logs uploaded",
+                    details = upload.gsUri,
+                    kind = OverlayNoticeKind.SUCCESS
+                )
             }
             is RelayCallResult.Failure -> {
                 deps.debugLogStore.recordEvent(
@@ -337,6 +358,11 @@ class DroidLmViewModel(
                     )
                 )
                 deps.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: ${result.message}", result.errorCode)
+                deps.overlayRuntime.showNotice(
+                    title = "Debug log upload failed",
+                    details = result.message,
+                    kind = OverlayNoticeKind.ERROR
+                )
             }
         }
     }

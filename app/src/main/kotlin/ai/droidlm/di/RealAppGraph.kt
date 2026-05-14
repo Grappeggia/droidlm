@@ -126,7 +126,8 @@ class RealAppGraph(
         executor = executor,
         commandRecorder = commandRecorder,
         speechRecognitionController = speechRecognitionController,
-        listeningRuntime = listeningRuntime
+        listeningRuntime = listeningRuntime,
+        overlayRuntime = overlayRuntime
     )
 
     override fun overlayServiceDeps(): OverlayServiceDeps = OverlayServiceDeps(

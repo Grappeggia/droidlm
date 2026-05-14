@@ -150,7 +150,7 @@ class DroidLmExecutor(
         }
     }
 
-    suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
+    suspend fun planTranscript(transcript: String, diagnosticSessionId: String? = null, recordPrompt: Boolean = true): ActionResult {
         cancelled = false
         val planningStartedAt = System.currentTimeMillis()
         val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
@@ -159,10 +159,14 @@ class DroidLmExecutor(
             return finish(ActionResult.fail("I only heard '${stripped}'. Please say which app to open, like 'open Google Sheets'.", "AMBIGUOUS_OPEN_APP"))
         }
         debugEvent(diagnosticSessionId, "voice_plan_started", mapOf("transcriptLength" to stripped.length, "hasSessionId" to (diagnosticSessionId != null)))
-        promptHistoryRepository.record(stripped, "voice_prompt")
+        if (recordPrompt) {
+            promptHistoryRepository.record(stripped, "voice_prompt")
+        }
         _plannerKeySetupRequest.value = null
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano", lastResult = "")
-        logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
+        if (recordPrompt) {
+            logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
+        }
         logs.log(ActionLogType.PLANNER_STARTED, "GPT planning started", "promptLength=${stripped.length}")
         val settingsStartedAt = System.currentTimeMillis()
         val settings = settingsRepository.settings.first()
@@ -197,7 +201,7 @@ class DroidLmExecutor(
         )
         if (apiKey.isBlank()) {
             _plannerKeySetupRequest.value = PlannerKeySetupRequest(
-                message = "OpenAI key is missing or could not be read. Re-enter the key on this device to use GPT planning.",
+                message = "This command needs a plan. Add an OpenAI API key in DroidLM to review and approve it on this device.",
                 retryTranscript = stripped
             )
             diagnostics.record(diagnosticSessionId, "planner_key_missing")
@@ -213,7 +217,7 @@ class DroidLmExecutor(
                 )
             )
             logs.log(ActionLogType.ERROR, "Planner OpenAI key is missing or unreadable", "OPENAI_API_KEY_MISSING")
-            return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
+            return finish(ActionResult.fail("This command needs a plan. Add an OpenAI API key in DroidLM to review it.", "OPENAI_API_KEY_MISSING"))
         }
         val portalStateStartedAt = System.currentTimeMillis()
         val stateResult = runCatching { portalController.getState() }
@@ -420,12 +424,7 @@ class DroidLmExecutor(
     private suspend fun handlePlanning(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
         return when (settings.executionMode) {
-            ExecutionMode.LOCAL_RULE_FIRST -> finish(
-                ActionResult.fail(
-                    "This command needs advanced planning. Enable Agent Loop, Local LLM Loop, or Mobilerun Cloud mode.",
-                    "PLANNING_DISABLED"
-                )
-            )
+            ExecutionMode.LOCAL_RULE_FIRST -> planTranscript(goal, diagnosticSessionId, recordPrompt = false)
             ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps)
             ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, diagnosticSessionId)
             ExecutionMode.MOBILERUN_CLOUD_TASK -> runMobilerunTask(goal)

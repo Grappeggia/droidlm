@@ -1292,7 +1292,7 @@ open class VoskOfflineSpeechRecognizer(
         const val MIN_DURATION_MS = 1_000L
         const val MIN_STOP_DURATION_MS = 1_500L
         const val INITIAL_NO_SPEECH_TIMEOUT_MS = 8_000L
-        const val SILENCE_AFTER_SPEECH_MS = 1_400L
+        const val SILENCE_AFTER_SPEECH_MS = 900L
         const val SPEECH_RMS_THRESHOLD = 350.0
         const val RMS_LOG_INTERVAL_MS = 500L
         const val SLOW_READ_GAP_MS = 250L
