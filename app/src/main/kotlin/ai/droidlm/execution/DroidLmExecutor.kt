@@ -106,6 +106,7 @@ class DroidLmExecutor(
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
     private val agentToolRegistry = AgentToolRegistry()
     private val agentVerifier = AgentVerifier()
+    private val goalVerifier = ExecutionGoalVerifier()
     private val agentRecoveryPolicy = AgentRecoveryPolicy()
     private val executionDiagnostics = ExecutionDiagnostics(diagnostics, portalController)
     private val installMonitorRunner = ExecutionInstallMonitorRunner(
@@ -116,6 +117,25 @@ class DroidLmExecutor(
         executionDiagnostics = executionDiagnostics,
         cancellationResult = ::ensureNotCancelled,
         finish = ::finish
+    )
+    private val adaptiveGoalRunner = ExecutionAdaptiveGoalRunner(
+        appInventoryRepository = appInventoryRepository,
+        portalController = portalController,
+        logs = logs,
+        uiState = _uiState,
+        executionDiagnostics = executionDiagnostics,
+        goalVerifier = goalVerifier,
+        cancellationResult = ::ensureNotCancelled,
+        finish = ::finish,
+        executeAction = ::executeAction,
+        requestConfirmation = { transcript, action, reason, sessionId, promptOverride ->
+            requestConfirmation(transcript, action, reason, sessionId, promptOverride)
+        },
+        runInstallMonitor = { target, transcript, sessionId ->
+            installMonitorRunner.run(target, transcript, sessionId).also { result ->
+                if (result.success) installMonitorTarget = null
+            }
+        }
     )
     private val actionRunner = ExecutionActionRunner(
         settingsRepository = settingsRepository,
@@ -217,7 +237,8 @@ class DroidLmExecutor(
 
         return when (action) {
             is DroidLmAction.NeedLlmPlanning -> handlePlanning(stripped, diagnosticSessionId)
-            else -> executeAction(action, stripped, diagnosticSessionId = diagnosticSessionId)
+            else -> adaptiveGoalRunner.runIfSupported(action, stripped, diagnosticSessionId)
+                ?: executeAction(action, stripped, diagnosticSessionId = diagnosticSessionId)
         }
     }
 
