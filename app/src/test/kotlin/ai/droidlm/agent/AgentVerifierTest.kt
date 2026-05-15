@@ -5,6 +5,8 @@ import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.UiNode
 import android.graphics.Rect
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -33,6 +35,28 @@ class AgentVerifierTest {
         )
 
         assertEquals(AgentVerificationStatus.FAILED, result.status)
+    }
+
+    @Test fun failsOpenAppWhenCurrentArtifactAlreadyHasMatchingTarget() {
+        val extras = JSONObject().put(
+            "artifactContext",
+            JSONObject().put(
+                "navigationTargets",
+                JSONArray().put(JSONObject().put("label", "Meetings").put("kind", "section"))
+            )
+        )
+
+        val result = verifier.verify(
+            action = DroidLmAction.OpenApp("Calendar", "com.google.android.calendar", "open"),
+            actionResult = ActionResult.ok("launched"),
+            beforeState = state("com.google.android.apps.docs.editors.docs", node("heading", text = "Meetings")),
+            afterState = state("com.google.android.calendar"),
+            goal = "navigate to meetings",
+            deviceContextExtras = extras
+        )
+
+        assertEquals(AgentVerificationStatus.FAILED, result.status)
+        assertTrue(result.message.contains("current artifact"))
     }
 
     @Test fun verifiesWaitForTextVisible() {

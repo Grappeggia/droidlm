@@ -24,6 +24,7 @@ import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.settings.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import org.json.JSONObject
 
 internal class ExecutionAgentLoopRunner(
     private val settingsRepository: SettingsRepository,
@@ -144,7 +145,16 @@ internal class ExecutionAgentLoopRunner(
                     history += "${call.name}[${call.id}] validation failed: ${error?.message}"
                     val recovery = agentRecoveryPolicy.recoverValidationFailure(call, error?.message)
                     if (recovery != null && canAttemptRecovery(recovery, recoveryAttempts) && totalToolCalls < budgets.maxToolCallsTotal) {
-                        val recoveryResult = executeAgentRecovery(goal, settings, state, recovery, diagnosticSessionId, turn, call.id)
+                        val recoveryResult = executeAgentRecovery(
+                            goal = goal,
+                            settings = settings,
+                            beforeState = state,
+                            recovery = recovery,
+                            diagnosticSessionId = diagnosticSessionId,
+                            turn = turn,
+                            failedCallId = call.id,
+                            deviceContextExtras = deviceContext?.extras
+                        )
                         totalToolCalls += 1
                         recoveryAttempts[recovery.key] = (recoveryAttempts[recovery.key] ?: 0) + 1
                         toolResults += recoveryResult
@@ -202,7 +212,14 @@ internal class ExecutionAgentLoopRunner(
                 } else {
                     null
                 }
-                val verification = agentVerifier.verify(execution.action, rawResult, state, afterState)
+                val verification = agentVerifier.verify(
+                    action = execution.action,
+                    actionResult = rawResult,
+                    beforeState = state,
+                    afterState = afterState,
+                    goal = goal,
+                    deviceContextExtras = deviceContext?.extras
+                )
                 lastResult = if (rawResult.success && verification.failed) {
                     ActionResult.fail("Agent verification failed: ${verification.message}", "AGENT_VERIFICATION_FAILED")
                 } else {
@@ -228,7 +245,16 @@ internal class ExecutionAgentLoopRunner(
                 if (!lastResult.success) {
                     val recovery = agentRecoveryPolicy.recoverVerificationFailure(execution.action, verification)
                     if (recovery != null && canAttemptRecovery(recovery, recoveryAttempts) && totalToolCalls < budgets.maxToolCallsTotal) {
-                        val recoveryResult = executeAgentRecovery(goal, settings, afterState ?: state, recovery, diagnosticSessionId, turn, call.id)
+                        val recoveryResult = executeAgentRecovery(
+                            goal = goal,
+                            settings = settings,
+                            beforeState = afterState ?: state,
+                            recovery = recovery,
+                            diagnosticSessionId = diagnosticSessionId,
+                            turn = turn,
+                            failedCallId = call.id,
+                            deviceContextExtras = deviceContext?.extras
+                        )
                         totalToolCalls += 1
                         recoveryAttempts[recovery.key] = (recoveryAttempts[recovery.key] ?: 0) + 1
                         toolResults += recoveryResult
@@ -274,7 +300,8 @@ internal class ExecutionAgentLoopRunner(
         recovery: AgentRecoveryCandidate,
         diagnosticSessionId: String?,
         turn: Int,
-        failedCallId: String
+        failedCallId: String,
+        deviceContextExtras: JSONObject?
     ): AgentToolResult {
         debugEvent(
             diagnosticSessionId,
@@ -310,7 +337,14 @@ internal class ExecutionAgentLoopRunner(
         }
         val rawResult = executeAction(recovery.action, goal, false, diagnosticSessionId)
         val afterState = runCatching { portalController.getState() }.getOrNull()
-        val verification = agentVerifier.verify(recovery.action, rawResult, beforeState, afterState)
+        val verification = agentVerifier.verify(
+            action = recovery.action,
+            actionResult = rawResult,
+            beforeState = beforeState,
+            afterState = afterState,
+            goal = goal,
+            deviceContextExtras = deviceContextExtras
+        )
         val result = if (rawResult.success && verification.failed) {
             ActionResult.fail("Recovery verification failed: ${verification.message}", "AGENT_RECOVERY_VERIFICATION_FAILED")
         } else {

@@ -7,6 +7,7 @@ import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.intent.ScrollDirection
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
@@ -102,6 +103,7 @@ internal class ExecutionActionRunner(
         is DroidLmAction.DialogAction -> portalController.dialogAction(action.buttonText, action.role)
         is DroidLmAction.OpenMenu -> portalController.openMenu(action.menu)
         is DroidLmAction.SelectTab -> portalController.selectTab(action.label)
+        is DroidLmAction.NavigateToArtifactTarget -> navigateToArtifactTarget(action)
         is DroidLmAction.SetToggle -> portalController.setToggle(action.label, action.nodeId, action.value)
         is DroidLmAction.ExpandCollapse -> portalController.expandCollapse(action.label, action.nodeId, action.expanded)
         is DroidLmAction.SetSlider -> portalController.setSlider(action.label, action.nodeId, action.value, action.percent)
@@ -235,6 +237,35 @@ internal class ExecutionActionRunner(
             ActionResult.ok("Verified text change: $normalizedExpected")
         } else {
             ActionResult.fail("Expected text was not visible: $normalizedExpected", "EXPECTED_TEXT_NOT_VISIBLE")
+        }
+    }
+
+    private suspend fun navigateToArtifactTarget(action: DroidLmAction.NavigateToArtifactTarget): ActionResult {
+        val label = action.label.trim()
+        if (label.isBlank()) return ActionResult.fail("Artifact target label is blank", "ARTIFACT_TARGET_BLANK")
+        val beforeState = portalController.getState()
+        if (beforeState.hasVisibleText(label)) {
+            return activateArtifactTarget(action, beforeState)
+        }
+        val scrollDown = portalController.scroll(ScrollDirection.DOWN, untilText = label)
+        if (scrollDown.success) {
+            return activateArtifactTarget(action, portalController.getState())
+        }
+        val scrollUp = portalController.scroll(ScrollDirection.UP, untilText = label)
+        if (scrollUp.success) {
+            return activateArtifactTarget(action, portalController.getState())
+        }
+        return scrollUp
+    }
+
+    private suspend fun activateArtifactTarget(action: DroidLmAction.NavigateToArtifactTarget, state: PortalState): ActionResult {
+        return when (action.kind?.lowercase()) {
+            "file", "folder", "control", "cell" -> {
+                val nodeId = action.nodeId?.takeIf { targetId -> state.nodes.any { node -> node.nodeId == targetId } }
+                nodeId?.let { portalController.tapNode(it) } ?: portalController.tapText(action.label)
+            }
+            "tab", "sheet_tab" -> portalController.selectTab(action.label)
+            else -> ActionResult.ok("Artifact target is visible: ${action.label}")
         }
     }
 

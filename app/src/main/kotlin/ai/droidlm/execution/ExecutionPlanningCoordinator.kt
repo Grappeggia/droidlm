@@ -1,6 +1,7 @@
 package ai.droidlm.execution
 
 import ai.droidlm.appinventory.AppInventoryRepository
+import ai.droidlm.context.ArtifactContextBuilder
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.SpeechTextNormalizer
@@ -55,7 +56,7 @@ internal class ExecutionPlanningCoordinator(
             promptHistoryRepository.record(stripped, "voice_prompt")
         }
         plannerKeySetupRequest.value = null
-        uiState.value = uiState.value.copy(lastTranscript = stripped, status = "Planning with GPT-5.4 nano", lastResult = "")
+        uiState.value = uiState.value.copy(lastTranscript = stripped, status = "Planning", lastResult = "")
         if (recordPrompt) {
             logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         }
@@ -63,13 +64,19 @@ internal class ExecutionPlanningCoordinator(
         val settingsStartedAt = System.currentTimeMillis()
         val settings = settingsRepository.settings.first()
         val settingsLoadMs = System.currentTimeMillis() - settingsStartedAt
-        if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
+        val artifactAgentLoopReason = if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
+            null
+        } else {
+            artifactAgentLoopReason(stripped, diagnosticSessionId)
+        }
+        if (settings.executionMode == ExecutionMode.AGENT_LOOP || artifactAgentLoopReason != null) {
             debugEvent(
                 diagnosticSessionId,
                 "planner_pipeline_handoff",
                 mapOf(
                     "executionMode" to settings.executionMode.name,
                     "endpointMode" to "direct_openai_agent_loop",
+                    "artifactAgentLoopReason" to artifactAgentLoopReason,
                     "settingsLoadMs" to settingsLoadMs,
                     "elapsedSincePlanStartMs" to (System.currentTimeMillis() - planningStartedAt)
                 )
@@ -254,6 +261,13 @@ internal class ExecutionPlanningCoordinator(
 
     suspend fun handlePlanning(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
+        if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
+            return runAgentLoop(goal, diagnosticSessionId)
+        }
+        artifactAgentLoopReason(goal, diagnosticSessionId)?.let { reason ->
+            debugEvent(diagnosticSessionId, "planner_agent_override", mapOf("reason" to reason, "executionMode" to settings.executionMode.name))
+            return runAgentLoop(goal, diagnosticSessionId)
+        }
         return when (settings.executionMode) {
             ExecutionMode.LOCAL_RULE_FIRST -> planTranscript(goal, diagnosticSessionId, recordPrompt = false)
             ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps)
@@ -349,5 +363,18 @@ internal class ExecutionPlanningCoordinator(
 
     private fun recordSafetyDecision(sessionId: String?, source: String, safety: SafetyDecision, requireRiskConfirmation: Boolean) {
         executionDiagnostics.recordSafetyDecision(sessionId, source, safety, requireRiskConfirmation)
+    }
+
+    private suspend fun artifactAgentLoopReason(goal: String, diagnosticSessionId: String?): String? {
+        val query = ArtifactContextBuilder.extractNavigationRequest(goal) ?: return null
+        val state = runCatching { portalController.getState() }.getOrNull() ?: return null
+        if (!ArtifactContextBuilder.supportsArtifactPackage(state.packageName)) return null
+        val deviceContext = runCatching { deviceContextAggregator.collect(goal, state, diagnosticSessionId = diagnosticSessionId) }.getOrNull()
+        val artifactContext = deviceContext?.extras?.optJSONObject("artifactContext")
+        return if (ArtifactContextBuilder.hasMatchingTarget(artifactContext, query)) {
+            "matching_artifact_target:$query"
+        } else {
+            "artifact_navigation_goal:$query"
+        }
     }
 }

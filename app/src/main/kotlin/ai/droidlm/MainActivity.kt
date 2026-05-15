@@ -877,11 +877,7 @@ private fun SettingsCard(
     Text("Diagnostics", fontWeight = FontWeight.SemiBold)
     ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
     Text(
-        "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots. Zip exports may include spoken text, screenshots, audio, and device/app state, but never API keys.",
-        color = DroidLmColors.TextMuted
-    )
-    Text(
-        "Cloud upload sends the zip to DroidLM's preconfigured private GCS upload endpoint.",
+        "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots.",
         color = DroidLmColors.TextMuted
     )
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

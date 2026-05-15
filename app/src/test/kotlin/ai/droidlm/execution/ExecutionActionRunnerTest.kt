@@ -18,6 +18,7 @@ import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalController
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.ScreenshotResult
+import ai.droidlm.portal.UiNode
 import ai.droidlm.relay.DeviceContext
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.settings.SettingsRepository
@@ -77,6 +78,42 @@ class ExecutionActionRunnerTest {
         assertEquals("Docs is not installed or cannot be launched. Open its Play Store listing?", prompts.single())
     }
 
+    @Test fun navigateToArtifactTargetTapsVisibleFileRow() = runTest {
+        val portal = FakePortal(
+            state = PortalState(
+                packageName = "com.google.android.apps.docs",
+                activityName = "DriveActivity",
+                screenWidth = 100,
+                screenHeight = 100,
+                nodes = listOf(
+                    UiNode(
+                        nodeId = "row-1",
+                        text = "Meeting notes",
+                        contentDescription = null,
+                        className = null,
+                        packageName = "com.google.android.apps.docs",
+                        bounds = Rect(0, 0, 50, 20),
+                        clickable = true,
+                        editable = false,
+                        focused = false,
+                        enabled = true,
+                        selected = false
+                    )
+                )
+            )
+        )
+        val runner = runner(portal)
+
+        val result = runner.execute(
+            DroidLmAction.NavigateToArtifactTarget(label = "Meeting notes", nodeId = "row-1", kind = "file", reason = "open the file"),
+            transcript = "navigate to meeting notes",
+            finishState = false
+        )
+
+        assertTrue(result.success)
+        assertEquals(listOf("tapNode:row-1"), portal.operations)
+    }
+
     private fun runner(
         portal: FakePortal,
         confirm: suspend (String, DroidLmAction, String, String?, String?) -> Boolean = { _, _, _, _, _ -> false }
@@ -119,13 +156,14 @@ class ExecutionActionRunnerTest {
     }
 
     private class FakePortal(
-        private val openAppResult: ActionResult = ActionResult.ok("Opened")
+        private val openAppResult: ActionResult = ActionResult.ok("Opened"),
+        private val state: PortalState = PortalState("pkg", null, 100, 100, emptyList())
     ) : PortalController {
         val operations = mutableListOf<String>()
         private val target = EditableTarget("node", "pkg", "EditText", Rect(0, 0, 200, 80), true, true, true, true, true)
 
         override suspend fun isAccessibilityEnabled() = true
-        override suspend fun getState() = PortalState("pkg", null, 100, 100, emptyList())
+        override suspend fun getState() = state
         override suspend fun getFullState() = getState()
         override suspend fun listPackages(): List<AppPackage> = emptyList()
         override suspend fun openApp(packageName: String): ActionResult {
@@ -138,17 +176,29 @@ class ExecutionActionRunnerTest {
         }
         override suspend fun openSettings() = ActionResult.ok()
         override suspend fun tap(x: Int, y: Int) = ActionResult.ok()
-        override suspend fun tapNode(nodeId: String) = ActionResult.ok()
+        override suspend fun tapNode(nodeId: String): ActionResult {
+            operations += "tapNode:$nodeId"
+            return ActionResult.ok()
+        }
         override suspend fun focusNode(nodeId: String) = ActionResult.ok()
         override suspend fun longPress(x: Int, y: Int, durationMs: Int) = ActionResult.ok()
-        override suspend fun tapText(text: String, role: String?, containerNodeId: String?) = ActionResult.ok()
+        override suspend fun tapText(text: String, role: String?, containerNodeId: String?): ActionResult {
+            operations += "tapText:$text"
+            return ActionResult.ok()
+        }
         override suspend fun longPressNode(nodeId: String?, text: String?, durationMs: Int) = ActionResult.ok()
-        override suspend fun scroll(direction: ScrollDirection, targetNodeId: String?, untilText: String?) = ActionResult.ok()
+        override suspend fun scroll(direction: ScrollDirection, targetNodeId: String?, untilText: String?): ActionResult {
+            operations += "scroll:${direction.name}:$untilText"
+            return ActionResult.ok()
+        }
         override suspend fun waitForUi(text: String?, packageName: String?, nodeId: String?, timeoutMs: Int) = ActionResult.ok()
         override suspend fun pressImeAction(action: ImeActionType) = ActionResult.ok()
         override suspend fun dialogAction(buttonText: String?, role: DialogButtonRole?) = ActionResult.ok()
         override suspend fun openMenu(menu: MenuType) = ActionResult.ok()
-        override suspend fun selectTab(label: String) = ActionResult.ok()
+        override suspend fun selectTab(label: String): ActionResult {
+            operations += "selectTab:$label"
+            return ActionResult.ok()
+        }
         override suspend fun setToggle(label: String?, nodeId: String?, value: Boolean) = ActionResult.ok()
         override suspend fun expandCollapse(label: String?, nodeId: String?, expanded: Boolean) = ActionResult.ok()
         override suspend fun setSlider(label: String?, nodeId: String?, value: Float?, percent: Int?) = ActionResult.ok()

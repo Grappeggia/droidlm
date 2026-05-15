@@ -18,6 +18,7 @@ object DroidLmActionContract {
         "DIALOG_ACTION",
         "OPEN_MENU",
         "SELECT_TAB",
+        "NAVIGATE_TO_ARTIFACT_TARGET",
         "SET_TOGGLE",
         "EXPAND_COLLAPSE",
         "SET_SLIDER",

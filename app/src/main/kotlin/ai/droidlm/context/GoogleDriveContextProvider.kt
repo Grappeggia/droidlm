@@ -21,7 +21,20 @@ class GoogleDriveContextProvider : DeviceContextProvider {
         val visibleText = visibleText(state.nodes)
         val visibleFiles = visibleFiles(state.nodes)
         val selectedFile = selectedFile(state.nodes, visibleFiles)
+        val currentLocation = currentLocation(state.nodes)
+        val searchContext = searchContext(state.nodes, uiMode)
         val actions = availableActions(uiMode, selectedFile.length() > 0)
+        val artifactContext = ArtifactContextBuilder.build(
+            source = "google_drive",
+            type = "file_collection",
+            title = currentLocation.optString("label").takeIf { it.isNotBlank() },
+            uiMode = uiMode,
+            state = state,
+            visibleText = visibleText,
+            focusedText = searchContext.optString("query"),
+            currentBlock = selectedFile.optString("title"),
+            availableActions = actions
+        )
         val safety = safetyContext(
             text = visibleText,
             sharingFlowActive = uiMode == "SHARE_DIALOG",
@@ -37,19 +50,20 @@ class GoogleDriveContextProvider : DeviceContextProvider {
                 JSONObject()
                     .put("uiMode", uiMode)
                     .put("isGoogleDrive", true)
-                    .put("currentLocation", currentLocation(state.nodes))
+                    .put("currentLocation", currentLocation)
                     .put("visibleFiles", visibleFiles)
                     .put("selectedFile", selectedFile)
-                    .put("searchContext", searchContext(state.nodes, uiMode))
+                    .put("searchContext", searchContext)
                     .put("visibleText", cap(visibleText, MAX_VISIBLE_TEXT))
                     .put("availableActions", JSONArray(actions))
             )
+            .put("artifactContext", artifactContext)
             .put("availableDriveActions", JSONArray(actions))
             .put("safety", safety)
     }
 
     private fun detectUiMode(state: PortalState): String = when {
-        hasAnyText(state.nodes, "share", "people with access", "general access", "restricted") -> "SHARE_DIALOG"
+        ArtifactContextBuilder.isShareDialog(state.nodes) -> "SHARE_DIALOG"
         hasAnyText(state.nodes, "delete", "move to trash", "remove forever") -> "DELETE_DIALOG"
         hasAnyText(state.nodes, "upload", "uploading", "upload from") -> "UPLOAD_FLOW"
         hasAnyText(state.nodes, "new folder", "google docs", "google sheets", "scan", "upload") -> "CREATE_MENU"

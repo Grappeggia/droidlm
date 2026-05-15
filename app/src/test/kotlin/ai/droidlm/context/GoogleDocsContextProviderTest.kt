@@ -21,6 +21,7 @@ class GoogleDocsContextProviderTest {
             screenHeight = 200,
             nodes = listOf(
                 node(text = "Project Plan"),
+                node(text = "Share"),
                 node(
                     nodeId = "editor",
                     text = text,
@@ -45,6 +46,8 @@ class GoogleDocsContextProviderTest {
         assertTrue(json.getJSONObject("editor").getBoolean("canType"))
         assertEquals("Budget notes for Q2", json.getJSONObject("selectionContext").getString("currentParagraph"))
         assertTrue(json.getJSONObject("documentTextWindow").getString("visibleText").contains("Project Plan"))
+        assertEquals("google_docs", json.getJSONObject("artifactContext").getJSONObject("artifact").getString("source"))
+        assertTrue(json.getJSONObject("artifactContext").getJSONArray("navigationTargets").toString().contains("Budget notes for Q2"))
         assertTrue(json.getJSONArray("availableDocActions").toString().contains("FORMAT_BULLET"))
     }
 

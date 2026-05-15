@@ -31,6 +31,17 @@ class GoogleSheetsContextProvider : DeviceContextProvider {
         val title = inferSpreadsheetTitle(state.nodes)
         val activeCell = activeCellContext(state.nodes, focusedEditable, editableText)
         val actions = availableActions(uiMode, focusedEditable)
+        val artifactContext = ArtifactContextBuilder.build(
+            source = "google_sheets",
+            type = "spreadsheet",
+            title = title,
+            uiMode = uiMode,
+            state = state,
+            visibleText = visibleText,
+            focusedText = editableText,
+            currentBlock = activeCell.optString("value").ifBlank { currentLine(editableText, focusedEditable?.textSelectionStart) },
+            availableActions = actions
+        )
         val safety = safetyContext(
             text = listOfNotNull(title, visibleText, editableText).joinToString("\n"),
             sharingFlowActive = uiMode == "SHARE_DIALOG",
@@ -54,6 +65,7 @@ class GoogleSheetsContextProvider : DeviceContextProvider {
                     .put("isGoogleSheets", true)
                     .put("availableActions", JSONArray(actions))
             )
+            .put("artifactContext", artifactContext)
             .put("activeCell", activeCell)
             .put("selectionContext", selectionContext(focusedEditable, editableText))
             .put(
@@ -71,7 +83,7 @@ class GoogleSheetsContextProvider : DeviceContextProvider {
     }
 
     private fun detectUiMode(state: PortalState, focusedEditable: UiNode?): String = when {
-        hasAnyText(state.nodes, "share", "people with access", "general access", "restricted") -> "SHARE_DIALOG"
+        ArtifactContextBuilder.isShareDialog(state.nodes) -> "SHARE_DIALOG"
         hasAnyText(state.nodes, "find", "replace", "search in spreadsheet") -> "FIND_BAR"
         hasAnyText(state.nodes, "bold", "italic", "text color", "fill color", "number format") -> "FORMAT_TOOLBAR"
         focusedEditable != null && hasAnyText(state.nodes, "formula", "fx") -> "FORMULA_BAR"

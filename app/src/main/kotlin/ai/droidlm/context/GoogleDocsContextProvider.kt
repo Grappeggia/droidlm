@@ -20,10 +20,22 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         val visibleDocuments = visibleDocuments(state.nodes, uiMode)
         val selectedDocument = selectedDocument(state.nodes, visibleDocuments)
         val title = inferDocumentTitle(state.nodes)
+        val docActions = availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)
         val sharingFlowActive = uiMode == "SHARE_DIALOG"
         val deleteFlowActive = hasAnyText(state.nodes, "delete", "move to trash", "remove")
 
         val selection = selectionContext(focusedEditable, editableText, selectionStart, selectionEnd)
+        val artifactContext = ArtifactContextBuilder.build(
+            source = "google_docs",
+            type = "document",
+            title = title,
+            uiMode = uiMode,
+            state = state,
+            visibleText = visibleText,
+            focusedText = editableText,
+            currentBlock = selection.optString("currentParagraph"),
+            availableActions = docActions
+        )
         val editor = JSONObject()
             .put("uiMode", uiMode)
             .put("isEditMode", uiMode == "DOCUMENT_EDIT")
@@ -55,8 +67,9 @@ class GoogleDocsContextProvider : DeviceContextProvider {
                     .put("isGoogleDocs", true)
                     .put("visibleDocuments", visibleDocuments)
                     .put("selectedDocument", selectedDocument)
-                    .put("availableActions", JSONArray(availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)))
+                    .put("availableActions", JSONArray(docActions))
             )
+            .put("artifactContext", artifactContext)
             .put("editor", editor)
             .put("selectionContext", selection)
             .put(
@@ -68,14 +81,14 @@ class GoogleDocsContextProvider : DeviceContextProvider {
                     .put("textAfterCursor", cap(textAfterCursor(editableText, selectionEnd), MAX_CURSOR_TEXT))
                     .put("currentParagraph", cap(currentParagraph(editableText, selectionStart), MAX_CURSOR_TEXT))
             )
-            .put("availableDocActions", JSONArray(availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)))
+            .put("availableDocActions", JSONArray(docActions))
             .put("safety", safety)
     }
 
     private fun supports(packageName: String?): Boolean = packageName == DOCS_PACKAGE
 
     private fun detectUiMode(state: PortalState, focusedEditable: UiNode?): String = when {
-        hasAnyText(state.nodes, "share", "people with access", "general access", "restricted") -> "SHARE_DIALOG"
+        ArtifactContextBuilder.isShareDialog(state.nodes) -> "SHARE_DIALOG"
         hasAnyText(state.nodes, "find", "replace", "search in document") -> "FIND_BAR"
         hasAnyText(state.nodes, "comment", "resolve", "reply") -> "COMMENT_PANEL"
         hasAnyText(state.nodes, "bold", "italic", "underline", "text color", "paragraph") -> "FORMAT_TOOLBAR"

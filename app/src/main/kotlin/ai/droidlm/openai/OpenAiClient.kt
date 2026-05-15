@@ -134,6 +134,8 @@ class OpenAiClient(
         Each step object must include an action field and all required fields for that action.
         Supported actions: ${DroidLmActionContract.supportedActionsPrompt}
         Use OPEN_APP only when the target package appears in installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING with the requested packageName. If the command does not include an app name, return NO_OP with a brief clarification instead of guessing.
+        If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, do not OPEN_APP. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
         For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations.
@@ -163,6 +165,8 @@ class OpenAiClient(
         Return only one JSON action object. Do not wrap it in markdown.
         Use OPEN_APP only for installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING. If the goal is ambiguous, return {"action":"NO_OP","message":"Please say which app to open."}.
         Supported actions and fields are the same as the plan preview prompt.
+        If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, do not OPEN_APP. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before choosing edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
         For Google Drive, inspect driveContext.uiMode, currentLocation, visibleFiles, selectedFile, searchContext, and availableDriveActions before file operations.
@@ -205,6 +209,8 @@ class OpenAiClient(
         DroidLM validates safety and may ask confirmation. Do not try to bypass confirmations. Avoid high-risk tools unless directly requested.
         DroidLM verifies app launches, wait targets, visible text, and text-change checks after tools run. If a prior result says verification failed, choose a changed strategy instead of repeating the same call.
         After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
+        If Device context includes artifactContext, use it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, stay in the current app. Do not OPEN_APP or SWITCH_APP for names like section titles, files, tabs, or headings. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
 
         Available tools: ${JSONArray(AgentToolRegistry.defaultSpecs().map { it.toJson() })}
         Goal: ${request.goal}

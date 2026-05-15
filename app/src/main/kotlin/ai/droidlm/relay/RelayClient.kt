@@ -364,6 +364,12 @@ class RelayClient(
                 label = obj.requireStringAny("SELECT_TAB", "label", "text", "tabLabel"),
                 reason = obj.optString("reason", "Select the tab")
             )
+            "NAVIGATE_TO_ARTIFACT_TARGET" -> DroidLmAction.NavigateToArtifactTarget(
+                label = obj.requireStringAny("NAVIGATE_TO_ARTIFACT_TARGET", "label", "text", "targetText"),
+                nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },
+                kind = obj.optString("kind").takeIf { it.isNotBlank() },
+                reason = obj.optString("reason", "Navigate to the visible artifact target")
+            )
             "SET_TOGGLE" -> DroidLmAction.SetToggle(
                 label = obj.optString("label").takeIf { it.isNotBlank() } ?: obj.optString("text").takeIf { it.isNotBlank() },
                 nodeId = obj.optString("nodeId").takeIf { it.isNotBlank() },

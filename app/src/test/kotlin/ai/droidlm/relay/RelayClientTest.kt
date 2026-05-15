@@ -144,6 +144,18 @@ class RelayClientTest {
         assertTrue(focus is DroidLmAction.FocusNode)
     }
 
+    @Test fun planActionJsonParsesArtifactNavigationAction() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"NAVIGATE_TO_ARTIFACT_TARGET\",\"label\":\"Meetings\",\"nodeId\":\"heading-1\",\"kind\":\"section\",\"reason\":\"jump to the heading\"}"
+        )
+
+        assertTrue(action is DroidLmAction.NavigateToArtifactTarget)
+        action as DroidLmAction.NavigateToArtifactTarget
+        assertEquals("Meetings", action.label)
+        assertEquals("heading-1", action.nodeId)
+        assertEquals("section", action.kind)
+    }
+
     @Test fun malformedTapReportsMissingCoordinate() {
         val error = runCatching {
             RelayClient().parsePlanActionJson("{\"action\":\"TAP\",\"reason\":\"missing x\"}")

@@ -273,6 +273,7 @@ internal class ExecutionDiagnostics(
             is DroidLmAction.TapText -> action.containerNodeId
             is DroidLmAction.LongPressNode -> action.nodeId
             is DroidLmAction.WaitForUi -> action.nodeId
+            is DroidLmAction.NavigateToArtifactTarget -> action.nodeId
             is DroidLmAction.SetToggle -> action.nodeId
             is DroidLmAction.ExpandCollapse -> action.nodeId
             is DroidLmAction.SetSlider -> action.nodeId
@@ -300,6 +301,7 @@ internal class ExecutionDiagnostics(
         is DroidLmAction.DialogAction -> mapOf("buttonTextLength" to (action.buttonText?.length ?: 0), "buttonTextPreview" to action.buttonText?.take(MAX_NODE_TEXT_PREVIEW_CHARS), "role" to action.role?.name)
         is DroidLmAction.OpenMenu -> mapOf("menu" to action.menu.name)
         is DroidLmAction.SelectTab -> mapOf("labelLength" to action.label.length, "labelPreview" to action.label.take(MAX_NODE_TEXT_PREVIEW_CHARS))
+        is DroidLmAction.NavigateToArtifactTarget -> mapOf("labelLength" to action.label.length, "labelPreview" to action.label.take(MAX_NODE_TEXT_PREVIEW_CHARS), "nodeId" to action.nodeId, "kind" to action.kind)
         is DroidLmAction.SetToggle -> mapOf("labelLength" to (action.label?.length ?: 0), "labelPreview" to action.label?.take(MAX_NODE_TEXT_PREVIEW_CHARS), "nodeId" to action.nodeId, "value" to action.value)
         is DroidLmAction.ExpandCollapse -> mapOf("labelLength" to (action.label?.length ?: 0), "labelPreview" to action.label?.take(MAX_NODE_TEXT_PREVIEW_CHARS), "nodeId" to action.nodeId, "expanded" to action.expanded)
         is DroidLmAction.SetSlider -> mapOf("labelLength" to (action.label?.length ?: 0), "labelPreview" to action.label?.take(MAX_NODE_TEXT_PREVIEW_CHARS), "nodeId" to action.nodeId, "value" to action.value, "percent" to action.percent)

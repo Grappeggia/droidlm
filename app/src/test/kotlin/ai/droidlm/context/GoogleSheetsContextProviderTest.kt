@@ -17,6 +17,7 @@ class GoogleSheetsContextProviderTest {
             screenHeight = 200,
             nodes = listOf(
                 node(text = "Budget tracker"),
+                node(text = "Share"),
                 node(text = "fx Formula", contentDescription = "formula bar"),
                 node(
                     nodeId = "cell-editor",
@@ -39,6 +40,8 @@ class GoogleSheetsContextProviderTest {
         assertEquals("1200", json.getJSONObject("activeCell").getString("value"))
         assertEquals(2, json.getJSONObject("activeCell").getInt("row"))
         assertEquals("B", json.getJSONObject("activeCell").getString("column"))
+        assertEquals("google_sheets", json.getJSONObject("artifactContext").getJSONObject("artifact").getString("source"))
+        assertTrue(json.getJSONObject("artifactContext").getJSONArray("navigationTargets").toString().contains("1200"))
         assertTrue(json.getJSONArray("availableSheetActions").toString().contains("INSERT_FORMULA"))
     }
 

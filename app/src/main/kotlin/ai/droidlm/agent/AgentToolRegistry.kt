@@ -126,6 +126,7 @@ class AgentToolRegistry(
             AgentToolSpec("DIALOG_ACTION", ToolRisk.SENSITIVE, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("PRESS_IME_ACTION", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("TYPE_TEXT", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
+            AgentToolSpec("NAVIGATE_TO_ARTIFACT_TARGET", ToolRisk.SAFE_NAVIGATION, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("FOCUS_EDITABLE", ToolRisk.READ_ONLY, mutating = false, requiresFreshObservationAfter = false),
             AgentToolSpec("SET_SELECTION", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("INSERT_TEXT", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),

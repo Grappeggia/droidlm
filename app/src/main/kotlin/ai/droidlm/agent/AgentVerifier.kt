@@ -1,5 +1,6 @@
 package ai.droidlm.agent
 
+import ai.droidlm.context.ArtifactContextBuilder
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalState
@@ -40,6 +41,7 @@ data class AgentVerificationResult(
 class AgentVerifier {
     fun needsFreshState(action: DroidLmAction): Boolean = when (action) {
         is DroidLmAction.OpenApp,
+        is DroidLmAction.NavigateToArtifactTarget,
         is DroidLmAction.WaitForUi,
         is DroidLmAction.FindTextOnScreen,
         is DroidLmAction.VerifyTextChange -> true
@@ -50,7 +52,9 @@ class AgentVerifier {
         action: DroidLmAction,
         actionResult: ActionResult,
         beforeState: PortalState?,
-        afterState: PortalState?
+        afterState: PortalState?,
+        goal: String? = null,
+        deviceContextExtras: JSONObject? = null
     ): AgentVerificationResult {
         if (!actionResult.success) {
             return AgentVerificationResult.failed(
@@ -60,13 +64,36 @@ class AgentVerifier {
             )
         }
         return when (action) {
-            is DroidLmAction.OpenApp -> verifyActivePackage(action.packageName, afterState)
+            is DroidLmAction.OpenApp -> verifyOpenApp(action, beforeState, afterState, goal, deviceContextExtras)
+            is DroidLmAction.NavigateToArtifactTarget -> verifyArtifactTargetVisible(action, beforeState, afterState)
             is DroidLmAction.WaitForUi -> verifyWaitForUi(action, afterState)
             is DroidLmAction.FindTextOnScreen -> verifyTextVisible(action.text, afterState, "Expected text to be visible")
             is DroidLmAction.VerifyTextChange -> verifyTextVisible(action.expectedText, afterState, "Expected edited text to be visible")
             is DroidLmAction.Done -> AgentVerificationResult.verified("Agent reported task complete")
             else -> verifyFreshStateAvailable(action, beforeState, afterState)
         }
+    }
+
+    private fun verifyOpenApp(
+        action: DroidLmAction.OpenApp,
+        beforeState: PortalState?,
+        afterState: PortalState?,
+        goal: String?,
+        deviceContextExtras: JSONObject?
+    ): AgentVerificationResult {
+        val query = goal?.let(ArtifactContextBuilder::extractNavigationRequest)
+        val artifactContext = deviceContextExtras?.optJSONObject("artifactContext")
+        val matchingTargetExists = query != null &&
+            ArtifactContextBuilder.supportsArtifactPackage(beforeState?.packageName) &&
+            ArtifactContextBuilder.hasMatchingTarget(artifactContext, query)
+        if (matchingTargetExists && beforeState?.packageName != null && beforeState.packageName != action.packageName) {
+            return AgentVerificationResult.failed(
+                "Opened another app even though the current artifact already contains \"$query\"",
+                beforeState.packageName,
+                afterState?.packageName ?: "unknown"
+            )
+        }
+        return verifyActivePackage(action.packageName, afterState)
     }
 
     private fun verifyActivePackage(packageName: String, afterState: PortalState?): AgentVerificationResult {
@@ -76,6 +103,20 @@ class AgentVerifier {
         } else {
             AgentVerificationResult.failed("Active package did not match launched app", packageName, actualPackage ?: "unknown")
         }
+    }
+
+    private fun verifyArtifactTargetVisible(
+        action: DroidLmAction.NavigateToArtifactTarget,
+        beforeState: PortalState?,
+        afterState: PortalState?
+    ): AgentVerificationResult {
+        if (afterState == null) {
+            return AgentVerificationResult.failed("No fresh UI state available for artifact navigation", action.label, "unknown")
+        }
+        if (afterState.hasVisibleText(action.label)) {
+            return AgentVerificationResult.verified("Artifact target is visible", action.label, visibleText(afterState))
+        }
+        return verifyFreshStateAvailable(action, beforeState, afterState)
     }
 
     private fun verifyWaitForUi(action: DroidLmAction.WaitForUi, afterState: PortalState?): AgentVerificationResult {
@@ -135,6 +176,7 @@ class AgentVerifier {
         is DroidLmAction.PressBack,
         is DroidLmAction.OpenSettings,
         is DroidLmAction.SwitchApp,
+        is DroidLmAction.NavigateToArtifactTarget,
         is DroidLmAction.OpenAppStoreListing -> true
         else -> false
     }

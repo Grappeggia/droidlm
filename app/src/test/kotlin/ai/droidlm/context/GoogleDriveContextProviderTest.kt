@@ -18,6 +18,7 @@ class GoogleDriveContextProviderTest {
             screenHeight = 200,
             nodes = listOf(
                 node(text = "My Drive"),
+                node(text = "Share", clickable = true),
                 node(nodeId = "file-1", text = "Budget tracker spreadsheet", clickable = true),
                 node(nodeId = "file-2", text = "Meeting notes document", clickable = true),
                 node(text = "Search in Drive", contentDescription = "Search in Drive", clickable = true)
@@ -31,6 +32,7 @@ class GoogleDriveContextProviderTest {
 
         assertEquals("SEARCH_RESULTS", drive.getString("uiMode"))
         assertTrue(drive.getJSONArray("visibleFiles").toString().contains("Budget tracker spreadsheet"))
+        assertEquals("google_drive", json.getJSONObject("artifactContext").getJSONObject("artifact").getString("source"))
         assertTrue(json.getJSONArray("availableDriveActions").toString().contains("CREATE_SHEET"))
     }
 

@@ -33,6 +33,12 @@ class AgentToolRegistryTest {
         assertTrue(result.getOrThrow().action is DroidLmAction.OpenApp)
     }
 
+    @Test fun acceptsArtifactNavigationTool() {
+        val call = AgentToolCall("call_1", "NAVIGATE_TO_ARTIFACT_TARGET", JSONObject().put("label", "Meetings").put("kind", "section"), "")
+
+        assertTrue(registry.toExecution(call, null, emptyList()).isSuccess)
+    }
+
     @Test fun rejectsStaleNodeTarget() {
         val state = PortalState("pkg", "Activity", 100, 200, listOf(node("visible")))
         val call = AgentToolCall("call_1", "TAP_NODE", JSONObject().put("nodeId", "stale"), "")

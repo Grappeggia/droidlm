@@ -92,6 +92,12 @@ sealed class DroidLmAction {
         val label: String,
         val reason: String
     ) : DroidLmAction()
+    data class NavigateToArtifactTarget(
+        val label: String,
+        val nodeId: String? = null,
+        val kind: String? = null,
+        val reason: String
+    ) : DroidLmAction()
     data class SetToggle(
         val label: String? = null,
         val nodeId: String? = null,
@@ -241,6 +247,7 @@ fun DroidLmAction.displayName(): String = when (this) {
     is DroidLmAction.DialogAction -> "DIALOG_ACTION ${buttonText ?: role?.name ?: "UNKNOWN"}"
     is DroidLmAction.OpenMenu -> "OPEN_MENU ${menu.name}"
     is DroidLmAction.SelectTab -> "SELECT_TAB $label"
+    is DroidLmAction.NavigateToArtifactTarget -> "NAVIGATE_TO_ARTIFACT_TARGET $label"
     is DroidLmAction.SetToggle -> "SET_TOGGLE ${nodeId ?: label ?: "UNKNOWN"}=$value"
     is DroidLmAction.ExpandCollapse -> "EXPAND_COLLAPSE ${nodeId ?: label ?: "UNKNOWN"}=$expanded"
     is DroidLmAction.SetSlider -> "SET_SLIDER ${nodeId ?: label ?: "UNKNOWN"}"
