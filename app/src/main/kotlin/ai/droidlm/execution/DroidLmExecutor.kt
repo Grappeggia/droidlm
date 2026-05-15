@@ -102,11 +102,21 @@ class DroidLmExecutor(
     val pendingConfirmation: StateFlow<PendingConfirmation?> = _pendingConfirmation.asStateFlow()
 
     @Volatile private var cancelled = false
+    @Volatile private var installMonitorTarget: InstallMonitorTarget? = null
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
     private val agentToolRegistry = AgentToolRegistry()
     private val agentVerifier = AgentVerifier()
     private val agentRecoveryPolicy = AgentRecoveryPolicy()
     private val executionDiagnostics = ExecutionDiagnostics(diagnostics, portalController)
+    private val installMonitorRunner = ExecutionInstallMonitorRunner(
+        appInventoryRepository = appInventoryRepository,
+        portalController = portalController,
+        logs = logs,
+        uiState = _uiState,
+        executionDiagnostics = executionDiagnostics,
+        cancellationResult = ::ensureNotCancelled,
+        finish = ::finish
+    )
     private val actionRunner = ExecutionActionRunner(
         settingsRepository = settingsRepository,
         portalController = portalController,
@@ -195,6 +205,7 @@ class DroidLmExecutor(
         }
         _uiState.value = _uiState.value.copy(parsedAction = ActionUiFormatter.full(action))
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
+        maybeRunInstallMonitor(stripped, action, diagnosticSessionId)?.let { return it }
 
         val state = runCatching { portalController.getState() }.getOrNull()
         val safety = safetyClassifier.classify(stripped, action, state, settings.sensitiveAppScreenshotDenylist)
@@ -272,8 +283,102 @@ class DroidLmExecutor(
         return finish(ActionResult(result.success, result.message, if (result.success) null else "MOBILERUN_FAILED"))
     }
 
-    private suspend fun executeAction(action: DroidLmAction, transcript: String, finishState: Boolean = true, diagnosticSessionId: String? = null): ActionResult =
-        actionRunner.execute(action, transcript, finishState, diagnosticSessionId)
+    private suspend fun executeAction(action: DroidLmAction, transcript: String, finishState: Boolean = true, diagnosticSessionId: String? = null): ActionResult {
+        val result = actionRunner.execute(action, transcript, finishState, diagnosticSessionId)
+        updateInstallMonitorTarget(action, transcript, result, diagnosticSessionId)
+        return result
+    }
+
+    private suspend fun maybeRunInstallMonitor(transcript: String, action: DroidLmAction, diagnosticSessionId: String?): ActionResult? {
+        if (action !is DroidLmAction.NeedLlmPlanning && action !is DroidLmAction.NoOp) return null
+        if (!InstallMonitorIntent.isInstallMonitorRequest(transcript)) return null
+        val target = installMonitorTarget
+        if (target == null) {
+            debugEvent(diagnosticSessionId, "install_monitor_missing_target", mapOf("transcriptLength" to transcript.length))
+            return finish(ActionResult.fail("I do not know which app install to monitor yet. Open the app's store listing first, then ask me to wait.", "NO_INSTALL_MONITOR_TARGET"))
+        }
+        val effectiveTarget = if (InstallMonitorIntent.shouldOpenAfterInstall(transcript) && !target.openWhenInstalled) {
+            target.copy(openWhenInstalled = true)
+        } else {
+            target
+        }
+        installMonitorTarget = effectiveTarget
+        debugEvent(
+            diagnosticSessionId,
+            "install_monitor_route_selected",
+            mapOf(
+                "packageName" to effectiveTarget.packageName,
+                "appName" to effectiveTarget.appName,
+                "openWhenInstalled" to effectiveTarget.openWhenInstalled
+            )
+        )
+        val result = installMonitorRunner.run(effectiveTarget, transcript, diagnosticSessionId)
+        if (result.success) installMonitorTarget = null
+        return result
+    }
+
+    private fun updateInstallMonitorTarget(action: DroidLmAction, transcript: String, result: ActionResult, diagnosticSessionId: String?) {
+        if (!result.success) return
+        when (action) {
+            is DroidLmAction.OpenAppStoreListing -> rememberInstallMonitorTarget(
+                appName = action.appName,
+                packageName = action.packageName,
+                transcript = transcript,
+                openWhenInstalled = false,
+                diagnosticSessionId = diagnosticSessionId
+            )
+            is DroidLmAction.OpenApp -> {
+                if (result.message.contains("Opened Play Store listing", ignoreCase = true)) {
+                    rememberInstallMonitorTarget(
+                        appName = action.appName,
+                        packageName = action.packageName,
+                        transcript = transcript,
+                        openWhenInstalled = true,
+                        diagnosticSessionId = diagnosticSessionId
+                    )
+                } else {
+                    clearInstallMonitorTargetIfMatches(action.packageName, diagnosticSessionId, "open_app_succeeded")
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun rememberInstallMonitorTarget(
+        appName: String?,
+        packageName: String,
+        transcript: String,
+        openWhenInstalled: Boolean,
+        diagnosticSessionId: String?
+    ) {
+        val target = InstallMonitorTarget(
+            appName = appName,
+            packageName = packageName,
+            sourceTranscript = transcript,
+            openWhenInstalled = openWhenInstalled ||
+                InstallMonitorIntent.shouldOpenAfterInstall(transcript) ||
+                InstallMonitorIntent.textImpliesOpenAfterInstall(transcript)
+        )
+        installMonitorTarget = target
+        debugEvent(
+            diagnosticSessionId,
+            "install_monitor_target_remembered",
+            mapOf(
+                "packageName" to target.packageName,
+                "appName" to target.appName,
+                "openWhenInstalled" to target.openWhenInstalled,
+                "sourceTranscriptLength" to transcript.length
+            )
+        )
+    }
+
+    private fun clearInstallMonitorTargetIfMatches(packageName: String, diagnosticSessionId: String?, reason: String) {
+        val current = installMonitorTarget ?: return
+        if (current.packageName != packageName) return
+        installMonitorTarget = null
+        debugEvent(diagnosticSessionId, "install_monitor_target_cleared", mapOf("packageName" to packageName, "reason" to reason))
+    }
+
     private suspend fun requestConfirmation(transcript: String, action: DroidLmAction, reason: String, diagnosticSessionId: String? = null, promptOverride: String? = null): Boolean {
         val deferred = CompletableDeferred<Boolean>()
         confirmationDeferred = deferred

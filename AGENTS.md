@@ -21,6 +21,7 @@
 - Build APKs locally before publishing.
 - For debug/prerelease builds, run `./gradlew testDebugUnitTest assembleDebug` at minimum. Release candidates must also pass `scripts/android-emulator-matrix.sh release full`.
 - For prod/release builds, run `./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease` at minimum. Stable releases must also pass `scripts/android-emulator-matrix.sh release full`.
+- When asked to start emulators or run the device test matrix for release verification, use `scripts/android-emulator-matrix.sh release full`; it creates, boots, targets, and stops each required AVD profile.
 - Run CLI checks with `npm test` and `npm pack --dry-run` from `cli/` when CLI packaging or install/release instructions change.
 
 ## Release Channels
