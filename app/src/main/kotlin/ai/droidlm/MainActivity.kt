@@ -726,10 +726,10 @@ private fun ConfirmationCard(
     Text("Transcript: $transcript")
     Text("Action: $action")
     Text("Reason: $reason")
-    Text(prompt, fontWeight = FontWeight.SemiBold)
+    if (prompt.isNotBlank()) Text(prompt, fontWeight = FontWeight.SemiBold)
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Button(onClick = onConfirm) { Text("Confirm") }
-        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        Button(onClick = onConfirm) { Text("\u2713", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        OutlinedButton(onClick = onCancel) { Text("X", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
     }
 }
 

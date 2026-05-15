@@ -146,17 +146,32 @@ class OverlayStatusFormatterTest {
         )
     }
 
-    @Test fun confirmationDetailsIncludesTranscriptActionReasonAndPrompt() {
+    @Test fun confirmationDetailsOmitsBlankPrompt() {
         val pending = PendingConfirmation(
             id = "pending-1",
             transcript = "open google docs",
             actionLabel = "Open Google Docs in Play Store",
             reason = "The app is not installed.",
-            prompt = "Confirm this DroidLM action?"
+            prompt = ""
         )
 
         assertEquals(
-            "Transcript: open google docs\nAction: Open Google Docs in Play Store\nReason: The app is not installed.\nConfirm this DroidLM action?",
+            "Transcript: open google docs\nAction: Open Google Docs in Play Store\nReason: The app is not installed.",
+            OverlayStatusFormatter.confirmationDetails(pending)
+        )
+    }
+
+    @Test fun confirmationDetailsIncludesCustomPromptWhenPresent() {
+        val pending = PendingConfirmation(
+            id = "pending-1",
+            transcript = "open google docs",
+            actionLabel = "Open Google Docs in Play Store",
+            reason = "The app is not installed.",
+            prompt = "Open Play Store for Google Docs?"
+        )
+
+        assertEquals(
+            "Transcript: open google docs\nAction: Open Google Docs in Play Store\nReason: The app is not installed.\nOpen Play Store for Google Docs?",
             OverlayStatusFormatter.confirmationDetails(pending)
         )
     }

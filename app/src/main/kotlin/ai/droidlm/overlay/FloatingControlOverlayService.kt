@@ -108,8 +108,8 @@ private sealed interface OverlayPendingDecision {
         override val headerLabel: String = "Confirm action"
         override val title: String = "Confirmation required"
         override val details: String = OverlayStatusFormatter.confirmationDetails(pending)
-        override val primaryButtonLabel: String? = "Confirm"
-        override val secondaryButtonLabel: String? = "Cancel"
+        override val primaryButtonLabel: String? = "\u2713"
+        override val secondaryButtonLabel: String? = "X"
     }
 
     data class Plan(val pending: PendingPlan) : OverlayPendingDecision {
@@ -384,7 +384,7 @@ class FloatingControlOverlayService : Service() {
             setLineSpacing(0f, 1.08f)
         }
         primaryDecisionButton = Button(this).apply {
-            text = "Confirm"
+            text = "\u2713"
             contentDescription = ACCEPT_PLAN_BUTTON_CONTENT_DESCRIPTION
             textSize = 13f
             applyActionButton(76f)
@@ -392,7 +392,7 @@ class FloatingControlOverlayService : Service() {
             setOnClickListener { performPrimaryCardAction() }
         }
         secondaryDecisionButton = Button(this).apply {
-            text = "Cancel"
+            text = "X"
             contentDescription = REJECT_PLAN_BUTTON_CONTENT_DESCRIPTION
             textSize = 13f
             applyActionButton(72f)

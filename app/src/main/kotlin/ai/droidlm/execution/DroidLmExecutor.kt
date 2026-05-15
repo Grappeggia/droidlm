@@ -39,12 +39,10 @@ import ai.droidlm.settings.SettingsRepository
 
 import ai.droidlm.textedit.TextEditingController
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 data class ExecutionUiState(
@@ -284,7 +282,7 @@ class DroidLmExecutor(
             transcript = transcript,
             actionLabel = ActionUiFormatter.full(action),
             reason = reason,
-            prompt = promptOverride ?: if (action is DroidLmAction.AskConfirmation) action.confirmationPrompt else "Confirm this DroidLM action?"
+            prompt = promptOverride ?: if (action is DroidLmAction.AskConfirmation) action.confirmationPrompt else ""
         )
         _pendingConfirmation.value = pending
         logs.log(ActionLogType.CONFIRMATION_REQUIRED, reason)
@@ -295,13 +293,9 @@ class DroidLmExecutor(
         )
         _uiState.value = _uiState.value.copy(status = "Waiting for confirmation")
         return try {
-            withTimeout(30_000) { deferred.await() }.also { accepted ->
+            deferred.await().also { accepted ->
                 debugEvent(diagnosticSessionId, "confirmation_result", mapOf("id" to pending.id, "accepted" to accepted, "timedOut" to false))
             }
-        } catch (_: TimeoutCancellationException) {
-            logs.log(ActionLogType.CONFIRMATION_REJECTED, "Confirmation timed out")
-            debugEvent(diagnosticSessionId, "confirmation_result", mapOf("id" to pending.id, "accepted" to false, "timedOut" to true))
-            false
         } finally {
             confirmationDeferred = null
             _pendingConfirmation.value = null
