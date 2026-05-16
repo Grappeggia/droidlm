@@ -60,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -263,17 +264,12 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
-                        overlayRunning = overlayRunning,
-                        overlayGranted = overlayGranted,
-                        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
                         speechRecognition = speechRecognition,
                         onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         },
-                        onOpenOverlayPermission = ::requestOverlayPermission,
-                        onStartOverlay = ::startOverlayWithPermission,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
@@ -293,17 +289,12 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
-                        overlayRunning = overlayRunning,
-                        overlayGranted = overlayGranted,
-                        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
                         onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         },
-                        onStartOverlay = ::startOverlayWithPermission,
                         onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
-                        onOpenOverlayPermission = ::requestOverlayPermission,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
@@ -420,15 +411,10 @@ private fun OnboardingPage(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
-    overlayRunning: Boolean,
-    overlayGranted: Boolean,
-    overlayPermissionNeedsRetry: Boolean,
     speechRecognition: SpeechRecognitionUiState,
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onOpenOverlayPermission: () -> Unit,
-    onStartOverlay: () -> Unit,
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
@@ -449,15 +435,10 @@ private fun OnboardingPage(
             accessibilityEnabled = accessibilityEnabled,
             micGranted = micGranted,
             notificationGranted = notificationGranted,
-            overlayRunning = overlayRunning,
-            overlayGranted = overlayGranted,
-            overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
             settings = settings,
             onOpenAccessibility = onOpenAccessibility,
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
-            onOpenOverlayPermission = onOpenOverlayPermission,
-            onStartOverlay = onStartOverlay,
             onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
             speechRecognition = speechRecognition,
             onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
@@ -496,47 +477,46 @@ private fun SettingsPage(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
-    overlayRunning: Boolean,
-    overlayGranted: Boolean,
-    overlayPermissionNeedsRetry: Boolean,
     onOpenAccessibility: () -> Unit,
-    onOpenOverlayPermission: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onStartOverlay: () -> Unit,
     onOpenSpeechSettings: () -> Unit,
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
     speechRecognition: SpeechRecognitionUiState,
-) = Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-    Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
-    SetupStatusCard(
-        accessibilityEnabled = accessibilityEnabled,
-        micGranted = micGranted,
-        notificationGranted = notificationGranted,
-        overlayRunning = overlayRunning,
-        overlayGranted = overlayGranted,
-        overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
-        settings = settings,
-        onOpenAccessibility = onOpenAccessibility,
-        onRequestMicPermission = onRequestMicPermission,
-        onRequestNotificationPermission = onRequestNotificationPermission,
-        onOpenOverlayPermission = onOpenOverlayPermission,
-        onStartOverlay = onStartOverlay,
-        onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
-        speechRecognition = speechRecognition,
-        onOpenSpeechSettings = onOpenSpeechSettings,
-    )
-    PlannerSettingsCard(
-        settings = settings,
-        plannerKeySetup = plannerKeySetup,
-        onSave = onSaveOpenAiKey,
-        onClear = onClearOpenAiKey,
-        onCancel = onDismissPlannerKeySetup
-    )
-    SettingsCard(settings, speechRecognition, viewModel)
-    VersionFooter()
+) {
+    var showOpenAiKeyDialog by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
+        SetupStatusCard(
+            accessibilityEnabled = accessibilityEnabled,
+            micGranted = micGranted,
+            notificationGranted = notificationGranted,
+            settings = settings,
+            onOpenAccessibility = onOpenAccessibility,
+            onRequestMicPermission = onRequestMicPermission,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
+            speechRecognition = speechRecognition,
+            onOpenSpeechSettings = onOpenSpeechSettings,
+            onOpenAiKey = { showOpenAiKeyDialog = true }
+        )
+        SettingsCard(settings, speechRecognition, viewModel)
+        VersionFooter()
+    }
+
+    if (showOpenAiKeyDialog) {
+        OpenAiKeyDialog(
+            settings = settings,
+            plannerKeySetup = plannerKeySetup,
+            onSave = onSaveOpenAiKey,
+            onClear = onClearOpenAiKey,
+            onCancel = onDismissPlannerKeySetup,
+            onDismiss = { showOpenAiKeyDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -556,15 +536,10 @@ private fun SetupStatusCard(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
-    overlayRunning: Boolean,
-    overlayGranted: Boolean,
-    overlayPermissionNeedsRetry: Boolean,
     settings: DroidLmSettings,
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onOpenOverlayPermission: () -> Unit,
-    onStartOverlay: () -> Unit,
     onEnableOcr: () -> Unit,
     speechRecognition: SpeechRecognitionUiState,
     onOpenSpeechSettings: () -> Unit,
@@ -575,7 +550,7 @@ private fun SetupStatusCard(
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
         SetupStatusItem("Notifications", notificationGranted, onRequestNotificationPermission),
         SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr),
-        onOpenAiKey?.let { SetupStatusItem("OpenAI Key", settings.openAiApiKeyConfigured, it) }
+        onOpenAiKey?.let { SetupStatusItem("API Key", settings.openAiApiKeyConfigured, it) }
     )
     val languageItem = when {
         settings.preferOfflineSpeechRecognition -> {
@@ -603,15 +578,6 @@ private fun SetupStatusCard(
     Spacer(Modifier.height(10.dp))
     SetupStatusRow("Enabled", enabledItems)
     SetupStatusRow("Missing", missingItems)
-    if (!overlayRunning) {
-        Spacer(Modifier.height(12.dp))
-        FloatingControlsSetupCard(
-            overlayGranted = overlayGranted,
-            overlayPermissionNeedsRetry = overlayPermissionNeedsRetry,
-            onOpenOverlayPermission = onOpenOverlayPermission,
-            onStartOverlay = onStartOverlay
-        )
-    }
 }
 
 private data class SetupStatusItem(
@@ -622,54 +588,29 @@ private data class SetupStatusItem(
 
 @Composable
 private fun SetupStatusRow(label: String, items: List<SetupStatusItem>) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("$label:", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(end = 8.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (items.isEmpty()) {
-                Text("None", color = DroidLmColors.TextMuted)
-            } else {
-                items.forEach { item ->
-                    AssistChip(onClick = item.onClick, label = { Text(item.label) })
-                }
+    var expanded by rememberSaveable(label) { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("$label (${items.size})", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide" else "Show")
             }
         }
-    }
-}
-
-@Composable
-private fun FloatingControlsSetupCard(
-    overlayGranted: Boolean,
-    overlayPermissionNeedsRetry: Boolean,
-    onOpenOverlayPermission: () -> Unit,
-    onStartOverlay: () -> Unit
-) {
-    val title = when {
-        overlayGranted -> "Ready to start"
-        overlayPermissionNeedsRetry -> "Still off"
-        else -> "Permission needed"
-    }
-    val message = when {
-        overlayGranted -> "Android already allows DroidLM to display over other apps. Start the controls when you need them."
-        overlayPermissionNeedsRetry -> "Android still has this permission off. Open the DroidLM settings page and turn on Allow display over other apps."
-        else -> "DroidLM needs Android's display-over-apps permission before it can show the floating record button."
-    }
-    val container = if (overlayGranted) DroidLmColors.SuccessSurface else DroidLmColors.WarningSurface
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = container),
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Floating controls", fontWeight = FontWeight.SemiBold)
-            Text(title, fontWeight = FontWeight.Bold)
-            Text(message, color = DroidLmColors.TextMuted)
-            val buttonLabel = when {
-                overlayGranted -> "Start controls"
-                overlayPermissionNeedsRetry -> "Try setup again"
-                else -> "Set up controls"
+        if (expanded) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (items.isEmpty()) {
+                    Text("None", color = DroidLmColors.TextMuted)
+                } else {
+                    items.forEach { item ->
+                        AssistChip(onClick = item.onClick, label = { Text(item.label) })
+                    }
+                }
             }
-            Button(onClick = if (overlayGranted) onStartOverlay else onOpenOverlayPermission) { Text(buttonLabel) }
         }
     }
 }
@@ -870,9 +811,6 @@ private fun SettingsCard(
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     SpeechSetupCard(settings, speechRecognition, viewModel)
-    ToggleRow("Require risky-action confirmation", settings.requireRiskConfirmation, viewModel::updateRiskConfirmation)
-    ToggleRow("Enable on-device OCR", settings.onDeviceOcrEnabled, viewModel::updateOnDeviceOcr)
-    ToggleRow("Enable cloud screenshot analysis", settings.cloudScreenshotAnalysisEnabled, viewModel::updateCloudVision)
 
     Text("Diagnostics", fontWeight = FontWeight.SemiBold)
     ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
