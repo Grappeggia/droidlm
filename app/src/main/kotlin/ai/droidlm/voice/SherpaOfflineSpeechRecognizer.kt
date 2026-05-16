@@ -86,11 +86,6 @@ class SherpaOfflineSpeechRecognizer(
         }
 
         callbacks.onStarting()
-        val modelLoadStartedAt = System.currentTimeMillis()
-        diagnostics.record(diagnosticSessionId, "sherpa_model_loading", mapOf("language" to languageTag, "model" to model.name, "storage" to model.storage.diagnosticName))
-        val recognizer = loadRecognizer(diagnosticSessionId)
-        diagnostics.record(diagnosticSessionId, "sherpa_model_ready", mapOf("model" to model.name, "storage" to model.storage.diagnosticName, "loadDurationMs" to (System.currentTimeMillis() - modelLoadStartedAt)))
-
         val recorder = createAudioRecord()
         val pcm = ByteArrayOutputStream()
         stopRequested = false
@@ -155,6 +150,10 @@ class SherpaOfflineSpeechRecognizer(
 
             val audio = pcm.toByteArray()
             diagnostics.record(diagnosticSessionId, "sherpa_audio_capture_complete", mapOf("bytes" to audio.size, "audioDurationMs" to pcmDurationMs(audio.size.toLong()), "speechStarted" to speechStarted, "firstSpeechAtMs" to firstSpeechAtMs.takeIf { it > 0 }, "lastSpeechAtMs" to lastSpeechAtMs.takeIf { it > 0 }, "model" to model.name))
+            val modelLoadStartedAt = System.currentTimeMillis()
+            diagnostics.record(diagnosticSessionId, "sherpa_model_loading", mapOf("language" to languageTag, "model" to model.name, "storage" to model.storage.diagnosticName))
+            val recognizer = loadRecognizer(diagnosticSessionId)
+            diagnostics.record(diagnosticSessionId, "sherpa_model_ready", mapOf("model" to model.name, "storage" to model.storage.diagnosticName, "loadDurationMs" to (System.currentTimeMillis() - modelLoadStartedAt)))
             val decoded = decode(recognizer, audio)
             diagnostics.record(diagnosticSessionId, "sherpa_final", mapOf("provider" to providerLabel, "model" to model.name, "transcriptLength" to decoded.length, "transcript" to decoded.take(MAX_TRANSCRIPT_DIAGNOSTIC_CHARS), "audioDurationMs" to pcmDurationMs(audio.size.toLong())))
             decoded

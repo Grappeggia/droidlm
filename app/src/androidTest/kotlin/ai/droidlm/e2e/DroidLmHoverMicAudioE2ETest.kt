@@ -39,6 +39,9 @@ class DroidLmHoverMicAudioE2ETest {
 
     @Before
     fun setUp() {
+        if (booleanArg("forceVoskOfflineSpeechRecognition", false)) {
+            app.rebuildGraphForTesting(forceVoskOfflineSpeech = true)
+        }
         enableAccessibilityServiceForEmulator()
         grantOverlayPermissionForEmulator()
         executeShell("pm grant ${targetContext.packageName} ${Manifest.permission.RECORD_AUDIO}")

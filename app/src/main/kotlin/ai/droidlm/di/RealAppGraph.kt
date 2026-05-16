@@ -42,9 +42,11 @@ import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import ai.droidlm.voice.WakeWordForegroundServiceDeps
 import android.app.Application
+import android.os.Build
 
 class RealAppGraph(
-    private val application: Application
+    private val application: Application,
+    private val forceVoskOfflineSpeech: Boolean = false
 ) : AppGraph {
     override val accessibilityRuntime = AccessibilityRuntime()
     override val overlayRuntime = OverlayRuntime()
@@ -112,11 +114,16 @@ class RealAppGraph(
         fallback = sherpaMoonshineSpeechRecognizer,
         diagnostics = speechDiagnosticsLogger
     )
-    override val offlineSpeechRecognizer = FallbackOfflineSpeechRecognizer(
-        primary = sherpaOfflineSpeechRecognizer,
-        fallback = voskOfflineSpeechRecognizer,
-        diagnostics = speechDiagnosticsLogger
-    )
+    private val useVoskOfflineSpeech = forceVoskOfflineSpeech || Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q
+    override val offlineSpeechRecognizer = if (useVoskOfflineSpeech) {
+        voskOfflineSpeechRecognizer
+    } else {
+        FallbackOfflineSpeechRecognizer(
+            primary = sherpaOfflineSpeechRecognizer,
+            fallback = voskOfflineSpeechRecognizer,
+            diagnostics = speechDiagnosticsLogger
+        )
+    }
     override val speechRecognitionController = SpeechRecognitionController(application, actionLogRepository, speechDiagnosticsLogger, offlineSpeechRecognizer)
     override val manualWakeWordEngine = ManualWakeWordEngine()
 

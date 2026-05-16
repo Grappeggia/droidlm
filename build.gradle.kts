@@ -529,7 +529,10 @@ fun org.gradle.api.Project.runSupportLogMicRegressionE2e(adb: String) {
             className = "ai.droidlm.e2e.DroidLmHoverMicAudioE2ETest",
             sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmHoverMicAudioE2ETest.kt",
             artifactSubdirectory = "support-log-mic-regression",
-            instrumentationArgs = mapOf("preferOfflineSpeechRecognition" to "true")
+            instrumentationArgs = mapOf(
+                "preferOfflineSpeechRecognition" to "true",
+                "forceVoskOfflineSpeechRecognition" to "true"
+            )
         ),
         methodName = "hoverRecordSupportLogAudioReproducesAmbiguousOpenRegression",
         audioFile = supportLogWav,
@@ -1000,7 +1003,10 @@ tasks.register("connectedHoverMicCaptureRegressionE2e") {
         project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
-        val instrumentationArgs = mutableMapOf("preferOfflineSpeechRecognition" to "true")
+        val instrumentationArgs = mutableMapOf(
+            "preferOfflineSpeechRecognition" to "true",
+            "forceVoskOfflineSpeechRecognition" to "true"
+        )
         mapOf(
             "DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS" to "captureRecordHoldMs",
             "DROIDLM_E2E_CAPTURE_INJECT_BEFORE_LISTENING" to "captureInjectBeforeListening",

@@ -29,17 +29,8 @@ import ai.droidlm.voice.OfflineSpeechRecognizer
 import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import android.app.Application
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
-import java.util.Locale
 
 class DroidLMApp : Application(), AppGraphProvider {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override lateinit var graph: AppGraph
         private set
@@ -99,31 +90,13 @@ class DroidLMApp : Application(), AppGraphProvider {
         super.onCreate()
         rebuildGraphForTesting()
         speechDiagnosticsLogger.record(null, "app_created", mapOf("packageName" to packageName))
-        observeOfflineSpeechPreload()
     }
 
-    fun rebuildGraphForTesting() {
-        graph = RealAppGraph(this)
+    fun rebuildGraphForTesting(forceVoskOfflineSpeech: Boolean = false) {
+        graph = RealAppGraph(this, forceVoskOfflineSpeech = forceVoskOfflineSpeech)
     }
 
     override fun onTerminate() {
-        appScope.cancel()
         super.onTerminate()
-    }
-
-    private fun observeOfflineSpeechPreload() {
-        appScope.launch {
-            settingsRepository.settings
-                .map { it.preferOfflineSpeechRecognition }
-                .distinctUntilChanged()
-                .collect { preferOffline ->
-                    if (preferOffline) {
-                        offlineSpeechRecognizer.preloadModel(
-                            languageTag = Locale.getDefault().toLanguageTag(),
-                            source = "settings_prefer_offline"
-                        )
-                    }
-                }
-        }
     }
 }
