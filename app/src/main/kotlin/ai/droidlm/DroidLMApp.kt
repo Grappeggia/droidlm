@@ -25,6 +25,7 @@ import ai.droidlm.textedit.TextEditingController
 import ai.droidlm.update.DebugBuildUpdater
 import ai.droidlm.voice.CommandRecorder
 import ai.droidlm.voice.ManualWakeWordEngine
+import ai.droidlm.voice.OfflineSpeechRecognizer
 import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import android.app.Application
@@ -79,6 +80,8 @@ class DroidLMApp : Application(), AppGraphProvider {
         get() = graph.commandRecorder
     val speechRecognitionController: SpeechRecognitionController
         get() = graph.speechRecognitionController
+    val offlineSpeechRecognizer: OfflineSpeechRecognizer
+        get() = graph.offlineSpeechRecognizer
     val voskOfflineSpeechRecognizer: VoskOfflineSpeechRecognizer
         get() = graph.voskOfflineSpeechRecognizer
     val manualWakeWordEngine: ManualWakeWordEngine
@@ -115,7 +118,7 @@ class DroidLMApp : Application(), AppGraphProvider {
                 .distinctUntilChanged()
                 .collect { preferOffline ->
                     if (preferOffline) {
-                        voskOfflineSpeechRecognizer.preloadModel(
+                        offlineSpeechRecognizer.preloadModel(
                             languageTag = Locale.getDefault().toLanguageTag(),
                             source = "settings_prefer_offline"
                         )

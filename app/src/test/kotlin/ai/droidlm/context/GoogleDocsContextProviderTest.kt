@@ -91,9 +91,46 @@ class GoogleDocsContextProviderTest {
         assertTrue(json.getJSONArray("availableDocActions").toString().contains("OPEN_RECENT_DOC"))
     }
 
+    @Test fun treatsSearchBoxOnlyEditableAsDocumentList() = runTest {
+        val state = PortalState(
+            packageName = GoogleDocsContextProvider.DOCS_PACKAGE,
+            activityName = "DocsActivity",
+            screenWidth = 100,
+            screenHeight = 200,
+            nodes = listOf(
+                node(
+                    nodeId = "search-box",
+                    text = "",
+                    contentDescription = "Search Docs",
+                    hintText = "Search Docs",
+                    editable = true,
+                    focused = true
+                ),
+                node(text = "Recent documents"),
+                node(nodeId = "document-row", clickable = true),
+                node(
+                    nodeId = "entry-label",
+                    text = "Summary of Docs",
+                    effectiveActions = listOf(UiNodeAction("CLICK", droidLmAction = "TAP_NODE", targetNodeId = "document-row"))
+                )
+            )
+        )
+
+        val json = GoogleDocsContextProvider().collect(DeviceContextRequest(null, state, null, emptyList()))
+        val docs = json.getJSONObject("docsContext")
+        val visibleDocuments = docs.getJSONArray("visibleDocuments")
+
+        assertEquals("DOCUMENT_LIST", docs.getString("uiMode"))
+        assertEquals(false, json.getJSONObject("editor").getBoolean("canType"))
+        assertEquals(1, visibleDocuments.length())
+        assertEquals("Summary of Docs", visibleDocuments.getJSONObject(0).getString("title"))
+    }
+
     private fun node(
         nodeId: String? = null,
         text: String? = null,
+        contentDescription: String? = null,
+        hintText: String? = null,
         editable: Boolean = false,
         focused: Boolean = false,
         textSelectionStart: Int? = null,
@@ -103,7 +140,7 @@ class GoogleDocsContextProviderTest {
     ) = UiNode(
         nodeId = nodeId,
         text = text,
-        contentDescription = null,
+        contentDescription = contentDescription,
         className = null,
         packageName = GoogleDocsContextProvider.DOCS_PACKAGE,
         bounds = null,
@@ -114,6 +151,7 @@ class GoogleDocsContextProviderTest {
         selected = false,
         textSelectionStart = textSelectionStart,
         textSelectionEnd = textSelectionEnd,
-        effectiveActions = effectiveActions
+        effectiveActions = effectiveActions,
+        hintText = hintText
     )
 }

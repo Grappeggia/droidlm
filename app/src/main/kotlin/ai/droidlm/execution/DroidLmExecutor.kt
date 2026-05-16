@@ -202,17 +202,34 @@ class DroidLmExecutor(
         runMobilerunTask = ::runMobilerunTask,
         userFacingPlannerMessage = ::userFacingPlannerMessage
     )
-
+    private val transcriptCorrector = SpeechTranscriptCorrector()
 
     suspend fun executeTranscript(transcript: String, diagnosticSessionId: String? = null): ActionResult {
         cancelled = false
-        val stripped = SpeechTextNormalizer.stripWakePhrase(transcript)
-        debugEvent(diagnosticSessionId, "manual_execute_started", mapOf("transcriptLength" to stripped.length, "hasSessionId" to (diagnosticSessionId != null)))
-        _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
-        promptHistoryRepository.record(stripped, "manual_command")
-        logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
+        val rawStripped = SpeechTextNormalizer.stripWakePhrase(transcript)
+        debugEvent(diagnosticSessionId, "manual_execute_started", mapOf("transcriptLength" to rawStripped.length, "hasSessionId" to (diagnosticSessionId != null)))
         val settings = settingsRepository.settings.first()
         val packages = runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
+        val initialState = runCatching { portalController.getState() }.getOrNull()
+        val correction = transcriptCorrector.correct(rawStripped, initialState)
+        val stripped = correction?.correctedTranscript ?: rawStripped
+        correction?.let {
+            debugEvent(
+                diagnosticSessionId,
+                "transcript_corrected",
+                mapOf(
+                    "source" to it.source,
+                    "targetText" to it.targetText,
+                    "replacementText" to it.replacementText,
+                    "score" to it.score,
+                    "originalLength" to it.originalTranscript.length,
+                    "correctedLength" to it.correctedTranscript.length
+                )
+            )
+        }
+        _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
+        promptHistoryRepository.record(stripped, if (correction == null) "manual_command" else "manual_command_corrected")
+        logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         val action = parser.parse(stripped, packages)
         debugEvent(diagnosticSessionId, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
         debugEvent(diagnosticSessionId, "transcript_quality", transcriptQualityFields(stripped))
@@ -227,7 +244,7 @@ class DroidLmExecutor(
         logs.log(ActionLogType.PARSED_ACTION, action.displayName())
         maybeRunInstallMonitor(stripped, action, diagnosticSessionId)?.let { return it }
 
-        val state = runCatching { portalController.getState() }.getOrNull()
+        val state = initialState ?: runCatching { portalController.getState() }.getOrNull()
         val safety = safetyClassifier.classify(stripped, action, state, settings.sensitiveAppScreenshotDenylist)
         recordSafetyDecision(diagnosticSessionId, "manual_command", safety, settings.requireRiskConfirmation)
         if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {

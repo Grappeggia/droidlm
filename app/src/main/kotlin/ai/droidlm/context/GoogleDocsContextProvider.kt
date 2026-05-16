@@ -10,8 +10,8 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         val state = request.state ?: return JSONObject()
         if (!supports(state.packageName)) return JSONObject()
 
-        val focusedEditable = state.nodes.firstOrNull { it.editable && it.focused }
-            ?: state.nodes.firstOrNull { it.editable }
+        val focusedEditable = state.nodes.firstOrNull { it.editable && it.focused && !it.isDocsSearchBox() }
+            ?: state.nodes.firstOrNull { it.editable && !it.isDocsSearchBox() }
         val editableText = focusedEditable?.text.orEmpty()
         val selectionStart = focusedEditable?.textSelectionStart
         val selectionEnd = focusedEditable?.textSelectionEnd
@@ -92,10 +92,23 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         hasAnyText(state.nodes, "find", "replace", "search in document") -> "FIND_BAR"
         hasAnyText(state.nodes, "comment", "resolve", "reply") -> "COMMENT_PANEL"
         hasAnyText(state.nodes, "bold", "italic", "underline", "text color", "paragraph") -> "FORMAT_TOOLBAR"
+        looksLikeDocumentList(state.nodes) -> "DOCUMENT_LIST"
         focusedEditable != null -> "DOCUMENT_EDIT"
         hasAnyText(state.nodes, "edit", "editing", "view only", "print layout") -> "DOCUMENT_VIEW"
         hasAnyText(state.nodes, "recent documents", "owned by me", "shared with me", "templates") -> "DOCUMENT_LIST"
         else -> "UNKNOWN"
+    }
+
+    private fun looksLikeDocumentList(nodes: List<UiNode>): Boolean =
+        hasAnyText(nodes, "recent documents", "owned by me", "shared with me", "templates", "sort by", "view as list", "new document menu") ||
+            nodes.any { node ->
+                val label = listOfNotNull(node.text, node.contentDescription, node.hintText, node.viewIdResourceName).joinToString(" ").lowercase()
+                label.contains("more actions for ") || label.contains("search docs")
+            }
+
+    private fun UiNode.isDocsSearchBox(): Boolean {
+        val label = listOfNotNull(text, contentDescription, hintText, viewIdResourceName).joinToString(" ").lowercase()
+        return label.contains("search docs") || (label.contains("search") && label.contains("top_app_bar"))
     }
 
     private fun selectionContext(node: UiNode?, text: String, start: Int?, end: Int?): JSONObject {
@@ -145,17 +158,22 @@ class GoogleDocsContextProvider : DeviceContextProvider {
 
     private fun documentCandidate(node: UiNode): JSONObject? {
         val raw = listOfNotNull(node.text, node.contentDescription).joinToString(" ").trim()
-        if (raw.isBlank() || raw.length < 2 || raw.length > 180) return null
-        val lower = raw.lowercase()
-        if (lower in documentListGenericLabels()) return null
+        val title = normalizeDocumentListTitle(raw)
+        if (title.isBlank() || title.length < 2 || title.length > 180) return null
+        if (title.lowercase() in documentListGenericLabels()) return null
         val targetNodeId = node.tapTargetNodeId()
         return JSONObject()
-            .put("title", raw)
+            .put("title", title)
             .put("nodeId", targetNodeId ?: JSONObject.NULL)
             .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
             .put("tappable", targetNodeId != null)
             .put("confidence", if (targetNodeId != null) 0.7 else 0.3)
     }
+
+    private fun normalizeDocumentListTitle(raw: String): String = raw
+        .trim()
+        .removePrefix("More actions for ")
+        .trim()
 
     private fun selectedDocument(nodes: List<UiNode>, visibleDocuments: JSONArray): JSONObject {
         val selected = nodes.firstOrNull { it.selected || it.focused }
@@ -195,7 +213,8 @@ class GoogleDocsContextProvider : DeviceContextProvider {
 
     private fun documentListGenericLabels(): Set<String> = setOf(
         "docs", "google docs", "recent documents", "owned by me", "shared with me", "templates",
-        "edit", "share", "comments", "more options", "undo", "redo", "find", "format", "search"
+        "edit", "share", "comments", "more options", "undo", "redo", "find", "format", "search",
+        "search docs", "view as list", "view as grid", "sort by", "new document menu"
     )
 
     private fun safetyContext(text: String, sharingFlowActive: Boolean, deleteFlowActive: Boolean): JSONObject = JSONObject()

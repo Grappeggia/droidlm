@@ -27,6 +27,7 @@ import ai.droidlm.update.DebugBuildUpdater
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.voice.CommandRecorder
 import ai.droidlm.voice.ManualWakeWordEngine
+import ai.droidlm.voice.OfflineSpeechRecognizer
 import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import ai.droidlm.voice.WakeWordForegroundServiceDeps
@@ -51,6 +52,7 @@ interface AppGraph {
     val executor: DroidLmExecutor
     val commandRecorder: CommandRecorder
     val speechRecognitionController: SpeechRecognitionController
+    val offlineSpeechRecognizer: OfflineSpeechRecognizer
     val voskOfflineSpeechRecognizer: VoskOfflineSpeechRecognizer
     val manualWakeWordEngine: ManualWakeWordEngine
     val debugBuildUpdater: DebugBuildUpdater

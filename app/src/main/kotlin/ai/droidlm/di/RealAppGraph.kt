@@ -35,7 +35,9 @@ import ai.droidlm.ui.DroidLmViewModelDeps
 import ai.droidlm.ui.MainActivityDeps
 import ai.droidlm.update.DebugBuildUpdater
 import ai.droidlm.voice.CommandRecorder
+import ai.droidlm.voice.FallbackOfflineSpeechRecognizer
 import ai.droidlm.voice.ManualWakeWordEngine
+import ai.droidlm.voice.SherpaOfflineSpeechRecognizer
 import ai.droidlm.voice.SpeechRecognitionController
 import ai.droidlm.voice.VoskOfflineSpeechRecognizer
 import ai.droidlm.voice.WakeWordForegroundServiceDeps
@@ -98,7 +100,24 @@ class RealAppGraph(
     )
     override val commandRecorder = CommandRecorder(application, settingsRepository, actionLogRepository, debugLogStore)
     override val voskOfflineSpeechRecognizer = VoskOfflineSpeechRecognizer(application, actionLogRepository, speechDiagnosticsLogger, debugLogStore)
-    override val speechRecognitionController = SpeechRecognitionController(application, actionLogRepository, speechDiagnosticsLogger, voskOfflineSpeechRecognizer)
+    private val sherpaParakeetSpeechRecognizer = SherpaOfflineSpeechRecognizer(application, actionLogRepository, speechDiagnosticsLogger)
+    private val sherpaMoonshineSpeechRecognizer = SherpaOfflineSpeechRecognizer(
+        context = application,
+        logs = actionLogRepository,
+        diagnostics = speechDiagnosticsLogger,
+        model = SherpaOfflineSpeechRecognizer.ModelSpec.moonshineDownload()
+    )
+    private val sherpaOfflineSpeechRecognizer = FallbackOfflineSpeechRecognizer(
+        primary = sherpaParakeetSpeechRecognizer,
+        fallback = sherpaMoonshineSpeechRecognizer,
+        diagnostics = speechDiagnosticsLogger
+    )
+    override val offlineSpeechRecognizer = FallbackOfflineSpeechRecognizer(
+        primary = sherpaOfflineSpeechRecognizer,
+        fallback = voskOfflineSpeechRecognizer,
+        diagnostics = speechDiagnosticsLogger
+    )
+    override val speechRecognitionController = SpeechRecognitionController(application, actionLogRepository, speechDiagnosticsLogger, offlineSpeechRecognizer)
     override val manualWakeWordEngine = ManualWakeWordEngine()
 
     override fun mainActivityDeps(): MainActivityDeps = MainActivityDeps(

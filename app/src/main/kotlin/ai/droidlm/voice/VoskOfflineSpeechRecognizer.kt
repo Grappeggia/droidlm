@@ -36,7 +36,8 @@ open class VoskOfflineSpeechRecognizer(
     private val logs: ActionLogRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
     private val debugLogStore: DebugLogStore? = null
-) {
+) : OfflineSpeechRecognizer {
+    override val providerLabel: String = VOSK_PROVIDER_LABEL
     data class Callbacks(
         val onStarting: () -> Unit = {},
         val onReady: () -> Unit = {},
@@ -137,13 +138,13 @@ open class VoskOfflineSpeechRecognizer(
     private val modelLock = Any()
     private var cachedModel: Model? = null
 
-    open fun supportsLanguage(languageTag: String): Boolean {
+    override open fun supportsLanguage(languageTag: String): Boolean {
         val locale = Locale.forLanguageTag(languageTag)
         val language = locale.language.ifBlank { languageTag.substringBefore('-') }
         return language.equals("en", ignoreCase = true)
     }
 
-    open fun stopCurrent(): Boolean {
+    override open fun stopCurrent(): Boolean {
         activeAudioRecord ?: return false
         stopRequested = true
         diagnostics.record(
@@ -159,7 +160,7 @@ open class VoskOfflineSpeechRecognizer(
         return true
     }
 
-    open fun cancelCurrent(): Boolean {
+    override open fun cancelCurrent(): Boolean {
         val recorder = activeAudioRecord ?: return false
         cancelRequested = true
         stopRequested = true
@@ -176,7 +177,7 @@ open class VoskOfflineSpeechRecognizer(
         return true
     }
 
-    open suspend fun preloadModel(languageTag: String = Locale.getDefault().toLanguageTag(), source: String = "app_start"): Boolean = withContext(Dispatchers.IO) {
+    override open suspend fun preloadModel(languageTag: String, source: String): Boolean = withContext(Dispatchers.IO) {
         if (!supportsLanguage(languageTag)) {
             diagnostics.record(null, "vosk_preload_skipped", mapOf("language" to languageTag, "source" to source, "reason" to "unsupported_language"))
             return@withContext false
@@ -231,11 +232,11 @@ open class VoskOfflineSpeechRecognizer(
             .isSuccess
     }
 
-    open suspend fun recognizeCommand(
+    override open suspend fun recognizeCommand(
         languageTag: String,
         maxDurationMs: Long,
         diagnosticSessionId: String?,
-        callbacks: Callbacks = Callbacks()
+        callbacks: Callbacks
     ): String = withContext(Dispatchers.IO) {
         if (!supportsLanguage(languageTag)) {
             throw IllegalStateException("Built-in offline speech currently supports English only.")

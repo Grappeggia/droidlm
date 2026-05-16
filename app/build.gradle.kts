@@ -1,11 +1,14 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val baseVersionCode = 28
-val baseVersionName = "0.1.27"
+val baseVersionCode = 29
+val baseVersionName = "0.1.28"
 
 val releaseStoreFile = System.getenv("DROIDLM_RELEASE_STORE_FILE")
 val releaseStorePassword = System.getenv("DROIDLM_RELEASE_STORE_PASSWORD")
@@ -29,6 +32,55 @@ val defaultCloudScreenshotAnalysisUrl = ""
 val cloudScreenshotAnalysisUrl = providers.gradleProperty("droidlm.cloudScreenshotAnalysisUrl")
     .orElse(providers.environmentVariable("DROIDLM_CLOUD_SCREENSHOT_ANALYSIS_URL"))
     .orElse(defaultCloudScreenshotAnalysisUrl)
+
+
+fun sha256(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(128 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+}
+
+val sherpaParakeetModelName = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming"
+val sherpaParakeetArchiveName = "$sherpaParakeetModelName.tar.bz2"
+val sherpaParakeetUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$sherpaParakeetArchiveName"
+val sherpaParakeetSha256 = "99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e1f839a76e150"
+val sherpaDownloadDir = layout.buildDirectory.dir("downloads/sherpa")
+val sherpaGeneratedAssetsDir = layout.buildDirectory.dir("generated/sherpaAssets")
+val sherpaParakeetArchive = sherpaDownloadDir.map { it.file(sherpaParakeetArchiveName) }
+
+val downloadSherpaParakeetModel by tasks.registering {
+    outputs.file(sherpaParakeetArchive)
+    doLast {
+        val archive = sherpaParakeetArchive.get().asFile
+        if (archive.isFile && sha256(archive).equals(sherpaParakeetSha256, ignoreCase = true)) return@doLast
+        archive.parentFile.mkdirs()
+        val temp = File(archive.parentFile, "${archive.name}.tmp")
+        temp.delete()
+        URI(sherpaParakeetUrl).toURL().openStream().use { input ->
+            temp.outputStream().use { output -> input.copyTo(output) }
+        }
+        val actualSha256 = sha256(temp)
+        require(actualSha256.equals(sherpaParakeetSha256, ignoreCase = true)) {
+            temp.delete()
+            "Downloaded Sherpa Parakeet model checksum mismatch"
+        }
+        archive.delete()
+        require(temp.renameTo(archive)) { "Could not move downloaded Sherpa Parakeet archive" }
+    }
+}
+
+val unpackSherpaParakeetModel by tasks.registering(Sync::class) {
+    dependsOn(downloadSherpaParakeetModel)
+    from(tarTree(resources.bzip2(sherpaParakeetArchive)))
+    into(sherpaGeneratedAssetsDir.map { it.dir("sherpa") })
+}
 
 fun buildConfigString(value: String): String = value
     .replace("\\", "\\\\")
@@ -56,6 +108,8 @@ android {
         buildConfigField("String", "DEBUG_LOG_UPLOAD_URL", "\"${buildConfigString(debugLogUploadUrl.get().trim())}\"")
         buildConfigField("String", "CLOUD_SCREENSHOT_ANALYSIS_URL", "\"${buildConfigString(cloudScreenshotAnalysisUrl.get().trim())}\"")
     }
+
+    sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -110,6 +164,10 @@ androidComponents {
     }
 }
 
+tasks.named("preBuild") {
+    dependsOn(unpackSherpaParakeetModel)
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.05.01"))
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.05.01"))
@@ -126,8 +184,10 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.bihe0832.android:lib-sherpa-onnx:6.25.21")
     implementation("com.alphacephei:vosk-android:0.3.47")
 
     androidTestImplementation("androidx.test:core:1.6.1")

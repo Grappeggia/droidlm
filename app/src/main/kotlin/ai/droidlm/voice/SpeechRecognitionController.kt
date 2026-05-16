@@ -57,7 +57,7 @@ class SpeechRecognitionController(
     private val context: Context,
     private val logs: ActionLogRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
-    private val voskRecognizer: VoskOfflineSpeechRecognizer
+    private val offlineRecognizer: OfflineSpeechRecognizer
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val _state = MutableStateFlow(SpeechRecognitionUiState())
@@ -93,19 +93,19 @@ class SpeechRecognitionController(
             recognizerStartFields(preferOffline, maxDurationMs, languageTag) + mapOf(
                 "voskFallbackSupported" to fallbackSupported,
                 "requestedProvider" to if (preferOffline) "offline_preferred" else "android_speech",
-                "selectedProvider" to if (preferOffline && fallbackSupported) VOSK_PROVIDER_LABEL else "Android SpeechRecognizer"
+                "selectedProvider" to if (preferOffline && fallbackSupported) offlineRecognizer.providerLabel else "Android SpeechRecognizer"
             )
         )
         if (preferOffline && fallbackSupported) {
             val message = "Using built-in offline English speech because offline Android speech may not be installed."
-            diagnostics.record(sessionId, "prefer_offline_vosk_direct", mapOf("language" to languageTag, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
+            diagnostics.record(sessionId, "prefer_offline_vosk_direct", mapOf("language" to languageTag, "selectedProvider" to offlineRecognizer.providerLabel, "fallbackReason" to message))
             return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             val message = "No Android speech recognizer is available on this device."
             diagnostics.record(diagnosticSessionId, "recognizer_unavailable")
             if (fallbackSupported) {
-                diagnostics.record(sessionId, "android_recognizer_unavailable_falling_back_to_vosk", mapOf("message" to message, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
+                diagnostics.record(sessionId, "android_recognizer_unavailable_falling_back_to_vosk", mapOf("message" to message, "selectedProvider" to offlineRecognizer.providerLabel, "fallbackReason" to message))
                 return@withContext recognizeWithVoskFallback(sessionId, maxDurationMs, languageTag, message)
             }
             val fullMessage = "$message Install or enable a speech recognition service."
@@ -297,7 +297,7 @@ class SpeechRecognitionController(
 
                     val willFallback = shouldFallbackToVosk(error, languageTag)
                     if (willFallback) {
-                        diagnostics.record(sessionId, "android_speech_fallback_pending", mapOf("code" to error, "message" to message, "selectedProvider" to VOSK_PROVIDER_LABEL, "fallbackReason" to message))
+                        diagnostics.record(sessionId, "android_speech_fallback_pending", mapOf("code" to error, "message" to message, "selectedProvider" to offlineRecognizer.providerLabel, "fallbackReason" to message))
                     } else {
                         finishDiagnostics("error", mapOf("code" to error, "message" to message))
                     }
@@ -312,7 +312,7 @@ class SpeechRecognitionController(
                             errorMessage = null,
                             missingLanguageTag = null,
                             missingLanguageMessage = null,
-                            providerLabel = VOSK_PROVIDER_LABEL
+                            providerLabel = offlineRecognizer.providerLabel
                         )
                     } else {
                         _state.value.copy(
@@ -499,7 +499,7 @@ class SpeechRecognitionController(
         activeDiagnosticSessionId = sessionId
         try {
             return runCatching {
-                val transcript = voskRecognizer.recognizeCommand(
+                val transcript = offlineRecognizer.recognizeCommand(
                     languageTag = languageTag,
                     maxDurationMs = maxDurationMs,
                     diagnosticSessionId = sessionId,
@@ -511,7 +511,7 @@ class SpeechRecognitionController(
                                 isStopping = false,
                                 partialTranscript = "",
                                 errorMessage = null,
-                                providerLabel = VOSK_PROVIDER_LABEL
+                                providerLabel = offlineRecognizer.providerLabel
                             )
                         },
                         onReady = {
@@ -521,7 +521,7 @@ class SpeechRecognitionController(
                                 isStopping = false,
                                 partialTranscript = "",
                                 errorMessage = null,
-                                providerLabel = VOSK_PROVIDER_LABEL
+                                providerLabel = offlineRecognizer.providerLabel
                             )
                         },
                         onStopping = {
@@ -531,11 +531,11 @@ class SpeechRecognitionController(
                                 isStopping = true,
                                 partialTranscript = "",
                                 errorMessage = null,
-                                providerLabel = VOSK_PROVIDER_LABEL
+                                providerLabel = offlineRecognizer.providerLabel
                             )
                         },
                         onPartial = { partial ->
-                            _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null, providerLabel = VOSK_PROVIDER_LABEL)
+                            _state.value = _state.value.copy(partialTranscript = partial, errorMessage = null, providerLabel = offlineRecognizer.providerLabel)
                         }
                     )
                 )
@@ -552,7 +552,7 @@ class SpeechRecognitionController(
                     speechSetupChecked = true,
                     speechSetupAvailable = true,
                     speechSetupMessage = "Using built-in offline English speech.",
-                    providerLabel = VOSK_PROVIDER_LABEL
+                    providerLabel = offlineRecognizer.providerLabel
                 )
                 logs.log(ActionLogType.TRANSCRIPTION_RESULT, transcript)
                 diagnostics.endSession(sessionId, "vosk_results", transcriptFields(transcript, 1))
@@ -574,7 +574,7 @@ class SpeechRecognitionController(
                     isListening = false,
                     isStopping = false,
                     errorMessage = if (cancelled) null else message,
-                    providerLabel = VOSK_PROVIDER_LABEL
+                    providerLabel = offlineRecognizer.providerLabel
                 )
                 logs.log(if (cancelled) ActionLogType.CANCELLED else ActionLogType.ERROR, message, if (cancelled) "VOSK_FALLBACK_CANCELLED" else "VOSK_FALLBACK_FAILED")
                 throw IllegalStateException(message, error)
@@ -584,7 +584,7 @@ class SpeechRecognitionController(
         }
     }
 
-    private fun canUseVoskFallback(languageTag: String): Boolean = voskRecognizer.supportsLanguage(languageTag)
+    private fun canUseVoskFallback(languageTag: String): Boolean = offlineRecognizer.supportsLanguage(languageTag)
 
     private fun shouldFallbackToVosk(errorCode: Int, languageTag: String): Boolean =
         canUseVoskFallback(languageTag) && (
@@ -600,9 +600,9 @@ class SpeechRecognitionController(
         val recognizer = activeRecognizer
         if (recognizer == null) {
             val sessionId = activeDiagnosticSessionId
-            val stopped = voskRecognizer.stopCurrent()
+            val stopped = offlineRecognizer.stopCurrent()
             if (stopped) {
-                diagnostics.record(sessionId, "stop_current_requested", mapOf("provider" to VOSK_PROVIDER_LABEL))
+                diagnostics.record(sessionId, "stop_current_requested", mapOf("provider" to offlineRecognizer.providerLabel))
                 _state.value = _state.value.copy(
                     isStarting = false,
                     isListening = false,
@@ -633,7 +633,7 @@ class SpeechRecognitionController(
         mainHandler.post {
             val sessionId = activeDiagnosticSessionId
             diagnostics.record(sessionId, "cancel_current_requested")
-            voskRecognizer.cancelCurrent()
+            offlineRecognizer.cancelCurrent()
             activeRecognizer?.let { recognizer ->
                 runCatching { recognizer.cancel() }
                 runCatching { recognizer.destroy() }
@@ -860,7 +860,6 @@ class SpeechRecognitionController(
         const val RMS_LOG_INTERVAL_MS = 500L
         const val MAX_TRANSCRIPT_ALTERNATIVES = 3
         const val MAX_TRANSCRIPT_DIAGNOSTIC_CHARS = 160
-        const val VOSK_PROVIDER_LABEL = "Built-in offline English speech"
     }
 }
 
