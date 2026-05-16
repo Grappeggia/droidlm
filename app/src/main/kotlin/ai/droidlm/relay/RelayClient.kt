@@ -4,6 +4,8 @@ import ai.droidlm.context.UiContextJson
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.intent.AnchorPosition
 import ai.droidlm.intent.DialogButtonRole
+import ai.droidlm.intent.DocumentEdit
+import ai.droidlm.intent.DocumentEditOperation
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.ImeActionType
 import ai.droidlm.intent.MenuType
@@ -449,9 +451,25 @@ class RelayClient(
             "OCR_SCREEN" -> DroidLmAction.OcrScreen
             "ANALYZE_SCREENSHOT" -> DroidLmAction.AnalyzeScreenshot(obj.optString("goal"), obj.optString("reason", "Analyze screenshot"))
             "INSERT_TEXT_AT_ANCHOR" -> DroidLmAction.InsertTextAtAnchor(
-                obj.optString("anchorText"), parseAnchorPosition(obj.optString("anchorPosition")), obj.optString("text"), obj.optString("reason", "Insert text at anchor")
+                anchorText = obj.optString("anchorText"),
+                anchorPosition = parseAnchorPosition(obj.optString("anchorPosition")),
+                text = obj.optString("text"),
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                occurrenceIndex = obj.optIntAny("occurrenceIndex", "matchIndex", "index"),
+                reason = obj.optString("reason", "Insert text at anchor")
             )
-            "REPLACE_TEXT_RANGE" -> DroidLmAction.ReplaceTextRange(obj.optString("targetText"), obj.optString("replacementText"), obj.optString("reason", "Replace text range"))
+            "REPLACE_TEXT_RANGE" -> DroidLmAction.ReplaceTextRange(
+                targetText = obj.optString("targetText"),
+                replacementText = obj.optString("replacementText"),
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                occurrenceIndex = obj.optIntAny("occurrenceIndex", "matchIndex", "index"),
+                reason = obj.optString("reason", "Replace text range")
+            )
+            "APPLY_DOCUMENT_EDITS" -> DroidLmAction.ApplyDocumentEdits(
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                edits = obj.optJSONArray("edits")?.let { editsArray -> editsArray.parseDocumentEdits() } ?: emptyList(),
+                reason = obj.optString("reason", "Apply document edits")
+            )
             "APPEND_TEXT" -> DroidLmAction.AppendText(obj.optString("text"), obj.optString("reason", "Append text"))
             "PREPEND_TEXT" -> DroidLmAction.PrependText(obj.optString("text"), obj.optString("reason", "Prepend text"))
             "SELECT_ALL" -> DroidLmAction.SelectAll
@@ -649,6 +667,38 @@ class RelayClient(
 
     private fun JSONObject.optIntOrNull(name: String): Int? = if (has(name) && !isNull(name)) optInt(name) else null
     private fun JSONObject.optDoubleOrNull(name: String): Double? = if (has(name) && !isNull(name)) optDouble(name) else null
+    private fun JSONArray.parseDocumentEdits(): List<DocumentEdit> =
+        (0 until length()).mapNotNull { index ->
+            optJSONObject(index)?.let { item ->
+                val operation = item.optString("operation").ifBlank {
+                    when {
+                        item.has("targetText") -> "REPLACE_TEXT_RANGE"
+                        item.has("anchorText") -> "INSERT_TEXT_AT_ANCHOR"
+                        else -> ""
+                    }
+                }
+                val editOperation = when (operation.uppercase()) {
+                    "REPLACE_TEXT_RANGE" -> DocumentEditOperation.REPLACE_TEXT_RANGE
+                    "INSERT_TEXT_AT_ANCHOR" -> DocumentEditOperation.INSERT_TEXT_AT_ANCHOR
+                    else -> return@let null
+                }
+                DocumentEdit(
+                    operation = editOperation,
+                    targetText = item.optString("targetText").takeIf { it.isNotBlank() },
+                    replacementText = item.optString("replacementText").takeIf { it.isNotBlank() },
+                    anchorText = item.optString("anchorText").takeIf { it.isNotBlank() },
+                    anchorPosition = parseAnchorPosition(item.optString("anchorPosition")),
+                    text = item.optString("text").takeIf { it.isNotBlank() },
+                    sectionLabel = item.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                    occurrenceIndex = item.optIntAny("occurrenceIndex", "matchIndex", "index")
+                )
+            }
+        }
+
+    private fun JSONObject.optStringAny(vararg names: String): String? =
+        names.firstNotNullOfOrNull { name -> optString(name).takeIf { it.isNotBlank() } }
+    private fun JSONObject.optIntAny(vararg names: String): Int? =
+        names.firstNotNullOfOrNull { name -> optIntOrNull(name) }
     private fun JSONObject.optFileUri(): String? =
         listOf("fileUri", "filePath", "documentUri", "uri")
             .firstNotNullOfOrNull { key -> optString(key).takeIf { it.isNotBlank() } }

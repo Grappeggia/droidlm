@@ -108,7 +108,11 @@ class IntentParser {
         Regex("replace (.+?) with (.+)", RegexOption.IGNORE_CASE).find(original)?.let { match ->
             val target = cleanupAnchor(match.groupValues[1])
             val replacement = SpeechTextNormalizer.normalizeDictatedText(match.groupValues[2])
-            return DroidLmAction.ReplaceTextRange(target, replacement, "User asked to replace $target with $replacement")
+            return DroidLmAction.ReplaceTextRange(
+                targetText = target,
+                replacementText = replacement,
+                reason = "User asked to replace $target with $replacement"
+            )
         }
 
         Regex("^(?:type|insert) (.+)", RegexOption.IGNORE_CASE).find(original)?.let { match ->

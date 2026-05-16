@@ -140,8 +140,20 @@ internal class ExecutionActionRunner(
         DroidLmAction.OcrScreen -> runOcrScreen(diagnosticSessionId)
         is DroidLmAction.AnalyzeScreenshot -> runAnalyzeScreenshot(action.goal, diagnosticSessionId)
         is DroidLmAction.VerifyTextChange -> verifyTextChange(action.expectedText)
-        is DroidLmAction.InsertTextAtAnchor -> textEditingController.insertTextAtAnchor(action.anchorText, action.anchorPosition, action.text)
-        is DroidLmAction.ReplaceTextRange -> textEditingController.replaceText(action.targetText, action.replacementText)
+        is DroidLmAction.InsertTextAtAnchor -> textEditingController.insertTextAtAnchor(
+            anchorText = action.anchorText,
+            anchorPosition = action.anchorPosition,
+            textToInsert = action.text,
+            sectionLabel = action.sectionLabel,
+            occurrenceIndex = action.occurrenceIndex
+        )
+        is DroidLmAction.ReplaceTextRange -> textEditingController.replaceText(
+            targetText = action.targetText,
+            replacementText = action.replacementText,
+            sectionLabel = action.sectionLabel,
+            occurrenceIndex = action.occurrenceIndex
+        )
+        is DroidLmAction.ApplyDocumentEdits -> textEditingController.applyDocumentEdits(action.sectionLabel, action.edits)
         is DroidLmAction.AppendText -> textEditingController.appendText(action.text)
         is DroidLmAction.PrependText -> textEditingController.prependText(action.text)
         DroidLmAction.SelectAll -> selectAllText()

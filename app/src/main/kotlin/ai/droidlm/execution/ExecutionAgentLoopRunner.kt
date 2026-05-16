@@ -11,6 +11,7 @@ import ai.droidlm.agent.AgentVerifier
 import ai.droidlm.agent.ToolRisk
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.context.DeviceContextAggregator
+import ai.droidlm.context.GoogleWorkspaceContextUtils
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.displayName
 import ai.droidlm.openai.OpenAiClient
@@ -47,9 +48,17 @@ internal class ExecutionAgentLoopRunner(
 ) {
     suspend fun run(goal: String, diagnosticSessionId: String?): ActionResult {
         val settings = settingsRepository.settings.first()
+        val activeState = runCatching { portalController.getState() }.getOrNull()
+        val workspaceArtifactActive = activeState?.packageName in setOf(
+            GoogleWorkspaceContextUtils.DOCS_PACKAGE,
+            GoogleWorkspaceContextUtils.SHEETS_PACKAGE,
+            GoogleWorkspaceContextUtils.DRIVE_PACKAGE
+        )
         val budgets = AgentBudgets(
-            maxTurns = settings.maxAgentTurns,
-            maxToolCallsTotal = settings.maxAgentToolCalls
+            maxTurns = if (workspaceArtifactActive) maxOf(settings.maxAgentTurns, 12) else settings.maxAgentTurns,
+            maxToolCallsTotal = if (workspaceArtifactActive) maxOf(settings.maxAgentToolCalls, 16) else settings.maxAgentToolCalls,
+            maxToolCallsPerTurn = if (workspaceArtifactActive) 4 else AgentBudgets.DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+            maxMutatingToolCallsPerTurn = if (workspaceArtifactActive) 3 else AgentBudgets.DEFAULT_MAX_MUTATING_TOOL_CALLS_PER_TURN
         ).normalized()
         val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
         if (apiKey.isBlank()) {
@@ -89,10 +98,10 @@ internal class ExecutionAgentLoopRunner(
                 return finish(ActionResult.fail("Agent stopped after ${budgets.maxRuntimeMs / 1000}s runtime limit", "AGENT_RUNTIME_LIMIT"))
             }
             uiState.value = uiState.value.copy(status = "Agent turn $turn/${budgets.maxTurns} (${totalToolCalls}/${budgets.maxToolCallsTotal} tools)")
-            val state = runCatching { portalController.getState() }.getOrNull()
-            val deviceContext = runCatching { deviceContextAggregator.collect(goal, state, history, diagnosticSessionId) }.getOrNull()
+            var currentState = runCatching { portalController.getState() }.getOrNull()
+            val deviceContext = runCatching { deviceContextAggregator.collect(goal, currentState, history, diagnosticSessionId) }.getOrNull()
             val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
-            val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
+            val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(currentState) }.getOrNull()
             debugEvent(
                 diagnosticSessionId,
                 "agent_turn_started",
@@ -103,7 +112,7 @@ internal class ExecutionAgentLoopRunner(
                 turnIndex = turn,
                 budgets = budgets,
                 remainingToolCalls = budgets.maxToolCallsTotal - totalToolCalls,
-                uiState = state,
+                uiState = currentState,
                 packages = packages,
                 history = history.takeLast(12),
                 activeApp = activeApp,
@@ -138,7 +147,8 @@ internal class ExecutionAgentLoopRunner(
             var mutatingCallsThisTurn = 0
             var shouldObserveAgain = false
             for (call in decision.toolCalls) {
-                val executionResult = agentToolRegistry.toExecution(call, state, packages, callsByTool)
+                val beforeToolState = currentState
+                val executionResult = agentToolRegistry.toExecution(call, beforeToolState, packages, callsByTool)
                 if (executionResult.isFailure) {
                     val error = executionResult.exceptionOrNull()
                     debugEvent(diagnosticSessionId, "agent_tool_validation_failed", mapOf("turn" to turn, "tool" to call.name, "message" to error?.message))
@@ -148,7 +158,7 @@ internal class ExecutionAgentLoopRunner(
                         val recoveryResult = executeAgentRecovery(
                             goal = goal,
                             settings = settings,
-                            beforeState = state,
+                            beforeState = beforeToolState,
                             recovery = recovery,
                             diagnosticSessionId = diagnosticSessionId,
                             turn = turn,
@@ -186,7 +196,7 @@ internal class ExecutionAgentLoopRunner(
                     }
                 }
 
-                val safety = safetyClassifier.classify(goal, execution.action, state, settings.sensitiveAppScreenshotDenylist)
+                val safety = safetyClassifier.classify(goal, execution.action, beforeToolState, settings.sensitiveAppScreenshotDenylist)
                 recordSafetyDecision(diagnosticSessionId, "agent_turn_${turn}_${call.id}", safety, settings.requireRiskConfirmation)
                 if (safety.blocked) {
                     return finish(ActionResult.fail(safety.reason ?: "Agent action blocked by safety policy", "AGENT_SAFETY_BLOCKED"))
@@ -215,7 +225,7 @@ internal class ExecutionAgentLoopRunner(
                 val verification = agentVerifier.verify(
                     action = execution.action,
                     actionResult = rawResult,
-                    beforeState = state,
+                    beforeState = beforeToolState,
                     afterState = afterState,
                     goal = goal,
                     deviceContextExtras = deviceContext?.extras
@@ -228,6 +238,7 @@ internal class ExecutionAgentLoopRunner(
                 val toolResult = AgentToolResult(call.id, execution.spec.name, lastResult, execution.spec.mutating, requiresFreshObservation, verification)
                 toolResults += toolResult
                 history += toolResult.summary()
+                currentState = afterState ?: currentState
                 debugEvent(
                     diagnosticSessionId,
                     "agent_tool_result",
@@ -248,7 +259,7 @@ internal class ExecutionAgentLoopRunner(
                         val recoveryResult = executeAgentRecovery(
                             goal = goal,
                             settings = settings,
-                            beforeState = afterState ?: state,
+                            beforeState = afterState ?: beforeToolState,
                             recovery = recovery,
                             diagnosticSessionId = diagnosticSessionId,
                             turn = turn,
@@ -276,11 +287,19 @@ internal class ExecutionAgentLoopRunner(
                 consecutiveFailures = 0
                 if (execution.action == DroidLmAction.Done) return finish(ActionResult.ok(lastResult.message))
                 if (requiresFreshObservation) {
-                    if (decision.toolCalls.last() != call) {
-                        debugEvent(diagnosticSessionId, "agent_turn_truncated_for_observation", mapOf("turn" to turn, "afterTool" to execution.spec.name))
+                    val continueWithinTurn = canContinueWithinSameArtifactTurn(
+                        action = execution.action,
+                        beforeState = beforeToolState,
+                        afterState = currentState,
+                        hasMoreCalls = decision.toolCalls.last() != call
+                    )
+                    if (!continueWithinTurn) {
+                        if (decision.toolCalls.last() != call) {
+                            debugEvent(diagnosticSessionId, "agent_turn_truncated_for_observation", mapOf("turn" to turn, "afterTool" to execution.spec.name))
+                        }
+                        shouldObserveAgain = true
+                        break
                     }
-                    shouldObserveAgain = true
-                    break
                 }
             }
             if (!shouldObserveAgain && lastResult.success && totalToolCalls >= budgets.maxToolCallsTotal) {
@@ -288,6 +307,34 @@ internal class ExecutionAgentLoopRunner(
             }
         }
         return finish(ActionResult.fail("Agent reached turn limit (${budgets.maxTurns})", "AGENT_MAX_TURNS"))
+    }
+
+    private fun canContinueWithinSameArtifactTurn(
+        action: DroidLmAction,
+        beforeState: PortalState?,
+        afterState: PortalState?,
+        hasMoreCalls: Boolean
+    ): Boolean {
+        if (!hasMoreCalls) return false
+        val sameArtifactAction = when (action) {
+            is DroidLmAction.NavigateToArtifactTarget,
+            is DroidLmAction.ReplaceTextRange,
+            is DroidLmAction.InsertTextAtAnchor,
+            is DroidLmAction.ApplyDocumentEdits,
+            is DroidLmAction.FindTextOnScreen -> true
+            else -> false
+        }
+        if (!sameArtifactAction) return false
+        val beforePackage = beforeState?.packageName ?: return false
+        val afterPackage = afterState?.packageName ?: return false
+        if (beforePackage != afterPackage) return false
+        if (afterPackage !in setOf(
+                GoogleWorkspaceContextUtils.DOCS_PACKAGE,
+                GoogleWorkspaceContextUtils.SHEETS_PACKAGE,
+                GoogleWorkspaceContextUtils.DRIVE_PACKAGE
+            )
+        ) return false
+        return afterState.nodes.any { it.editable }
     }
 
     private fun canAttemptRecovery(recovery: AgentRecoveryCandidate, attempts: Map<String, Int>): Boolean =

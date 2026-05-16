@@ -53,7 +53,7 @@ class OpenAiDiagnosticsTest {
 
             val result = OpenAiClient(
                 client = httpClient,
-                endpoint = server.url("/v1/chat/completions").toString(),
+                endpointProvider = { server.url("/v1/chat/completions").toString() },
                 debugLogStore = debugLogStore,
                 networkDiagnostics = NetworkDiagnostics(context)
             ).planPreview("sk-test", "gpt-5.4-nano", RelayPlanRequest("open drive", null, emptyList(), emptyList(), 1))

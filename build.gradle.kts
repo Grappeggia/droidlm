@@ -764,6 +764,66 @@ tasks.register("connectedWorkspaceFileOpsReleaseE2e") {
     }
 }
 
+tasks.register("connectedDocsAgentLoopReleaseE2e") {
+    group = "verification"
+    description = "Runs deterministic Google Docs AGENT_LOOP E2E tests using the bundled Docs stub."
+    dependsOn("installWorkspaceFixtures", ":docsStub:assembleDebug", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adb = project.androidAdbPath()
+        val docsStubApk = project(":docsStub").layout.buildDirectory.file("outputs/apk/debug/docsStub-debug.apk").get().asFile.absolutePath
+        project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.docs")
+        project.adbOutput(adb, "install", "-r", docsStubApk)
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.adbOutput(adb, "shell", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "cmd", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "ai.droidlm.debug/ai.droidlm.portal.DroidLMAccessibilityService")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmDocsAgentLoopReleaseE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmDocsAgentLoopReleaseE2ETest.kt",
+                artifactSubdirectory = "docs-agent-loop-release",
+                instrumentationArgs = mapOf("docsAgentLoopReleaseE2e" to "true")
+            )
+        )
+    }
+}
+
+tasks.register("connectedDocsAgentLoopStressReleaseE2e") {
+    group = "verification"
+    description = "Runs stress-oriented Google Docs AGENT_LOOP E2E tests to probe current system limits."
+    dependsOn("installWorkspaceFixtures", ":docsStub:assembleDebug", ":app:assembleDebug", ":app:assembleDebugAndroidTest")
+
+    doLast {
+        val adb = project.androidAdbPath()
+        val docsStubApk = project(":docsStub").layout.buildDirectory.file("outputs/apk/debug/docsStub-debug.apk").get().asFile.absolutePath
+        project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.docs")
+        project.adbOutput(adb, "install", "-r", docsStubApk)
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.adbOutput(adb, "shell", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "cmd", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "ai.droidlm.debug/ai.droidlm.portal.DroidLMAccessibilityService")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
+        runInstrumentedSuiteWithVideos(
+            adb,
+            AndroidE2eSuite(
+                className = "ai.droidlm.e2e.DroidLmDocsAgentLoopStressReleaseE2ETest",
+                sourcePath = "app/src/androidTest/kotlin/ai/droidlm/e2e/DroidLmDocsAgentLoopStressReleaseE2ETest.kt",
+                artifactSubdirectory = "docs-agent-loop-stress-release",
+                instrumentationArgs = mapOf("docsAgentLoopStressReleaseE2e" to "true")
+            )
+        )
+    }
+}
+
 gradle.projectsEvaluated {
     tasks.findByPath(":app:connectedDebugAndroidTest")?.mustRunAfter(tasks.findByPath(":ensureDriveForE2e"))
 }

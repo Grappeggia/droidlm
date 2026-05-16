@@ -81,8 +81,8 @@ class SettingsRepository(private val context: Context) {
             mobilerunDeviceId = preferences[Keys.mobilerunDeviceId].orEmpty(),
             mobilerunLlmModel = preferences[Keys.mobilerunLlmModel].orEmpty(),
             maxAutonomousSteps = preferences[Keys.maxAutonomousSteps] ?: 12,
-            maxAgentTurns = preferences[Keys.maxAgentTurns] ?: 4,
-            maxAgentToolCalls = preferences[Keys.maxAgentToolCalls] ?: 8,
+            maxAgentTurns = preferences[Keys.maxAgentTurns] ?: 6,
+            maxAgentToolCalls = preferences[Keys.maxAgentToolCalls] ?: 12,
             requireRiskConfirmation = preferences[Keys.requireRiskConfirmation] ?: true,
             onDeviceOcrEnabled = preferences[Keys.onDeviceOcrEnabled] ?: true,
             cloudScreenshotAnalysisEnabled = preferences[Keys.cloudScreenshotAnalysisEnabled] ?: false,
@@ -119,8 +119,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateMobilerunDeviceId(value: String) = editString(Keys.mobilerunDeviceId, value.trim())
     suspend fun updateMobilerunLlmModel(value: String) = editString(Keys.mobilerunLlmModel, value.trim())
     suspend fun updateMaxAutonomousSteps(value: Int) = context.settingsDataStore.edit { it[Keys.maxAutonomousSteps] = value.coerceIn(1, 40) }
-    suspend fun updateMaxAgentTurns(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentTurns] = value.coerceIn(1, 8) }
-    suspend fun updateMaxAgentToolCalls(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentToolCalls] = value.coerceIn(1, 16) }
+    suspend fun updateMaxAgentTurns(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentTurns] = value.coerceIn(1, 16) }
+    suspend fun updateMaxAgentToolCalls(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentToolCalls] = value.coerceIn(1, 32) }
     suspend fun updateRequireRiskConfirmation(value: Boolean) = editBoolean(Keys.requireRiskConfirmation, value)
     suspend fun updateOnDeviceOcrEnabled(value: Boolean) = editBoolean(Keys.onDeviceOcrEnabled, value)
     suspend fun updateCloudScreenshotAnalysisEnabled(value: Boolean) = editBoolean(Keys.cloudScreenshotAnalysisEnabled, value)

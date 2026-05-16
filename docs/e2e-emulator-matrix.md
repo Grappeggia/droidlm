@@ -81,6 +81,7 @@ This curated matrix runs:
 - `connectedDebugInstallUpgradeE2e` on midrange, budget, API 31, and the legacy tablet profile.
 
 - `connectedWorkspaceFileOpsReleaseE2e` on a deterministic phone + tablet pair using bundled Docs and Sheets stubs.
+- `connectedDocsAgentLoopReleaseE2e` on the same deterministic phone + tablet pair to exercise short-prompt Google Docs review flows through AGENT_LOOP with the bundled Docs stub.
 
 If you only need the non-Workspace portion locally, run:
 

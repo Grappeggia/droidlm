@@ -14,10 +14,10 @@ class AgentBudgetsTest {
             maxRuntimeMs = 999_999L
         ).normalized()
 
-        assertEquals(8, budgets.maxTurns)
-        assertEquals(16, budgets.maxToolCallsTotal)
-        assertEquals(4, budgets.maxToolCallsPerTurn)
-        assertEquals(3, budgets.maxMutatingToolCallsPerTurn)
+        assertEquals(16, budgets.maxTurns)
+        assertEquals(32, budgets.maxToolCallsTotal)
+        assertEquals(5, budgets.maxToolCallsPerTurn)
+        assertEquals(4, budgets.maxMutatingToolCallsPerTurn)
         assertEquals(3, budgets.maxConsecutiveFailures)
         assertEquals(120_000L, budgets.maxRuntimeMs)
     }

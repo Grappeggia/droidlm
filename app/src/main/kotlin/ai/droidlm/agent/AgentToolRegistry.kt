@@ -151,6 +151,7 @@ class AgentToolRegistry(
             AgentToolSpec("ANALYZE_SCREENSHOT", ToolRisk.SENSITIVE, mutating = false, requiresFreshObservationAfter = false, maxCallsPerRun = 2),
             AgentToolSpec("INSERT_TEXT_AT_ANCHOR", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("REPLACE_TEXT_RANGE", ToolRisk.SENSITIVE, mutating = true, requiresFreshObservationAfter = true),
+            AgentToolSpec("APPLY_DOCUMENT_EDITS", ToolRisk.SENSITIVE, mutating = true, requiresFreshObservationAfter = true, maxCallsPerRun = 2),
             AgentToolSpec("APPEND_TEXT", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("PREPEND_TEXT", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("FORMAT_CURRENT_LINE_AS_BULLET", ToolRisk.USER_VISIBLE_EDIT, mutating = true, requiresFreshObservationAfter = true),

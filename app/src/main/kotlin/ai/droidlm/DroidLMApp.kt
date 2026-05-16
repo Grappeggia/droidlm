@@ -94,9 +94,13 @@ class DroidLMApp : Application(), AppGraphProvider {
 
     override fun onCreate() {
         super.onCreate()
-        graph = RealAppGraph(this)
+        rebuildGraphForTesting()
         speechDiagnosticsLogger.record(null, "app_created", mapOf("packageName" to packageName))
         observeOfflineSpeechPreload()
+    }
+
+    fun rebuildGraphForTesting() {
+        graph = RealAppGraph(this)
     }
 
     override fun onTerminate() {

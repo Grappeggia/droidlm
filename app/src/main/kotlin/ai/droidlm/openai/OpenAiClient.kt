@@ -47,7 +47,7 @@ class OpenAiClient(
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(90, TimeUnit.SECONDS)
         .build(),
-    private val endpoint: String = "https://api.openai.com/v1/chat/completions",
+    private val endpointProvider: () -> String = { OpenAiRuntimeOverrides.chatCompletionsEndpoint ?: DEFAULT_ENDPOINT },
     private val debugLogStore: DebugLogStore? = null,
     private val networkDiagnostics: NetworkDiagnostics? = null
 ) {
@@ -62,8 +62,9 @@ class OpenAiClient(
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, planPreviewPrompt(requestBody), maxTokens = 1800)
-        val request = buildChatRequest(apiKey, payload)
-        return executeTracedChat("plan-preview", apiKey, resolvedModel, payload, request) { assistantContent ->
+        val endpoint = endpointProvider()
+        val request = buildChatRequest(apiKey, payload, endpoint)
+        return executeTracedChat("plan-preview", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
             val plan = relayJsonParser.parsePlanPreviewJson(assistantContent)
             ParsedChat(plan, plan.toDebugJson())
         }
@@ -73,8 +74,9 @@ class OpenAiClient(
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, planActionPrompt(requestBody), maxTokens = 900)
-        val request = buildChatRequest(apiKey, payload)
-        return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request) { assistantContent ->
+        val endpoint = endpointProvider()
+        val request = buildChatRequest(apiKey, payload, endpoint)
+        return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
             val action = relayJsonParser.parsePlanActionJson(assistantContent)
             ParsedChat(action, action.toDebugJson())
         }
@@ -84,8 +86,9 @@ class OpenAiClient(
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, agentTurnPrompt(requestBody), maxTokens = 1200)
-        val request = buildChatRequest(apiKey, payload)
-        return executeTracedChat("agent-turn", apiKey, resolvedModel, payload, request) { assistantContent ->
+        val endpoint = endpointProvider()
+        val request = buildChatRequest(apiKey, payload, endpoint)
+        return executeTracedChat("agent-turn", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
             val decision = agentJsonParser.parseDecision(assistantContent)
             ParsedChat(decision, decision.toJson())
         }
@@ -110,7 +113,7 @@ class OpenAiClient(
         return json
     }
 
-    private fun buildChatRequest(apiKey: String, json: JSONObject): Request {
+    private fun buildChatRequest(apiKey: String, json: JSONObject, endpoint: String): Request {
         return Request.Builder()
             .url(endpoint)
             .addHeader("Authorization", "Bearer $apiKey")
@@ -211,6 +214,8 @@ class OpenAiClient(
         After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
         If Device context includes artifactContext, use it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
         If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, stay in the current app. Do not OPEN_APP or SWITCH_APP for names like section titles, files, tabs, or headings. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
+        For REPLACE_TEXT_RANGE and INSERT_TEXT_AT_ANCHOR inside long documents, include sectionLabel when the same text or anchor may appear in multiple sections. Use occurrenceIndex only when repeated matches still exist inside the chosen section.
+        When the goal requires several edits inside the same current document, prefer APPLY_DOCUMENT_EDITS with a small ordered edits array instead of spreading those edits across many turns. APPLY_DOCUMENT_EDITS accepts {"sectionLabel":"optional default section","edits":[{"operation":"REPLACE_TEXT_RANGE","targetText":"...","replacementText":"...","sectionLabel":"optional"},{"operation":"INSERT_TEXT_AT_ANCHOR","anchorText":"...","anchorPosition":"AFTER|BEFORE","text":"...","sectionLabel":"optional"}],"reason":"why"}.
 
         Available tools: ${JSONArray(AgentToolRegistry.defaultSpecs().map { it.toJson() })}
         Goal: ${request.goal}
@@ -232,6 +237,7 @@ class OpenAiClient(
         model: String,
         requestJson: JSONObject,
         request: Request,
+        endpoint: String,
         parser: (String) -> ParsedChat<T>
     ): RelayCallResult<T> = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
@@ -288,6 +294,7 @@ class OpenAiClient(
         retainLlmTrace(
             source = source,
             model = model,
+            endpoint = endpoint,
             requestJson = requestJson,
             startedAtMs = startedAt,
             durationMs = System.currentTimeMillis() - startedAt,
@@ -336,7 +343,8 @@ class OpenAiClient(
             prompt = repairPrompt(source, invalidJson, errorMessage),
             maxTokens = 900
         )
-        val request = buildChatRequest(apiKey, payload)
+        val endpoint = endpointProvider()
+        val request = buildChatRequest(apiKey, payload, endpoint)
         client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
@@ -350,6 +358,7 @@ class OpenAiClient(
     private suspend fun retainLlmTrace(
         source: String,
         model: String,
+        endpoint: String,
         requestJson: JSONObject,
         startedAtMs: Long,
         durationMs: Long,
@@ -842,6 +851,7 @@ class OpenAiClient(
 
     companion object {
         const val DEFAULT_MODEL = "gpt-5.4-nano"
+        private const val DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
         private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions."
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }

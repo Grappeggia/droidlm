@@ -53,7 +53,7 @@ class SettingsRepositoryTest {
         val settings = repository.settings.first()
 
         assertTrue(settings.executionMode == ExecutionMode.AGENT_LOOP)
-        assertTrue(settings.maxAgentTurns == 8)
-        assertTrue(settings.maxAgentToolCalls == 16)
+        assertTrue(settings.maxAgentTurns == 16)
+        assertTrue(settings.maxAgentToolCalls == 32)
     }
 }

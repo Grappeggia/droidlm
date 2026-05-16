@@ -442,6 +442,7 @@ run_release_core() {
 run_release_workspace() {
   log "Running release workspace matrix on phone and tablet profiles with bundled Docs and Sheets stubs."
   run_profile_names RELEASE_WORKSPACE_PROFILES connectedWorkspaceFileOpsReleaseE2e
+  run_profile_names RELEASE_WORKSPACE_PROFILES connectedDocsAgentLoopReleaseE2e
 }
 
 run_release_matrix() {

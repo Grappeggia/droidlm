@@ -43,15 +43,15 @@ data class AgentBudgets(
     )
 
     companion object {
-        const val DEFAULT_MAX_TURNS = 4
-        const val DEFAULT_MAX_TOOL_CALLS_TOTAL = 8
-        const val DEFAULT_MAX_TOOL_CALLS_PER_TURN = 3
-        const val DEFAULT_MAX_MUTATING_TOOL_CALLS_PER_TURN = 2
+        const val DEFAULT_MAX_TURNS = 6
+        const val DEFAULT_MAX_TOOL_CALLS_TOTAL = 12
+        const val DEFAULT_MAX_TOOL_CALLS_PER_TURN = 4
+        const val DEFAULT_MAX_MUTATING_TOOL_CALLS_PER_TURN = 3
         const val DEFAULT_MAX_CONSECUTIVE_FAILURES = 2
-        const val HARD_MAX_TURNS = 8
-        const val HARD_MAX_TOOL_CALLS_TOTAL = 16
-        const val HARD_MAX_TOOL_CALLS_PER_TURN = 4
-        const val HARD_MAX_MUTATING_TOOL_CALLS_PER_TURN = 3
+        const val HARD_MAX_TURNS = 16
+        const val HARD_MAX_TOOL_CALLS_TOTAL = 32
+        const val HARD_MAX_TOOL_CALLS_PER_TURN = 5
+        const val HARD_MAX_MUTATING_TOOL_CALLS_PER_TURN = 4
         const val HARD_MAX_CONSECUTIVE_FAILURES = 3
         const val MIN_RUNTIME_MS = 10_000L
         const val DEFAULT_MAX_RUNTIME_MS = 75_000L

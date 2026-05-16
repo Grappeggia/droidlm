@@ -22,6 +22,7 @@ import ai.droidlm.permissions.RecordingPermissionDeps
 import ai.droidlm.portal.AccessibilityPortalController
 import ai.droidlm.portal.AccessibilityServiceDeps
 import ai.droidlm.portal.PortalController
+import ai.droidlm.portal.PortalRuntimeOverrides
 import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.runtime.AccessibilityRuntime
@@ -54,7 +55,8 @@ class RealAppGraph(
     override val debugLogStore = DebugLogStore(application, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
     override val relayClient = RelayClient(diagnostics = speechDiagnosticsLogger)
     override val openAiClient = OpenAiClient(debugLogStore = debugLogStore, networkDiagnostics = NetworkDiagnostics(application))
-    override val portalController: PortalController = AccessibilityPortalController(application, actionLogRepository, accessibilityRuntime)
+    override val portalController: PortalController = PortalRuntimeOverrides.controller
+        ?: AccessibilityPortalController(application, actionLogRepository, accessibilityRuntime)
     override val appInventoryRepository = AppInventoryRepository(application)
     override val ocrEngine: OcrEngine = MlKitOcrEngine()
     override val textEditingController = TextEditingController(portalController, ocrEngine, relayClient, actionLogRepository, debugLogStore)

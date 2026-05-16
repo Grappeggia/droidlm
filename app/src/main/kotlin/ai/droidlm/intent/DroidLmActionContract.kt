@@ -50,6 +50,7 @@ object DroidLmActionContract {
         "ANALYZE_SCREENSHOT",
         "INSERT_TEXT_AT_ANCHOR",
         "REPLACE_TEXT_RANGE",
+        "APPLY_DOCUMENT_EDITS",
         "APPEND_TEXT",
         "PREPEND_TEXT",
         "SELECT_ALL",

@@ -35,6 +35,22 @@ enum class MenuType {
     CONTEXT
 }
 
+enum class DocumentEditOperation {
+    REPLACE_TEXT_RANGE,
+    INSERT_TEXT_AT_ANCHOR
+}
+
+data class DocumentEdit(
+    val operation: DocumentEditOperation,
+    val targetText: String? = null,
+    val replacementText: String? = null,
+    val anchorText: String? = null,
+    val anchorPosition: AnchorPosition = AnchorPosition.AFTER,
+    val text: String? = null,
+    val sectionLabel: String? = null,
+    val occurrenceIndex: Int? = null
+)
+
 sealed class DroidLmAction {
     data class NoOp(val message: String) : DroidLmAction()
     data class NeedLlmPlanning(val reason: String) : DroidLmAction()
@@ -179,15 +195,23 @@ sealed class DroidLmAction {
         val anchorText: String,
         val anchorPosition: AnchorPosition,
         val text: String,
+        val sectionLabel: String? = null,
+        val occurrenceIndex: Int? = null,
         val reason: String
     ) : DroidLmAction()
 
     data class ReplaceTextRange(
         val targetText: String,
         val replacementText: String,
+        val sectionLabel: String? = null,
+        val occurrenceIndex: Int? = null,
         val reason: String
     ) : DroidLmAction()
-
+    data class ApplyDocumentEdits(
+        val sectionLabel: String? = null,
+        val edits: List<DocumentEdit>,
+        val reason: String
+    ) : DroidLmAction()
     data class AppendText(val text: String, val reason: String = "User asked to append text") : DroidLmAction()
     data class PrependText(val text: String, val reason: String = "User asked to prepend text") : DroidLmAction()
     data object SelectAll : DroidLmAction()
@@ -278,6 +302,7 @@ fun DroidLmAction.displayName(): String = when (this) {
     is DroidLmAction.VerifyTextChange -> "VERIFY_TEXT_CHANGE"
     is DroidLmAction.InsertTextAtAnchor -> "INSERT_TEXT_AT_ANCHOR ${anchorPosition.name} $anchorText"
     is DroidLmAction.ReplaceTextRange -> "REPLACE_TEXT_RANGE $targetText"
+    is DroidLmAction.ApplyDocumentEdits -> "APPLY_DOCUMENT_EDITS ${edits.size}"
     is DroidLmAction.AppendText -> "APPEND_TEXT"
     is DroidLmAction.PrependText -> "PREPEND_TEXT"
     DroidLmAction.SelectAll -> "SELECT_ALL"

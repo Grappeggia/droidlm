@@ -325,8 +325,25 @@ internal class ExecutionDiagnostics(
         is DroidLmAction.TapTextAnchor -> mapOf("anchorTextLength" to action.anchorText.length, "anchorTextPreview" to action.anchorText.take(MAX_NODE_TEXT_PREVIEW_CHARS), "anchorPosition" to action.anchorPosition.name)
         is DroidLmAction.AnalyzeScreenshot -> mapOf("goalLength" to action.goal.length)
         is DroidLmAction.VerifyTextChange -> mapOf("expectedTextLength" to action.expectedText.length)
-        is DroidLmAction.InsertTextAtAnchor -> mapOf("anchorTextLength" to action.anchorText.length, "anchorTextPreview" to action.anchorText.take(MAX_NODE_TEXT_PREVIEW_CHARS), "anchorPosition" to action.anchorPosition.name, "textLength" to action.text.length)
-        is DroidLmAction.ReplaceTextRange -> mapOf("targetTextLength" to action.targetText.length, "replacementTextLength" to action.replacementText.length)
+        is DroidLmAction.InsertTextAtAnchor -> mapOf(
+            "anchorTextLength" to action.anchorText.length,
+            "anchorTextPreview" to action.anchorText.take(MAX_NODE_TEXT_PREVIEW_CHARS),
+            "anchorPosition" to action.anchorPosition.name,
+            "textLength" to action.text.length,
+            "sectionLabel" to action.sectionLabel,
+            "occurrenceIndex" to action.occurrenceIndex
+        )
+        is DroidLmAction.ReplaceTextRange -> mapOf(
+            "targetTextLength" to action.targetText.length,
+            "replacementTextLength" to action.replacementText.length,
+            "sectionLabel" to action.sectionLabel,
+            "occurrenceIndex" to action.occurrenceIndex
+        )
+        is DroidLmAction.ApplyDocumentEdits -> mapOf(
+            "sectionLabel" to action.sectionLabel,
+            "editCount" to action.edits.size,
+            "operations" to action.edits.joinToString(",") { it.operation.name }
+        )
         is DroidLmAction.AppendText -> mapOf("textLength" to action.text.length)
         is DroidLmAction.PrependText -> mapOf("textLength" to action.text.length)
         is DroidLmAction.FormatCurrentLineAsBullet -> mapOf("fileUriConfigured" to !action.fileUri.isNullOrBlank(), "bulletPrefixLength" to action.bulletPrefix.length)

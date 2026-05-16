@@ -23,7 +23,7 @@ class OpenAiClientTest {
             server.enqueue(chatCompletion(planPreviewJson()))
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .planPreview("sk-test", "", minimalRequest())
 
             assertTrue(result is RelayCallResult.Success)
@@ -40,7 +40,7 @@ class OpenAiClientTest {
             server.enqueue(chatCompletion("""{"action":"NO_OP","reason":"ok","requiresConfirmation":false,"message":"ok"}"""))
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .planAction("sk-test", "gpt-4o-mini", minimalRequest())
 
             assertTrue(result is RelayCallResult.Success)
@@ -69,7 +69,7 @@ class OpenAiClientTest {
                 .build()
             val result = OpenAiClient(
                 client = httpClient,
-                endpoint = server.url("/v1/chat/completions").toString()
+                endpointProvider = { server.url("/v1/chat/completions").toString() }
             ).planPreview("sk-test", "gpt-5.4-nano", minimalRequest())
 
             assertTrue(result is RelayCallResult.Failure)
@@ -98,7 +98,7 @@ class OpenAiClientTest {
             )
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .planPreview("sk-test", "gpt-5.4-nano", minimalRequest())
 
             assertTrue(result is RelayCallResult.Failure)
@@ -114,7 +114,7 @@ class OpenAiClientTest {
             server.enqueue(chatCompletion("{\"action\":\"OPEN_APP\",\"appName\":\"Drive\",\"packageName\":\"com.google.android.apps.docs\",\"reason\":\"Open Drive\"}"))
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .planAction("sk-test", "gpt-5.4-nano", minimalRequest())
 
             assertTrue(result is RelayCallResult.Success)
@@ -127,7 +127,7 @@ class OpenAiClientTest {
             server.enqueue(chatCompletion(planPreviewJson()))
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .planPreview("sk-test", "gpt-5.4-nano", minimalRequest())
 
             assertTrue(result is RelayCallResult.Success)
@@ -147,7 +147,7 @@ class OpenAiClientTest {
             server.enqueue(chatCompletion("{\"status\":\"CALL_TOOLS\",\"message\":\"open\",\"toolCalls\":[{\"id\":\"c1\",\"name\":\"OPEN_APP\",\"args\":{\"packageName\":\"com.google.android.apps.docs\"}}]}"))
             server.start()
 
-            val result = OpenAiClient(endpoint = server.url("/v1/chat/completions").toString())
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
                 .nextAgentTurn(
                     "sk-test",
                     "gpt-5.4-nano",
