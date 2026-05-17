@@ -27,7 +27,8 @@ class GoogleSheetsContextProvider : DeviceContextProvider {
         val focusedEditable = focusedEditable(state.nodes)
         val editableText = focusedEditable?.text.orEmpty()
         val uiMode = detectUiMode(state, focusedEditable)
-        val visibleText = visibleText(state.nodes)
+        val contentExtraction = AccessibilityContentExtractor.extract(state, AccessibilityContentLimits.LONG_CONTEXT_MAX_CHARS)
+        val visibleText = contentExtraction.fullText
         val title = inferSpreadsheetTitle(state.nodes)
         val activeCell = activeCellContext(state.nodes, focusedEditable, editableText)
         val actions = availableActions(uiMode, focusedEditable)

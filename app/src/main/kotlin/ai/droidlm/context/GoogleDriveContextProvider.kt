@@ -18,7 +18,8 @@ class GoogleDriveContextProvider : DeviceContextProvider {
         if (state.packageName != DRIVE_PACKAGE) return JSONObject()
 
         val uiMode = detectUiMode(state)
-        val visibleText = visibleText(state.nodes)
+        val contentExtraction = AccessibilityContentExtractor.extract(state, AccessibilityContentLimits.LONG_CONTEXT_MAX_CHARS)
+        val visibleText = contentExtraction.fullText
         val visibleFiles = visibleFiles(state.nodes)
         val selectedFile = selectedFile(state.nodes, visibleFiles)
         val currentLocation = currentLocation(state.nodes)

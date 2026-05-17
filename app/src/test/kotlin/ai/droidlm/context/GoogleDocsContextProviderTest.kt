@@ -51,6 +51,23 @@ class GoogleDocsContextProviderTest {
         assertTrue(json.getJSONArray("availableDocActions").toString().contains("FORMAT_BULLET"))
     }
 
+    @Test fun exposesLongEditableTextAbovePreviousEightThousandCharLimit() = runTest {
+        val longText = "Document start\n" + "A".repeat(12_000) + "\nDocument end"
+        val state = PortalState(
+            packageName = GoogleDocsContextProvider.DOCS_PACKAGE,
+            activityName = "DocumentActivity",
+            screenWidth = 100,
+            screenHeight = 200,
+            nodes = listOf(node(nodeId = "editor", text = longText, editable = true, focused = true))
+        )
+
+        val json = GoogleDocsContextProvider().collect(DeviceContextRequest(null, state, null, emptyList()))
+        val textWindow = json.getJSONObject("documentTextWindow")
+
+        assertTrue(textWindow.getString("focusedEditableText").contains("Document end"))
+        assertTrue(json.getJSONObject("artifactContext").getJSONObject("contentWindow").getString("fullText").contains("Document end"))
+    }
+
     @Test fun ignoresNonDocsPackages() = runTest {
         val json = GoogleDocsContextProvider().collect(
             DeviceContextRequest(

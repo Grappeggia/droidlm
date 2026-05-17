@@ -7,10 +7,10 @@ internal object GoogleWorkspaceContextUtils {
     const val DRIVE_PACKAGE = "com.google.android.apps.docs"
     const val DOCS_PACKAGE = "com.google.android.apps.docs.editors.docs"
     const val SHEETS_PACKAGE = "com.google.android.apps.docs.editors.sheets"
-    const val MAX_VISIBLE_TEXT = 8000
-    const val MAX_EDITABLE_TEXT = 8000
-    const val MAX_CURSOR_TEXT = 2000
-    const val MAX_SELECTED_TEXT = 2000
+    const val MAX_VISIBLE_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+    const val MAX_EDITABLE_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+    const val MAX_CURSOR_TEXT = 8_000
+    const val MAX_SELECTED_TEXT = 8_000
 
     private val emailRegex = Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)
     private val credentialRegex = Regex("\\b(password|passcode|api key|secret|token|credential)\\b", RegexOption.IGNORE_CASE)

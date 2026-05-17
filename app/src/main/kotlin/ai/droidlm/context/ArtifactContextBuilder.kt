@@ -52,6 +52,7 @@ internal object ArtifactContextBuilder {
                 "contentWindow",
                 JSONObject()
                     .put("visibleText", cap(visibleText, MAX_CONTENT_TEXT))
+                    .put("fullText", cap(visibleText, MAX_CONTENT_TEXT))
                     .put("focusedText", cap(focusedText, MAX_FOCUSED_TEXT))
                     .put("currentBlock", cap(currentBlock, MAX_CURRENT_BLOCK))
             )
@@ -138,14 +139,28 @@ internal object ArtifactContextBuilder {
     }
 
     private fun textLineTargets(node: UiNode, source: String): List<JSONObject> {
-        val text = node.text?.takeIf { it.length >= 2 } ?: return emptyList()
-        return text.lineSequence()
-            .map { cleanLine(it) }
-            .filter { line -> line.length in 2..MAX_TARGET_LABEL_CHARS && !isGenericLabel(line) }
-            .distinct()
+        val sources = listOfNotNull(
+            node.text?.let { "text" to it },
+            node.contentDescription?.let { "contentDescription" to it },
+            node.hintText?.let { "hintText" to it },
+            node.stateDescription?.let { "stateDescription" to it },
+            node.paneTitle?.let { "paneTitle" to it },
+            node.tooltipText?.let { "tooltipText" to it }
+        )
+        return sources
+            .flatMap { (field, text) ->
+                text
+                    .replace("\r\n", "\n")
+                    .replace('\r', '\n')
+                    .lineSequence()
+                    .map { rawLine -> Triple(field, text, cleanLine(rawLine)) }
+                    .toList()
+            }
+            .filter { (_, _, line) -> line.length in 2..MAX_TARGET_LABEL_CHARS && !isGenericLabel(line) }
+            .distinctBy { (_, _, line) -> line.lowercase() }
             .take(MAX_LINE_TARGETS_PER_NODE)
-            .mapNotNull { line ->
-                val start = text.indexOf(line).takeIf { it >= 0 }
+            .map { (field, text, line) ->
+                val start = if (field == "text") text.indexOf(line).takeIf { it >= 0 } else null
                 val hasSelectionRange = start != null && node.editable && node.availableActions.any { it.droidLmAction == "SET_SELECTION" || it.name == "SET_SELECTION" }
                 target(
                     label = line,
@@ -155,10 +170,10 @@ internal object ArtifactContextBuilder {
                     confidence = if (node.heading || node.collectionItemInfo?.heading == true) 0.82 else if (hasSelectionRange) 0.66 else 0.52
                 )
                     .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
+                    .put("sourceField", field)
                     .put("selectionStart", start ?: JSONObject.NULL)
                     .put("selectionEnd", start?.plus(line.length) ?: JSONObject.NULL)
             }
-            .toList()
     }
 
     private fun nodeActions(node: UiNode, hasSelectionRange: Boolean): List<String> = buildList {
@@ -167,6 +182,7 @@ internal object ArtifactContextBuilder {
         if (node.availableActions.any { it.name == "SHOW_ON_SCREEN" }) add("show_on_screen")
         if (node.scrollable || node.availableActions.any { it.droidLmAction == "SCROLL" }) add("scroll")
         add("find_text_on_screen")
+        add("search_accessibility_content")
     }.distinct()
 
     private fun nodeLabel(node: UiNode): String? {
@@ -209,7 +225,7 @@ internal object ArtifactContextBuilder {
     }
 
     private fun availableTools(actions: List<String>, targetCount: Int): JSONArray {
-        val tools = linkedSetOf("FIND_TEXT_ON_SCREEN", "SCROLL")
+        val tools = linkedSetOf("FIND_TEXT_ON_SCREEN", "SEARCH_ACCESSIBILITY_CONTENT", "SCROLL")
         if (targetCount > 0) tools += "NAVIGATE_TO_ARTIFACT_TARGET"
         if (actions.any { it.contains("FIND", ignoreCase = true) || it.contains("SEARCH", ignoreCase = true) }) {
             tools += "NAVIGATE_TO_ARTIFACT_TARGET"
@@ -231,6 +247,7 @@ internal object ArtifactContextBuilder {
     }
 
     private fun cleanupNavigationQuery(value: String): String = value
+        .replace(Regex("\\b(?:and\\s+)?then\\b.*$", RegexOption.IGNORE_CASE), "")
         .trim()
         .trim('"', '\'', '.', ',', ':', ';', ' ')
         .removePrefix("the ")
@@ -256,18 +273,20 @@ internal object ArtifactContextBuilder {
 
     private fun cap(value: String, maxChars: Int): String = if (value.length <= maxChars) value else value.take(maxChars) + "..."
 
-    private const val MAX_NAVIGATION_TARGETS = 80
-    private const val MAX_LINE_TARGETS_PER_NODE = 60
-    private const val MAX_TARGET_LABEL_CHARS = 120
-    private const val MAX_CONTENT_TEXT = 8000
-    private const val MAX_FOCUSED_TEXT = 8000
-    private const val MAX_CURRENT_BLOCK = 2000
+    private const val MAX_NAVIGATION_TARGETS = 240
+    private const val MAX_LINE_TARGETS_PER_NODE = 240
+    private const val MAX_TARGET_LABEL_CHARS = 180
+    private const val MAX_CONTENT_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+    private const val MAX_FOCUSED_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+    private const val MAX_CURRENT_BLOCK = 8_000
     private val CELL_REF_REGEX = Regex("[A-Z]{1,3}[0-9]{1,6}")
     private val NAVIGATION_REQUEST_PATTERNS = listOf(
+        Regex("^navig(?:ate)?(?: me)?\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE),
         Regex("^navigate(?: me)? to (.+)$", RegexOption.IGNORE_CASE),
         Regex("^go to (.+)$", RegexOption.IGNORE_CASE),
         Regex("^jump to (.+)$", RegexOption.IGNORE_CASE),
         Regex("^scroll to (.+)$", RegexOption.IGNORE_CASE),
+        Regex("^select(?: the)?\\s+(.+)$", RegexOption.IGNORE_CASE),
         Regex("^find (.+)$", RegexOption.IGNORE_CASE),
         Regex("^search(?: for)? (.+)$", RegexOption.IGNORE_CASE),
         Regex("^show me (.+)$", RegexOption.IGNORE_CASE)

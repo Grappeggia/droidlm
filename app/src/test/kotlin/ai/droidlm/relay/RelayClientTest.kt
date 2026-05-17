@@ -156,6 +156,19 @@ class RelayClientTest {
         assertEquals("section", action.kind)
     }
 
+    @Test fun planActionJsonParsesAccessibilityContentSearchAction() {
+        val action = RelayClient().parsePlanActionJson(
+            "{\"action\":\"SEARCH_ACCESSIBILITY_CONTENT\",\"sectionLabel\":\"Meetings\",\"exclude\":\"Next\",\"ordinal\":1,\"maxMatches\":3,\"reason\":\"find first matching title\"}"
+        )
+
+        assertTrue(action is DroidLmAction.SearchAccessibilityContent)
+        action as DroidLmAction.SearchAccessibilityContent
+        assertEquals("Meetings", action.sectionLabel)
+        assertEquals("Next", action.exclude)
+        assertEquals(1, action.ordinal)
+        assertEquals(3, action.maxMatches)
+    }
+
     @Test fun malformedTapReportsMissingCoordinate() {
         val error = runCatching {
             RelayClient().parsePlanActionJson("{\"action\":\"TAP\",\"reason\":\"missing x\"}")

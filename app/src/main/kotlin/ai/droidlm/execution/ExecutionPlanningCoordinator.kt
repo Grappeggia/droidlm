@@ -284,10 +284,11 @@ internal class ExecutionPlanningCoordinator(
             debugEvent(sessionId, "plan_execute_failed", mapOf("reason" to "empty_plan"))
             return finish(ActionResult.fail("Planner returned no steps", "EMPTY_PLAN"))
         }
+        val stepsToRun = pending.plan.steps.take(settings.maxAutonomousSteps)
         debugEvent(sessionId, "plan_execute_started", mapOf("stepCount" to pending.plan.steps.size, "maxSteps" to settings.maxAutonomousSteps, "summaryLength" to pending.plan.summary.length))
         uiState.value = uiState.value.copy(status = "Executing plan", parsedAction = "PLAN ${pending.plan.steps.size} steps")
         var last = ActionResult.ok("Started plan")
-        for (step in pending.plan.steps.take(settings.maxAutonomousSteps)) {
+        for ((position, step) in stepsToRun.withIndex()) {
             cancellationResult()?.let { return finish(it) }
             val state = runCatching { portalController.getState() }.getOrNull()
             val safety = safetyClassifier.classify(pending.transcript, step.action, state, settings.sensitiveAppScreenshotDenylist)
@@ -307,8 +308,16 @@ internal class ExecutionPlanningCoordinator(
             last = executeAction(step.action, pending.transcript, false, sessionId)
             debugEvent(sessionId, "plan_step_result", mapOf("index" to step.index, "action" to step.actionLabel, "success" to last.success, "message" to last.message, "errorCode" to last.errorCode))
             if (!last.success) return finish(last)
+            if (step.action is DroidLmAction.NavigateToArtifactTarget && position < stepsToRun.lastIndex) {
+                debugEvent(
+                    sessionId,
+                    "plan_handoff_after_artifact_navigation",
+                    mapOf("index" to step.index, "remainingSteps" to (stepsToRun.lastIndex - position))
+                )
+                return runAgentLoop(pending.transcript, sessionId)
+            }
         }
-        debugEvent(sessionId, "plan_execute_succeeded", mapOf("stepCount" to pending.plan.steps.take(settings.maxAutonomousSteps).size, "lastMessage" to last.message))
+        debugEvent(sessionId, "plan_execute_succeeded", mapOf("stepCount" to stepsToRun.size, "lastMessage" to last.message))
         return finish(ActionResult.ok("Plan executed: ${pending.plan.summary}"))
     }
 

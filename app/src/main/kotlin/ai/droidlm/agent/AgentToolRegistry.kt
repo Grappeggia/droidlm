@@ -107,6 +107,7 @@ class AgentToolRegistry(
             AgentToolSpec("GLOBAL_BACK", ToolRisk.SAFE_NAVIGATION, mutating = true, requiresFreshObservationAfter = true),
             AgentToolSpec("WAIT_FOR_UI", ToolRisk.READ_ONLY, mutating = false, requiresFreshObservationAfter = false),
             AgentToolSpec("FIND_TEXT_ON_SCREEN", ToolRisk.READ_ONLY, mutating = false, requiresFreshObservationAfter = false),
+            AgentToolSpec("SEARCH_ACCESSIBILITY_CONTENT", ToolRisk.READ_ONLY, mutating = false, requiresFreshObservationAfter = false),
             AgentToolSpec("OCR_SCREEN", ToolRisk.SENSITIVE, mutating = false, requiresFreshObservationAfter = false, maxCallsPerRun = 2),
             AgentToolSpec("TAKE_SCREENSHOT", ToolRisk.SENSITIVE, mutating = false, requiresFreshObservationAfter = false, maxCallsPerRun = 2),
             AgentToolSpec("TAP_NODE", ToolRisk.SAFE_NAVIGATION, mutating = true, requiresFreshObservationAfter = true),

@@ -24,6 +24,7 @@ object DroidLmActionContract {
         "SET_SLIDER",
         "REFRESH",
         "FIND_TEXT_ON_SCREEN",
+        "SEARCH_ACCESSIBILITY_CONTENT",
         "OPEN_NOTIFICATIONS",
         "OPEN_QUICK_SETTINGS",
         "OPEN_RECENTS",

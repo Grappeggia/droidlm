@@ -307,6 +307,7 @@ internal class ExecutionDiagnostics(
         is DroidLmAction.SetSlider -> mapOf("labelLength" to (action.label?.length ?: 0), "labelPreview" to action.label?.take(MAX_NODE_TEXT_PREVIEW_CHARS), "nodeId" to action.nodeId, "value" to action.value, "percent" to action.percent)
         is DroidLmAction.Refresh -> mapOf("targetNodeId" to action.targetNodeId)
         is DroidLmAction.FindTextOnScreen -> mapOf("textLength" to action.text.length, "textPreview" to action.text.take(MAX_NODE_TEXT_PREVIEW_CHARS), "tapOnMatch" to action.tapOnMatch)
+        is DroidLmAction.SearchAccessibilityContent -> mapOf("queryLength" to (action.query?.length ?: 0), "sectionLength" to (action.sectionLabel?.length ?: 0), "excludeLength" to (action.exclude?.length ?: 0), "ordinal" to action.ordinal, "maxMatches" to action.maxMatches)
         is DroidLmAction.SwitchApp -> mapOf("appName" to action.appName, "packageName" to action.packageName)
         is DroidLmAction.OpenUrl -> mapOf("urlLength" to action.url.length)
         is DroidLmAction.OpenDeepLink -> mapOf("uriLength" to action.uri.length)

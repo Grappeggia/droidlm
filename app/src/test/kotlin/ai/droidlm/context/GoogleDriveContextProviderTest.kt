@@ -81,6 +81,29 @@ class GoogleDriveContextProviderTest {
         assertTrue(file.getBoolean("tappable"))
     }
 
+    @Test fun promotesDrivePreviewContentDescriptionIntoContentWindows() = runTest {
+        val preview = "Summary of Docs\r\n- Meetings - H&O PAT Weekly, PAT Touchbase\r\n- Planning - Next roadmap"
+        val state = PortalState(
+            packageName = DRIVE_PACKAGE,
+            activityName = "DriveActivity",
+            screenWidth = 100,
+            screenHeight = 200,
+            nodes = listOf(
+                node(contentDescription = "Open with"),
+                node(nodeId = "preview", contentDescription = preview)
+            )
+        )
+
+        val json = GoogleDriveContextProvider().collect(DeviceContextRequest(null, state, null, emptyList()))
+        val drive = json.getJSONObject("driveContext")
+        val artifact = json.getJSONObject("artifactContext")
+
+        assertTrue(drive.getString("visibleText").contains("Meetings - H&O PAT Weekly"))
+        assertTrue(artifact.getJSONObject("contentWindow").getString("fullText").contains("PAT Touchbase"))
+        assertTrue(artifact.getJSONArray("navigationTargets").toString().contains("Meetings - H&O PAT Weekly"))
+        assertTrue(artifact.getJSONArray("availableTools").toString().contains("SEARCH_ACCESSIBILITY_CONTENT"))
+    }
+
     private fun node(
         nodeId: String? = null,
         text: String? = null,

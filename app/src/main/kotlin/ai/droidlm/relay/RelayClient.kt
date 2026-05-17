@@ -400,6 +400,14 @@ class RelayClient(
                 tapOnMatch = obj.optBoolean("tapOnMatch", false),
                 reason = obj.optString("reason", "Find text on screen")
             )
+            "SEARCH_ACCESSIBILITY_CONTENT" -> DroidLmAction.SearchAccessibilityContent(
+                query = obj.optFirstNonBlank("query", "text", "targetText", "include", "contains"),
+                sectionLabel = obj.optFirstNonBlank("sectionLabel", "section", "heading", "under"),
+                exclude = obj.optFirstNonBlank("exclude", "without", "notContaining", "doesNotContain"),
+                ordinal = obj.optIntAny("ordinal", "occurrenceIndex", "matchIndex", "index"),
+                maxMatches = obj.optInt("maxMatches", 5),
+                reason = obj.optString("reason", "Search extracted accessibility content")
+            )
             "OPEN_NOTIFICATIONS" -> DroidLmAction.OpenNotifications
             "OPEN_QUICK_SETTINGS" -> DroidLmAction.OpenQuickSettings
             "OPEN_RECENTS" -> DroidLmAction.OpenRecents

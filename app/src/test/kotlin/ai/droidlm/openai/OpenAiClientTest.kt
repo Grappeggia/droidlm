@@ -138,6 +138,9 @@ class OpenAiClientTest {
             assertTrue(prompt.contains("WAIT_FOR_UI"))
             assertTrue(prompt.contains("OPEN_APP_STORE_LISTING"))
             assertTrue(prompt.contains("launchable=true"))
+            assertTrue(prompt.contains("SEARCH_ACCESSIBILITY_CONTENT"))
+            assertTrue(prompt.contains("accessibilityContentContext"))
+            assertTrue(prompt.contains("Do not use FIND_TEXT_ON_SCREEN to search for an excluded word"))
             assertFalse(prompt.contains("com.google.android.apps.docs.editors.sheets\",\"reason\":\"why"))
         }
     }

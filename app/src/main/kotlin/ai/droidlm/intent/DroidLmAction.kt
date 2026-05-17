@@ -142,6 +142,14 @@ sealed class DroidLmAction {
         val tapOnMatch: Boolean = false,
         val reason: String
     ) : DroidLmAction()
+    data class SearchAccessibilityContent(
+        val query: String? = null,
+        val sectionLabel: String? = null,
+        val exclude: String? = null,
+        val ordinal: Int? = null,
+        val maxMatches: Int = 5,
+        val reason: String
+    ) : DroidLmAction()
     data object OpenNotifications : DroidLmAction()
     data object OpenQuickSettings : DroidLmAction()
     data object OpenRecents : DroidLmAction()
@@ -277,6 +285,7 @@ fun DroidLmAction.displayName(): String = when (this) {
     is DroidLmAction.SetSlider -> "SET_SLIDER ${nodeId ?: label ?: "UNKNOWN"}"
     is DroidLmAction.Refresh -> "REFRESH"
     is DroidLmAction.FindTextOnScreen -> "FIND_TEXT_ON_SCREEN $text"
+    is DroidLmAction.SearchAccessibilityContent -> "SEARCH_ACCESSIBILITY_CONTENT ${query ?: sectionLabel ?: exclude ?: ""}"
     DroidLmAction.OpenNotifications -> "OPEN_NOTIFICATIONS"
     DroidLmAction.OpenQuickSettings -> "OPEN_QUICK_SETTINGS"
     DroidLmAction.OpenRecents -> "OPEN_RECENTS"

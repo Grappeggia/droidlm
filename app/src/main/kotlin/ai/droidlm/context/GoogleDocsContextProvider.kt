@@ -16,7 +16,8 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         val selectionStart = focusedEditable?.textSelectionStart
         val selectionEnd = focusedEditable?.textSelectionEnd
         val uiMode = detectUiMode(state, focusedEditable)
-        val visibleText = visibleText(state.nodes)
+        val contentExtraction = AccessibilityContentExtractor.extract(state, AccessibilityContentLimits.LONG_CONTEXT_MAX_CHARS)
+        val visibleText = contentExtraction.fullText
         val visibleDocuments = visibleDocuments(state.nodes, uiMode)
         val selectedDocument = selectedDocument(state.nodes, visibleDocuments)
         val title = inferDocumentTitle(state.nodes)
@@ -253,10 +254,10 @@ class GoogleDocsContextProvider : DeviceContextProvider {
 
     companion object {
         const val DOCS_PACKAGE = "com.google.android.apps.docs.editors.docs"
-        private const val MAX_VISIBLE_TEXT = 8000
-        private const val MAX_EDITABLE_TEXT = 8000
-        private const val MAX_CURSOR_TEXT = 2000
-        private const val MAX_SELECTED_TEXT = 2000
+        private const val MAX_VISIBLE_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+        private const val MAX_EDITABLE_TEXT = AccessibilityContentLimits.DEFAULT_CONTEXT_MAX_CHARS
+        private const val MAX_CURSOR_TEXT = 8_000
+        private const val MAX_SELECTED_TEXT = 8_000
         private val EMAIL_REGEX = Regex("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", RegexOption.IGNORE_CASE)
         private val CREDENTIAL_REGEX = Regex("\\b(password|passcode|api key|secret|token|credential)\\b", RegexOption.IGNORE_CASE)
         private val FINANCIAL_REGEX = Regex("\\b(invoice|budget|salary|bank|routing|account number|payment|revenue)\\b", RegexOption.IGNORE_CASE)

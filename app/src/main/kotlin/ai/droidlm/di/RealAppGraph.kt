@@ -2,6 +2,7 @@ package ai.droidlm.di
 
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
+import ai.droidlm.context.AccessibilityContentContextProvider
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.context.GoogleDriveContextProvider
@@ -73,6 +74,7 @@ class RealAppGraph(
     override val deviceContextAggregator = DeviceContextAggregator(
         appInventoryRepository = appInventoryRepository,
         providers = listOf(
+            AccessibilityContentContextProvider(),
             GoogleDocsContextProvider(),
             GoogleSheetsContextProvider(),
             GoogleDriveContextProvider()

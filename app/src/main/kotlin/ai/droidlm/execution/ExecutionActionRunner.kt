@@ -1,5 +1,7 @@
 package ai.droidlm.execution
 
+import ai.droidlm.context.AccessibilityContentExtractor
+import ai.droidlm.context.AccessibilityContentSearchQuery
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
@@ -109,6 +111,7 @@ internal class ExecutionActionRunner(
         is DroidLmAction.SetSlider -> portalController.setSlider(action.label, action.nodeId, action.value, action.percent)
         is DroidLmAction.Refresh -> portalController.refresh(action.targetNodeId)
         is DroidLmAction.FindTextOnScreen -> portalController.findTextOnScreen(action.text, action.tapOnMatch)
+        is DroidLmAction.SearchAccessibilityContent -> searchAccessibilityContent(action, diagnosticSessionId)
         DroidLmAction.OpenNotifications -> portalController.openNotifications()
         DroidLmAction.OpenQuickSettings -> portalController.openQuickSettings()
         DroidLmAction.OpenRecents -> portalController.openRecents()
@@ -164,6 +167,40 @@ internal class ExecutionActionRunner(
         is DroidLmAction.SetCurrentSheetCell -> workspaceFileOperationController.setCurrentSheetCell(transcript, action)
         is DroidLmAction.AddSpreadsheetRow -> workspaceFileOperationController.addSpreadsheetRow(transcript, action)
         DroidLmAction.Done -> ActionResult.ok("Done")
+    }
+
+    private suspend fun searchAccessibilityContent(action: DroidLmAction.SearchAccessibilityContent, diagnosticSessionId: String?): ActionResult {
+        if (action.query.isNullOrBlank() && action.sectionLabel.isNullOrBlank() && action.exclude.isNullOrBlank()) {
+            return ActionResult.fail("SEARCH_ACCESSIBILITY_CONTENT requires query, sectionLabel, or exclude", "INVALID_CONTENT_SEARCH")
+        }
+        val state = portalController.getState()
+        val result = AccessibilityContentExtractor.search(
+            state,
+            AccessibilityContentSearchQuery(
+                query = action.query,
+                sectionLabel = action.sectionLabel,
+                exclude = action.exclude,
+                ordinal = action.ordinal,
+                maxMatches = action.maxMatches
+            )
+        )
+        val matchCount = result.optInt("matchCount", 0)
+        debugEvent(
+            diagnosticSessionId,
+            "accessibility_content_search_result",
+            mapOf(
+                "queryLength" to (action.query?.length ?: 0),
+                "sectionLength" to (action.sectionLabel?.length ?: 0),
+                "excludeLength" to (action.exclude?.length ?: 0),
+                "matchCount" to matchCount,
+                "truncated" to result.optJSONObject("provenance")?.optBoolean("truncated")
+            )
+        )
+        return if (matchCount > 0) {
+            ActionResult.ok("Accessibility content search result: ${result.toString()}")
+        } else {
+            ActionResult.fail("No accessibility content matches: ${result.toString()}", "CONTENT_NOT_FOUND")
+        }
     }
 
     private suspend fun openAppWithRecovery(

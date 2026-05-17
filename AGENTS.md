@@ -4,6 +4,13 @@
 - Do not embed OpenAI API keys, Mobilerun API keys, release keystore files, keystore passwords, or signing credentials in Android source, resources, Gradle files, BuildConfig, scripts, release notes, commits, or APKs.
 - Keep SlopCode changes out of this repository; DroidLM release work should not modify `../slopcode`.
 
+## Issue Investigation
+
+- When asked to fetch or investigate user-reported issues, treat uploaded debug log bundles as a main source alongside GitHub Issues and other explicit report channels.
+- Use `gs://droidlm-debug-logs/debug-logs/` as the canonical debug-log bucket/prefix. Locate recent bundles with `gcloud storage ls --recursive --long gs://droidlm-debug-logs/debug-logs/**`, filter by UTC timestamps, and copy only relevant bundles to `/tmp` for inspection.
+- Start each debug-log review with `issue-description.txt`, `diagnostics-health.json`, `timeline-index.json`, `speech/*.jsonl`, and `llm/*.json`; avoid opening raw audio unless the user explicitly asks for audio analysis.
+- Debug logs can contain raw microphone audio, spoken text, screen context, and LLM traces. Summarize findings without exposing secrets, API keys, raw audio, or unnecessary user content.
+
 ## Code Best Practices
 
 - Keep the settings experience simple, intuitive, and uncluttered.

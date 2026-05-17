@@ -114,6 +114,48 @@ class ExecutionActionRunnerTest {
         assertEquals(listOf("tapNode:row-1"), portal.operations)
     }
 
+    @Test fun searchAccessibilityContentReturnsSectionCandidate() = runTest {
+        val portal = FakePortal(
+            state = PortalState(
+                packageName = "com.google.android.apps.docs",
+                activityName = "DriveActivity",
+                screenWidth = 100,
+                screenHeight = 100,
+                nodes = listOf(
+                    UiNode(
+                        nodeId = "preview",
+                        text = null,
+                        contentDescription = "- Meetings - Next sync, H&O PAT Weekly, PAT Touchbase",
+                        className = null,
+                        packageName = "com.google.android.apps.docs",
+                        bounds = Rect(0, 0, 100, 50),
+                        clickable = false,
+                        editable = false,
+                        focused = false,
+                        enabled = true,
+                        selected = false
+                    )
+                )
+            )
+        )
+        val runner = runner(portal)
+
+        val result = runner.execute(
+            DroidLmAction.SearchAccessibilityContent(
+                sectionLabel = "Meetings",
+                exclude = "Next",
+                ordinal = 1,
+                maxMatches = 3,
+                reason = "find first meeting title without Next"
+            ),
+            transcript = "select first meeting without Next",
+            finishState = false
+        )
+
+        assertTrue(result.success)
+        assertTrue(result.message.contains("H&O PAT Weekly"))
+    }
+
     private fun runner(
         portal: FakePortal,
         confirm: suspend (String, DroidLmAction, String, String?, String?) -> Boolean = { _, _, _, _, _ -> false }

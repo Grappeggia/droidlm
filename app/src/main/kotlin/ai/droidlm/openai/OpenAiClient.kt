@@ -138,6 +138,9 @@ class OpenAiClient(
         Supported actions: ${DroidLmActionContract.supportedActionsPrompt}
         Use OPEN_APP only when the target package appears in installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING with the requested packageName. If the command does not include an app name, return NO_OP with a brief clarification instead of guessing.
         If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
+        Use SEARCH_ACCESSIBILITY_CONTENT for grep-like searches over extracted accessibility content, especially for section queries, ordinal selections, and exclusions such as "without X" or "does not contain X". Do not use FIND_TEXT_ON_SCREEN to search for an excluded word.
+        Prompt context is budgeted to prioritize current app, UI targets, and extracted content; duplicated long app-specific text may be replaced with a reference to accessibilityContentContext.contentWindow.fullText.
         If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, do not OPEN_APP. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before planning edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
@@ -157,9 +160,9 @@ class OpenAiClient(
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
         Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
         UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
+        Installed packages: ${promptPackagesJson(request.packages)}
         History: ${JSONArray(request.history)}
     """.trimIndent()
 
@@ -169,6 +172,9 @@ class OpenAiClient(
         Use OPEN_APP only for installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING. If the goal is ambiguous, return {"action":"NO_OP","message":"Please say which app to open."}.
         Supported actions and fields are the same as the plan preview prompt.
         If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
+        Use SEARCH_ACCESSIBILITY_CONTENT for grep-like searches over extracted accessibility content, especially for section queries, ordinal selections, and exclusions such as "without X" or "does not contain X". Do not use FIND_TEXT_ON_SCREEN to search for an excluded word.
+        Prompt context is budgeted to prioritize current app, UI targets, and extracted content; duplicated long app-specific text may be replaced with a reference to accessibilityContentContext.contentWindow.fullText.
         If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, do not OPEN_APP. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
         Use Device context as authoritative state. For Google Docs, inspect docsContext.uiMode, editor, selectionContext, documentTextWindow, and availableDocActions before choosing edits.
         For Google Sheets, inspect sheetsContext.uiMode, activeCell, visibleGrid, sheetTextWindow, and availableSheetActions before spreadsheet edits.
@@ -189,9 +195,9 @@ class OpenAiClient(
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
         Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
         UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
+        Installed packages: ${promptPackagesJson(request.packages)}
         History: ${JSONArray(request.history)}
     """.trimIndent()
 
@@ -213,6 +219,9 @@ class OpenAiClient(
         DroidLM verifies app launches, wait targets, visible text, and text-change checks after tools run. If a prior result says verification failed, choose a changed strategy instead of repeating the same call.
         After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
         If Device context includes artifactContext, use it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
+        Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
+        Use SEARCH_ACCESSIBILITY_CONTENT for grep-like searches over extracted accessibility content, especially for section queries, ordinal selections, and exclusions such as "without X" or "does not contain X". Do not use FIND_TEXT_ON_SCREEN to search for an excluded word.
+        Prompt context is budgeted to prioritize current app, UI targets, and extracted content; duplicated long app-specific text may be replaced with a reference to accessibilityContentContext.contentWindow.fullText.
         If the goal is to navigate, go, jump, scroll, find, or search within the current Google Docs, Sheets, or Drive artifact and artifactContext already contains a matching target label, stay in the current app. Do not OPEN_APP or SWITCH_APP for names like section titles, files, tabs, or headings. Prefer NAVIGATE_TO_ARTIFACT_TARGET with {"label":"target text","nodeId":"optional visible node id","kind":"optional target kind","reason":"why"}.
         For REPLACE_TEXT_RANGE and INSERT_TEXT_AT_ANCHOR inside long documents, include sectionLabel when the same text or anchor may appear in multiple sections. Use occurrenceIndex only when repeated matches still exist inside the chosen section.
         When the goal requires several edits inside the same current document, prefer APPLY_DOCUMENT_EDITS with a small ordered edits array instead of spreading those edits across many turns. APPLY_DOCUMENT_EDITS accepts {"sectionLabel":"optional default section","edits":[{"operation":"REPLACE_TEXT_RANGE","targetText":"...","replacementText":"...","sectionLabel":"optional"},{"operation":"INSERT_TEXT_AT_ANCHOR","anchorText":"...","anchorPosition":"AFTER|BEFORE","text":"...","sectionLabel":"optional"}],"reason":"why"}.
@@ -223,9 +232,9 @@ class OpenAiClient(
         Budgets: ${request.budgets.toJson()}
         Remaining tool calls: ${request.remainingToolCalls}
         Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toJson() ?: JSONObject()}
+        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
         UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${JSONArray(request.packages.map { it.toJson() })}
+        Installed packages: ${promptPackagesJson(request.packages)}
         History: ${JSONArray(request.history)}
         Last tool results: ${JSONArray(request.lastResults.map { it.toJson() })}
     """.trimIndent()
@@ -499,6 +508,64 @@ class OpenAiClient(
                 ?: error?.optString("type")?.takeIf { it.isNotBlank() }
             message to code
         }.getOrDefault(null to null)
+    }
+
+    private fun promptPackagesJson(packages: List<AppPackage>): JSONArray = JSONArray(packages.map { it.toPromptJson() })
+
+    private fun AppPackage.toPromptJson(): JSONObject {
+        val json = JSONObject()
+            .put("packageName", packageName)
+            .put("label", label)
+        enabled?.let { json.put("enabled", it) }
+        launchable?.let { json.put("launchable", it) }
+        return json
+    }
+
+    private fun DeviceContext.toPromptJson(): JSONObject {
+        val json = JSONObject()
+            .put("schemaVersion", schemaVersion)
+            .put("activeApp", activeApp?.toJson() ?: JSONObject())
+        extras.keys().forEach { key -> json.put(key, extras.opt(key)) }
+        deduplicatePromptContent(json)
+        return json
+    }
+
+    private fun deduplicatePromptContent(json: JSONObject) {
+        val canonical = json.optJSONObject("accessibilityContentContext")
+            ?.optJSONObject("contentWindow")
+            ?.optString("fullText")
+            ?.takeIf { it.length >= LONG_TEXT_DEDUP_MIN_CHARS }
+            ?: return
+        replaceDuplicateLongStrings(json, canonical, path = "")
+    }
+
+    private fun replaceDuplicateLongStrings(value: Any?, canonical: String, path: String) {
+        when (value) {
+            is JSONObject -> {
+                val keys = value.keys().asSequence().toList()
+                keys.forEach { key ->
+                    val childPath = if (path.isBlank()) key else "$path.$key"
+                    val child = value.opt(key)
+                    if (child is String && shouldReplaceDuplicateText(childPath, child, canonical)) {
+                        value.put(key, "[see accessibilityContentContext.contentWindow.fullText; chars=${child.length}]")
+                    } else {
+                        replaceDuplicateLongStrings(child, canonical, childPath)
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    replaceDuplicateLongStrings(value.opt(index), canonical, "$path[$index]")
+                }
+            }
+        }
+    }
+
+    private fun shouldReplaceDuplicateText(path: String, text: String, canonical: String): Boolean {
+        if (path == "accessibilityContentContext.contentWindow.fullText") return false
+        if (text.length < LONG_TEXT_DEDUP_MIN_CHARS) return false
+        val probe = text.take(LONG_TEXT_DEDUP_MIN_CHARS)
+        return canonical.contains(probe)
     }
 
     private fun RelayPlanRequest.toJson(): JSONObject = JSONObject()
@@ -853,6 +920,7 @@ class OpenAiClient(
         const val DEFAULT_MODEL = "gpt-5.4-nano"
         private const val DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
         private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions."
+        private const val LONG_TEXT_DEDUP_MIN_CHARS = 2_048
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
