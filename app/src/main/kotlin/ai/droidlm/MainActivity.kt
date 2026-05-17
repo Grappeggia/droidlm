@@ -879,17 +879,6 @@ private fun DebugBuildUpgradeSection(
     onUpgrade: () -> Unit,
     onAllowInstall: () -> Unit
 ) {
-    Text("Build updates", fontWeight = FontWeight.SemiBold)
-    Text(
-        "Downloads the newest GitHub debug prerelease for this debug app and opens Android's package installer.",
-        color = DroidLmColors.TextMuted
-    )
-    state.statusMessage?.takeIf { it.isNotBlank() }?.let { message ->
-        Text(
-            message,
-            color = if (state.phase == DebugUpdatePhase.ERROR) DroidLmColors.Danger else DroidLmColors.TextMuted
-        )
-    }
     val buttonLabel = when {
         state.requiresInstallPermission -> "Allow Install"
         state.isBusy -> "Working..."

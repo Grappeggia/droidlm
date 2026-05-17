@@ -339,10 +339,9 @@ class DroidLmViewModel(
                         "uploadEndpointConfigured" to true
                     )
                 )
-                deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs", upload.gsUri)
+                deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Uploaded debug logs")
                 deps.overlayRuntime.showNotice(
                     title = "Debug logs uploaded",
-                    details = upload.gsUri,
                     kind = OverlayNoticeKind.SUCCESS
                 )
             }

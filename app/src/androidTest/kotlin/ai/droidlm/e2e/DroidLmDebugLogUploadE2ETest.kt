@@ -100,10 +100,9 @@ class DroidLmDebugLogUploadE2ETest {
             assertTrue("Multipart body should identify the debug app package", body.contains(app.packageName))
         }
         assertTrue(
-            "Action log should report the uploaded GCS URI",
+            "Action log should report the debug log upload without exposing the GCS URI",
             app.actionLogRepository.logs.value.any {
-                it.message == "Uploaded debug logs" &&
-                    it.details.orEmpty().startsWith("gs://droidlm-debug-logs/")
+                it.message == "Uploaded debug logs" && it.details.isNullOrBlank()
             }
         )
     }
