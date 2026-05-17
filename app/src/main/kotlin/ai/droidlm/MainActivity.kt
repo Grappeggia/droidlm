@@ -6,13 +6,11 @@ import ai.droidlm.execution.PlannerKeySetupRequest
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
 import ai.droidlm.settings.DroidLmSettings
-import ai.droidlm.update.DebugUpdatePhase
 import ai.droidlm.update.DebugUpdateUiState
 import ai.droidlm.update.compactDebugVersionName
 
 import ai.droidlm.ui.DroidLmViewModel
 import ai.droidlm.ui.DroidLmViewModelFactory
-import ai.droidlm.voice.SpeechRecognitionUiState
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -71,7 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import java.util.Locale
 
 private const val MAX_DEBUG_ISSUE_DESCRIPTION_CHARS = 4_000
 
@@ -139,7 +136,6 @@ private object DroidLmColors {
 private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsState(initial = DroidLmSettings())
-    val speechRecognition by viewModel.speechRecognitionState.collectAsState()
     val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsState()
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
@@ -221,21 +217,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     LaunchedEffect(Unit) {
         viewModel.refreshAccessibility()
     }
-    LaunchedEffect(
-        needsOnboarding,
-        settings.preferOfflineSpeechRecognition,
-        speechRecognition.speechSetupChecked,
-        speechRecognition.speechSetupChecking
-    ) {
-        if (
-            needsOnboarding &&
-            settings.preferOfflineSpeechRecognition &&
-            !speechRecognition.speechSetupChecked &&
-            !speechRecognition.speechSetupChecking
-        ) {
-            viewModel.checkSpeechSetup(settings.preferOfflineSpeechRecognition)
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -264,7 +245,6 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
-                        speechRecognition = speechRecognition,
                         onOpenAccessibility = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         onRequestMicPermission = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                         onRequestNotificationPermission = {
@@ -294,11 +274,9 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= 33) notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         },
-                        onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
-                        speechRecognition = speechRecognition,
                     )
                 }
             } else {
@@ -335,13 +313,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         )
                     }
                 }
-                speechRecognition.missingLanguageMessage?.let {
-                    item {
-                        DroidCard(container = DroidLmColors.WarningSurface) {
-                            SpeechSetupCard(settings, speechRecognition, viewModel)
-                        }
-                    }
-                }
+
                 item { ExecutionCard(execution.lastTranscript, execution.parsedAction, execution.status, execution.lastResult) }
                 item {
                     MainControlRow(
@@ -411,7 +383,6 @@ private fun OnboardingPage(
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
-    speechRecognition: SpeechRecognitionUiState,
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -427,7 +398,7 @@ private fun OnboardingPage(
         DroidCard {
             Text("Let's set up DroidLM", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
             Text(
-                "Complete the essentials once. DroidLM uses Android on-device speech recognition; OpenAI is only for planning after speech is recognized.",
+                "Complete the essentials once. DroidLM handles speech recognition automatically; OpenAI is only for planning after speech is recognized.",
                 color = DroidLmColors.TextMuted
             )
         }
@@ -440,15 +411,13 @@ private fun OnboardingPage(
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
             onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
-            speechRecognition = speechRecognition,
-            onOpenSpeechSettings = viewModel::openSpeechRecognitionSettings,
             onOpenAiKey = { showOpenAiKeyDialog = true }
         )
-        DroidCard { SpeechSetupCard(settings, speechRecognition, viewModel) }
+
         DroidCard {
             Text("Diagnostics", fontWeight = FontWeight.SemiBold)
             ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
-            Text("Optional, but useful if speech setup fails. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
+            Text("Optional, but useful for diagnosing voice, overlay, and automation issues. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
         }
         DroidCard {
             Button(onClick = onDone) { Text("Start using DroidLM") }
@@ -480,11 +449,9 @@ private fun SettingsPage(
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onOpenSpeechSettings: () -> Unit,
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
-    speechRecognition: SpeechRecognitionUiState,
 ) {
     var showOpenAiKeyDialog by remember { mutableStateOf(false) }
 
@@ -499,11 +466,9 @@ private fun SettingsPage(
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
             onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
-            speechRecognition = speechRecognition,
-            onOpenSpeechSettings = onOpenSpeechSettings,
             onOpenAiKey = { showOpenAiKeyDialog = true }
         )
-        SettingsCard(settings, speechRecognition, viewModel)
+        SettingsCard(settings, viewModel)
         VersionFooter()
     }
 
@@ -541,36 +506,15 @@ private fun SetupStatusCard(
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onEnableOcr: () -> Unit,
-    speechRecognition: SpeechRecognitionUiState,
-    onOpenSpeechSettings: () -> Unit,
     onOpenAiKey: (() -> Unit)? = null
 ) = DroidCard {
-    val baseItems = listOfNotNull(
+    val items = listOfNotNull(
         SetupStatusItem("Accessibility", accessibilityEnabled, onOpenAccessibility),
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
         SetupStatusItem("Notifications", notificationGranted, onRequestNotificationPermission),
         SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr),
         onOpenAiKey?.let { SetupStatusItem("API Key", settings.openAiApiKeyConfigured, it) }
     )
-    val languageItem = when {
-        settings.preferOfflineSpeechRecognition -> {
-            val tag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
-            val available = speechRecognition.speechSetupChecked && speechRecognition.speechSetupAvailable == true
-            val label = if (available) {
-                "Offline ${displayLanguage(tag)} speech"
-            } else {
-                "Install/check offline ${displayLanguage(tag)} speech"
-            }
-            SetupStatusItem(label, available, onOpenSpeechSettings)
-        }
-        speechRecognition.missingLanguageTag != null -> SetupStatusItem(
-            "Offline ${displayLanguage(speechRecognition.missingLanguageTag)} speech",
-            false,
-            onOpenSpeechSettings
-        )
-        else -> null
-    }
-    val items = baseItems + listOfNotNull(languageItem)
     val enabledItems = items.filter { it.enabled }
     val missingItems = items.filterNot { it.enabled }
 
@@ -791,7 +735,6 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 @Composable
 private fun SettingsCard(
     settings: DroidLmSettings,
-    speechRecognition: SpeechRecognitionUiState,
     viewModel: DroidLmViewModel
 ) = DroidCard {
     val saveDebugLogsLauncher = rememberLauncherForActivityResult(
@@ -810,7 +753,6 @@ private fun SettingsCard(
     var debugIssueDescription by remember { mutableStateOf("") }
 
     Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
-    SpeechSetupCard(settings, speechRecognition, viewModel)
 
     Text("Diagnostics", fontWeight = FontWeight.SemiBold)
     ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
@@ -894,31 +836,6 @@ private fun DebugBuildUpgradeSection(
 }
 
 @Composable
-private fun SpeechSetupCard(settings: DroidLmSettings, speechRecognition: SpeechRecognitionUiState, viewModel: DroidLmViewModel) {
-    val languageTag = speechRecognition.missingLanguageTag ?: Locale.getDefault().toLanguageTag()
-    val languageName = displayLanguage(languageTag)
-    Text("Voice recognition", fontWeight = FontWeight.SemiBold)
-    speechRecognition.speechSetupMessage?.let { message ->
-        Text(message, color = if (speechRecognition.speechSetupAvailable == true) DroidLmColors.TextMuted else DroidLmColors.Danger)
-    }
-    if (settings.preferOfflineSpeechRecognition && speechRecognition.speechSetupAvailable != true) {
-        Text(
-            "Install $languageName for offline speech recognition: open Android speech settings, then find Voice input or Offline speech recognition and download $languageName.",
-            color = DroidLmColors.TextMuted
-        )
-    }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(
-            enabled = !speechRecognition.speechSetupChecking,
-            onClick = { viewModel.checkSpeechSetup(settings.preferOfflineSpeechRecognition) }
-        ) { Text(if (speechRecognition.speechSetupChecking) "Checking..." else "Check Speech Setup") }
-        OutlinedButton(onClick = viewModel::openSpeechRecognitionSettings) { Text("Open Speech Settings") }
-        OutlinedButton(onClick = viewModel::openRecognizerAppSettings) { Text("Open Recognizer App") }
-    }
-}
-
-
-@Composable
 private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f))
@@ -954,12 +871,6 @@ private fun appVersionName(context: Context): String {
     }
     return compactDebugVersionName(packageInfo.versionName) ?: "unknown"
 }
-
-private fun displayLanguage(languageTag: String): String {
-    val locale = Locale.forLanguageTag(languageTag)
-    return locale.getDisplayName(locale).takeIf { it.isNotBlank() } ?: languageTag
-}
-
 
 private fun overlayPermissionIntent(context: Context): Intent =
     Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
