@@ -79,7 +79,9 @@ class RealAppGraph(
             GoogleSheetsContextProvider(),
             GoogleDriveContextProvider()
         ),
-        diagnostics = speechDiagnosticsLogger
+        diagnostics = speechDiagnosticsLogger,
+        portalController = portalController,
+        ocrEngine = ocrEngine
     )
     override val workspaceFileOperationController = WorkspaceFileOperationController(application, textEditingController, actionLogRepository)
     override val safetyClassifier = SafetyClassifier()

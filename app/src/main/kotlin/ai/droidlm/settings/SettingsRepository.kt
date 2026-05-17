@@ -84,7 +84,7 @@ class SettingsRepository(private val context: Context) {
             maxAgentTurns = preferences[Keys.maxAgentTurns] ?: 6,
             maxAgentToolCalls = preferences[Keys.maxAgentToolCalls] ?: 12,
             requireRiskConfirmation = preferences[Keys.requireRiskConfirmation] ?: true,
-            onDeviceOcrEnabled = preferences[Keys.onDeviceOcrEnabled] ?: true,
+            onDeviceOcrEnabled = true,
             cloudScreenshotAnalysisEnabled = preferences[Keys.cloudScreenshotAnalysisEnabled] ?: false,
             debugLoggingEnabled = preferences[Keys.debugLoggingEnabled]
                 ?: (preferences[Keys.legacyDebugScreenshotRetention] == true ||
@@ -122,7 +122,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateMaxAgentTurns(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentTurns] = value.coerceIn(1, 16) }
     suspend fun updateMaxAgentToolCalls(value: Int) = context.settingsDataStore.edit { it[Keys.maxAgentToolCalls] = value.coerceIn(1, 32) }
     suspend fun updateRequireRiskConfirmation(value: Boolean) = editBoolean(Keys.requireRiskConfirmation, value)
-    suspend fun updateOnDeviceOcrEnabled(value: Boolean) = editBoolean(Keys.onDeviceOcrEnabled, value)
+    suspend fun updateOnDeviceOcrEnabled(@Suppress("UNUSED_PARAMETER") value: Boolean) = Unit
     suspend fun updateCloudScreenshotAnalysisEnabled(value: Boolean) = editBoolean(Keys.cloudScreenshotAnalysisEnabled, value)
     suspend fun updateDebugLoggingEnabled(value: Boolean) = editBoolean(Keys.debugLoggingEnabled, value)
     suspend fun updateOnboardingCompletedVersion(value: Int) = context.settingsDataStore.edit {

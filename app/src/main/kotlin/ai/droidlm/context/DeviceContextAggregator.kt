@@ -4,6 +4,12 @@ import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.DeviceContext
+import ai.droidlm.observation.ArtifactContext
+import ai.droidlm.observation.OcrBlock
+import ai.droidlm.observation.ScreenObservation
+import ai.droidlm.observation.ScreenObservationBuilder
+import ai.droidlm.ocr.OcrEngine
+import ai.droidlm.portal.PortalController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -12,8 +18,13 @@ import org.json.JSONObject
 class DeviceContextAggregator(
     private val appInventoryRepository: AppInventoryRepository,
     private val providers: List<DeviceContextProvider>,
-    private val diagnostics: SpeechDiagnosticsLogger? = null
+    private val diagnostics: SpeechDiagnosticsLogger? = null,
+    private val portalController: PortalController? = null,
+    private val ocrEngine: OcrEngine? = null,
+    private val screenObservationBuilder: ScreenObservationBuilder = ScreenObservationBuilder()
 ) {
+    private val observationLock = Any()
+    private var lastObservation: ScreenObservation? = null
     suspend fun collect(
         goal: String?,
         state: PortalState?,
@@ -80,6 +91,12 @@ class DeviceContextAggregator(
                     )
                 }
         }
+        val screenObservation = state?.let { currentState ->
+            collectScreenObservation(currentState, extras, diagnosticSessionId)
+        }
+        screenObservation?.let { observation ->
+            extras.put("screenObservation", observation.toJson())
+        }
         val context = DeviceContext(
             activeApp = activeApp,
             packages = packages,
@@ -95,6 +112,79 @@ class DeviceContextAggregator(
             ) + jsonSummary(extras)
         )
         context
+    }
+
+    private suspend fun collectScreenObservation(
+        state: PortalState,
+        extras: JSONObject,
+        diagnosticSessionId: String?
+    ): ScreenObservation {
+        val previous = synchronized(observationLock) { lastObservation }
+        var ocrAttempted = false
+        var ocrError: String? = null
+        val ocrBlocks = collectOcrBlocks(diagnosticSessionId)
+            .onFailure { error -> ocrError = error.message ?: error::class.java.simpleName }
+            .getOrDefault(emptyList())
+            .also { ocrAttempted = portalController != null && ocrEngine != null }
+        val artifactContext = extras.optJSONObject("artifactContext")?.let { ArtifactContext(JSONObject(it.toString())) }
+        val observation = screenObservationBuilder.build(
+            state = state,
+            ocrBlocks = ocrBlocks,
+            artifactContext = artifactContext,
+            previous = previous,
+            ocrAttempted = ocrAttempted,
+            ocrError = ocrError
+        )
+        synchronized(observationLock) { lastObservation = observation }
+        diagnostics?.record(
+            diagnosticSessionId,
+            "screen_observation_collected",
+            mapOf(
+                "observationId" to observation.observationId,
+                "screenHash" to observation.screenHash,
+                "nodeCount" to observation.nodes.size,
+                "ocrAttempted" to ocrAttempted,
+                "ocrBlockCount" to observation.ocrBlocks.size,
+                "ocrError" to ocrError,
+                "confidenceScore" to observation.confidence.score,
+                "hasPriorDelta" to (observation.priorActionDelta != null)
+            )
+        )
+        return observation
+    }
+
+    private suspend fun collectOcrBlocks(diagnosticSessionId: String?): Result<List<OcrBlock>> {
+        val controller = portalController ?: return Result.success(emptyList())
+        val engine = ocrEngine ?: return Result.success(emptyList())
+        val screenshot = controller.takeScreenshot()
+        val bitmap = screenshot.bitmap
+        if (!screenshot.success || bitmap == null) {
+            val message = screenshot.message.ifBlank { "Screenshot capture failed" }
+            diagnostics?.record(
+                diagnosticSessionId,
+                "screen_observation_ocr_unavailable",
+                mapOf("errorCode" to screenshot.errorCode, "message" to message)
+            )
+            return Result.failure(IllegalStateException(message))
+        }
+        return runCatching {
+            val result = engine.recognize(bitmap)
+            result.blocks.map { block ->
+                OcrBlock(
+                    text = block.text,
+                    bounds = block.boundingBox?.let { android.graphics.Rect(it) },
+                    confidence = block.confidence,
+                    source = result.source.name
+                )
+            }
+        }.recoverCatching { error ->
+            diagnostics?.record(
+                diagnosticSessionId,
+                "screen_observation_ocr_failed",
+                mapOf("errorClass" to error::class.java.name, "message" to error.message)
+            )
+            throw error
+        }
     }
 
     private fun merge(target: JSONObject, source: JSONObject) {

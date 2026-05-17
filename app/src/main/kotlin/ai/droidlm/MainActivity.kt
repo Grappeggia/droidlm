@@ -410,7 +410,6 @@ private fun OnboardingPage(
             onOpenAccessibility = onOpenAccessibility,
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
-            onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
             onOpenAiKey = { showOpenAiKeyDialog = true }
         )
 
@@ -465,7 +464,6 @@ private fun SettingsPage(
             onOpenAccessibility = onOpenAccessibility,
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
-            onEnableOcr = { viewModel.updateOnDeviceOcr(true) },
             onOpenAiKey = { showOpenAiKeyDialog = true }
         )
         SettingsCard(settings, viewModel)
@@ -505,14 +503,12 @@ private fun SetupStatusCard(
     onOpenAccessibility: () -> Unit,
     onRequestMicPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onEnableOcr: () -> Unit,
     onOpenAiKey: (() -> Unit)? = null
 ) = DroidCard {
     val items = listOfNotNull(
         SetupStatusItem("Accessibility", accessibilityEnabled, onOpenAccessibility),
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
         SetupStatusItem("Notifications", notificationGranted, onRequestNotificationPermission),
-        SetupStatusItem("On-device OCR", settings.onDeviceOcrEnabled, onEnableOcr),
         onOpenAiKey?.let { SetupStatusItem("API Key", settings.openAiApiKeyConfigured, it) }
     )
     val enabledItems = items.filter { it.enabled }
