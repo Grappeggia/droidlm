@@ -272,6 +272,11 @@ boot_profile() {
       "$ADB" -s "$serial" shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
       "$ADB" -s "$serial" shell svc power stayon true >/dev/null 2>&1 || true
       log "$name booted ($serial)"
+      local post_boot_settle_seconds="${DROIDLM_E2E_POST_BOOT_SETTLE_SECONDS:-0}"
+      if [[ "$post_boot_settle_seconds" =~ ^[0-9]+$ ]] && (( post_boot_settle_seconds > 0 )); then
+        log "Settling $name for ${post_boot_settle_seconds}s before running tests"
+        sleep "$post_boot_settle_seconds"
+      fi
       return 0
     fi
     sleep 2
