@@ -294,7 +294,17 @@ internal class ExecutionPlanningCoordinator(
             val safety = safetyClassifier.classify(pending.transcript, step.action, state, settings.sensitiveAppScreenshotDenylist)
             debugEvent(sessionId, "plan_step_ready", mapOf("index" to step.index, "action" to step.actionLabel, "requiresConfirmation" to step.requiresConfirmation))
             recordSafetyDecision(sessionId, "plan_step_${step.index}", safety, settings.requireRiskConfirmation)
-            if ((step.requiresConfirmation && settings.requireRiskConfirmation) || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
+            val confidencePolicy = ActionConfidencePolicy.evaluate(
+                confidence = step.confidence,
+                action = step.action,
+                safetyRequiresConfirmation = safety.requiresConfirmation || safety.mandatoryConfirmation
+            )
+            if (!confidencePolicy.allowed) {
+                val message = confidencePolicy.reason ?: "Planner confidence policy blocked ${step.actionLabel}"
+                debugEvent(sessionId, "plan_step_confidence_blocked", mapOf("index" to step.index, "action" to step.actionLabel, "confidence" to step.confidence.name, "message" to message))
+                return finish(ActionResult.fail(message, "PLAN_CONFIDENCE_BLOCKED"))
+            }
+            if (confidencePolicy.requiresConfirmation || (step.requiresConfirmation && settings.requireRiskConfirmation) || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
                 val confirmed = requestConfirmation(
                     pending.transcript,
                     step.action,
@@ -341,16 +351,29 @@ internal class ExecutionPlanningCoordinator(
                 )
                 return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
             }
-            when (val planned = openAiClient.planAction(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp, deviceContext))) {
+            when (val planned = openAiClient.planActionWithMetadata(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp, deviceContext))) {
                 is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(planned), planned.errorCode))
                 is RelayCallResult.Success -> {
-                    val action = planned.value
+                    val plannedAction = planned.value
+                    val action = plannedAction.action
                     logs.log(ActionLogType.PARSED_ACTION, action.displayName())
                     if (action == DroidLmAction.Done) return finish(ActionResult.ok("Task complete"))
                     val safety = safetyClassifier.classify(goal, action, state, settings.sensitiveAppScreenshotDenylist)
                     recordSafetyDecision(null, "local_loop_step_$step", safety, settings.requireRiskConfirmation)
-                    if (safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
-                        val confirmed = requestConfirmation(goal, action, safety.reason ?: "This action is sensitive", null, null)
+                    val confidencePolicy = ActionConfidencePolicy.evaluate(
+                        confidence = plannedAction.confidence,
+                        action = action,
+                        safetyRequiresConfirmation = safety.requiresConfirmation || safety.mandatoryConfirmation
+                    )
+                    if (!confidencePolicy.allowed) {
+                        val message = confidencePolicy.reason ?: "Planner confidence policy blocked ${action.displayName()}"
+                        debugEvent(null, "local_loop_confidence_blocked", mapOf("step" to step, "action" to action.displayName(), "confidence" to plannedAction.confidence.name, "message" to message))
+                        history += "${action.displayName()} blocked by confidence policy: $message"
+                        lastResult = ActionResult.fail(message, "PLAN_CONFIDENCE_BLOCKED")
+                        continue
+                    }
+                    if (confidencePolicy.requiresConfirmation || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
+                        val confirmed = requestConfirmation(goal, action, safety.reason ?: confidencePolicy.reason ?: "This action is sensitive", null, null)
                         if (!confirmed) return finish(ActionResult.fail("Planner action cancelled", "CONFIRMATION_REJECTED"))
                     }
                     lastResult = executeAction(action, goal, false, null)

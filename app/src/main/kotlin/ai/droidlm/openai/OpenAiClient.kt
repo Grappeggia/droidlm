@@ -16,6 +16,7 @@ import ai.droidlm.portal.PortalState
 import ai.droidlm.relay.ActiveApp
 import ai.droidlm.relay.DeviceContext
 import ai.droidlm.relay.PlanPreview
+import ai.droidlm.relay.PlannedAction
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.relay.RelayPlanRequest
@@ -71,14 +72,21 @@ class OpenAiClient(
     }
 
     suspend fun planAction(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<DroidLmAction> {
+        return when (val result = planActionWithMetadata(apiKey, model, requestBody)) {
+            is RelayCallResult.Failure -> result
+            is RelayCallResult.Success -> RelayCallResult.Success(result.value.action)
+        }
+    }
+
+    suspend fun planActionWithMetadata(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlannedAction> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
         val payload = buildChatPayload(resolvedModel, planActionPrompt(requestBody), maxTokens = 900)
         val endpoint = endpointProvider()
         val request = buildChatRequest(apiKey, payload, endpoint)
         return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
-            val action = relayJsonParser.parsePlanActionJson(assistantContent)
-            ParsedChat(action, action.toDebugJson())
+            val plannedAction = relayJsonParser.parsePlannedActionJson(assistantContent)
+            ParsedChat(plannedAction, plannedAction.toDebugJson())
         }
     }
 
@@ -131,11 +139,16 @@ class OpenAiClient(
           "riskLevel": "LOW|MEDIUM|HIGH",
           "requiresConfirmation": false,
           "steps": [
-            {"index":1,"action":"OPEN_APP","appName":"<installed launchable app label>","packageName":"<installed.launchable.package>","reason":"why","requiresConfirmation":false}
+            {"index":1,"action":"OPEN_APP","appName":"<installed launchable app label>","packageName":"<installed.launchable.package>","reason":"why","requiresConfirmation":false,"confidence":"HIGH|MEDIUM|LOW","expectedResult":"observable result after this step"}
           ]
         }
-        Each step object must include an action field and all required fields for that action.
+        Each step object must include an action field, confidence, expectedResult, and all required fields for that action.
         Supported actions: ${DroidLmActionContract.supportedActionsPrompt}
+        Decision contract: You must not include a mutating action unless the target is present in the current observation, the action is explicitly designed to search or navigate, or you are recovering from a documented failure.
+        After every mutating action, predict the observable result in expectedResult. If the result does not occur, do not repeat the same action.
+        Use node tools before coordinate tools. Use artifact tools before UI tools when editing Google Docs or Sheets. If success criteria are met, return DONE immediately.
+        Confidence policy: HIGH may execute directly when low risk; MEDIUM may execute only when reversible and low risk; LOW must gather more observation, search, OCR, or ask the user before mutating; any confidence with high risk must ask for confirmation.
+        If blocked by risk, ambiguity, credentials, payment, private sharing, deletion, install, or permission changes, ask for confirmation.
         Use OPEN_APP only when the target package appears in installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING with the requested packageName. If the command does not include an app name, return NO_OP with a brief clarification instead of guessing.
         If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
         Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
@@ -170,8 +183,14 @@ class OpenAiClient(
     private fun planActionPrompt(request: RelayPlanRequest): String = """
         Choose exactly one next Android automation action for this user goal.
         Return only one JSON action object. Do not wrap it in markdown.
+        Include "confidence":"HIGH|MEDIUM|LOW" and "expectedResult":"observable result after this action" on every returned action.
         Use OPEN_APP only for installed packages with launchable=true. If the requested app is missing, disabled, or not launchable, ask confirmation and use OPEN_APP_STORE_LISTING. If the goal is ambiguous, return {"action":"NO_OP","message":"Please say which app to open."}.
         Supported actions and fields are the same as the plan preview prompt.
+        Decision contract: You must not return a mutating action unless the target is present in the current observation, the action is explicitly designed to search or navigate, or you are recovering from a documented failure.
+        After every mutating action, predict the observable result in expectedResult. If the result does not occur, do not repeat the same action.
+        Use node tools before coordinate tools. Use artifact tools before UI tools when editing Google Docs or Sheets. If success criteria are met, return DONE immediately.
+        Confidence policy: HIGH may execute directly when low risk; MEDIUM may execute only when reversible and low risk; LOW must gather more observation, search, OCR, or ask the user before mutating; any confidence with high risk must ask for confirmation.
+        If blocked by risk, ambiguity, credentials, payment, private sharing, deletion, install, or permission changes, ask for confirmation.
         If Device context includes artifactContext, treat it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
         Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
         Device context may include screenObservation V2. Use screenObservation.semanticCandidates and nodeRef as the primary UI grounding; prefer node-based tools and treat raw coordinates as a last resort only when no semantic candidate fits.
@@ -210,15 +229,21 @@ class OpenAiClient(
           "status": "CALL_TOOLS|ASK_USER|DONE|NO_OP",
           "message": "brief user-visible status",
           "toolCalls": [
-            {"id":"call_1","name":"OPEN_APP","args":{"packageName":"installed.launchable.package","appName":"Installed App","reason":"why"},"reason":"why"}
+            {"id":"call_1","name":"OPEN_APP","args":{"packageName":"installed.launchable.package","appName":"Installed App","reason":"why"},"reason":"why","confidence":"HIGH|MEDIUM|LOW","expectedResult":"observable result after this tool"}
           ]
         }
         You may request at most ${request.budgets.maxToolCallsPerTurn} tool calls this turn and ${request.remainingToolCalls} more tool calls for the whole run. Prefer one tool call unless the next calls are clearly safe and do not depend on a changed UI.
+        Decision contract: You must not call a mutating tool unless: 1. the target is present in the current observation, or 2. the tool is explicitly designed to search/navigate, or 3. you are recovering from a documented failure.
+        After every mutating action, predict the observable result in expectedResult. If the result does not occur, do not repeat the same action.
+        Use node tools before coordinate tools. Use artifact tools before UI tools when editing Docs/Sheets. If success criteria are met, return DONE immediately.
+        If blocked by risk, ambiguity, credentials, payment, private sharing, deletion, install, or permission changes, ask for confirmation.
+        Confidence policy: HIGH may execute directly when low risk; MEDIUM may execute only when reversible and low risk; LOW must gather more observation, search, OCR, or ask the user before mutating; any confidence with high risk requires confirmation.
         Use DONE only after the observed UI or tool results show the goal is complete. Use ASK_USER for ambiguity. Use NO_OP when no useful safe action is possible.
         Use installed packages as authoritative: OPEN_APP only when package launchable=true and enabled is not false. If the requested app is missing, use ASK_USER or one confirmed OPEN_APP_STORE_LISTING.
         Prefer node tools with nodeId over coordinates. Never invent node IDs. Never repeat a failed call unless the observation changed or the strategy changed.
         DroidLM validates safety and may ask confirmation. Do not try to bypass confirmations. Avoid high-risk tools unless directly requested.
         DroidLM verifies app launches, wait targets, visible text, and text-change checks after tools run. If a prior result says verification failed, choose a changed strategy instead of repeating the same call.
+        The doNotRepeat list names failed/no-delta actions. Do not call the same tool on the same target again unless the observation changed or your strategy materially changed.
         After app launches, taps, scrolling, back/home, text edits, dialog actions, or app-store actions, prefer ending this turn so DroidLM can observe fresh UI before more calls.
         If Device context includes artifactContext, use it as the primary source for current document, spreadsheet, or folder navigation. Inspect artifactContext.navigationTargets, artifactContext.contentWindow, artifactContext.surface, and artifactContext.availableTools before deciding to launch another app.
         Device context may include accessibilityContentContext for high-limit extracted accessibility text across any app. Treat accessibilityContentContext.contentWindow.fullText and lines as the primary generalized text source when app-specific windows are partial or missing.
@@ -240,6 +265,7 @@ class OpenAiClient(
         Installed packages: ${promptPackagesJson(request.packages)}
         History: ${JSONArray(request.history)}
         Last tool results: ${JSONArray(request.lastResults.map { it.toJson() })}
+        Do not repeat: ${JSONArray(request.doNotRepeat.map { it.toJson() })}
     """.trimIndent()
 
 
@@ -620,6 +646,12 @@ class OpenAiClient(
         .put("requiresFreshObservationAfter", requiresFreshObservationAfter)
         .put("maxCallsPerRun", maxCallsPerRun)
 
+
+    private fun PlannedAction.toDebugJson(): JSONObject = JSONObject()
+        .put("confidence", confidence.name)
+        .put("expectedResult", expectedResult ?: JSONObject.NULL)
+        .put("parsedAction", action.displayName())
+        .put("parsed", action.toDebugJson())
     private fun PlanPreview.toDebugJson(): JSONObject = JSONObject()
         .put("model", model)
         .put("summary", summary)
@@ -633,6 +665,8 @@ class OpenAiClient(
                     .put("action", step.actionLabel)
                     .put("reason", step.reason)
                     .put("requiresConfirmation", step.requiresConfirmation)
+                    .put("confidence", step.confidence.name)
+                    .put("expectedResult", step.expectedResult ?: JSONObject.NULL)
                     .put("parsedAction", step.action.displayName())
                     .put("parsed", step.action.toDebugJson())
             })
@@ -922,7 +956,9 @@ class OpenAiClient(
     companion object {
         const val DEFAULT_MODEL = "gpt-5.4-nano"
         private const val DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-        private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions."
+        private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions. " +
+            "Decision contract: do not choose mutating actions unless the target is present, the action searches/navigates, or the action recovers from a documented failure. " +
+            "Predict expectedResult after mutating actions, use node tools before coordinates, use artifact tools before UI tools for Docs/Sheets, return DONE immediately when complete, and ask confirmation for risk, ambiguity, credentials, payment, private sharing, deletion, install, or permission changes."
         private const val LONG_TEXT_DEDUP_MIN_CHARS = 2_048
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }

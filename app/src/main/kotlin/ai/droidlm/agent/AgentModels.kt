@@ -1,5 +1,6 @@
 package ai.droidlm.agent
 
+import ai.droidlm.intent.ActionConfidence
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
@@ -63,13 +64,17 @@ data class AgentToolCall(
     val id: String,
     val name: String,
     val args: JSONObject = JSONObject(),
-    val reason: String = ""
+    val reason: String = "",
+    val confidence: ActionConfidence = ActionConfidence.LOW,
+    val expectedResult: String? = null
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("name", name)
         .put("args", JSONObject(args.toString()))
         .put("reason", reason)
+        .put("confidence", confidence.name)
+        .put("expectedResult", expectedResult ?: JSONObject.NULL)
 }
 
 data class AgentDecision(
@@ -103,11 +108,17 @@ data class AgentToolResult(
     val result: ActionResult,
     val mutating: Boolean,
     val requiresFreshObservationAfter: Boolean,
-    val verification: AgentVerificationResult? = null
+    val verification: AgentVerificationResult? = null,
+    val target: String? = null,
+    val signature: String? = null,
+    val confidence: ActionConfidence? = null,
+    val expectedResult: String? = null
 ) {
     fun summary(): String {
         val verificationSummary = verification?.let { " verification=${it.status.name.lowercase()}: ${it.message}" }.orEmpty()
-        return "$toolName[$callId] -> ${result.success}: ${result.message}$verificationSummary"
+        val confidenceSummary = confidence?.let { " confidence=${it.name.lowercase()}" }.orEmpty()
+        val expectationSummary = expectedResult?.let { " expected=$it" }.orEmpty()
+        return "$toolName[$callId] -> ${result.success}: ${result.message}$verificationSummary$confidenceSummary$expectationSummary"
     }
 
     fun toJson(): JSONObject = JSONObject()
@@ -119,6 +130,21 @@ data class AgentToolResult(
         .put("mutating", mutating)
         .put("requiresFreshObservationAfter", requiresFreshObservationAfter)
         .put("verification", verification?.toJson() ?: JSONObject.NULL)
+        .put("target", target ?: JSONObject.NULL)
+        .put("confidence", confidence?.name ?: JSONObject.NULL)
+        .put("expectedResult", expectedResult ?: JSONObject.NULL)
+}
+
+data class AgentDoNotRepeat(
+    val tool: String,
+    val target: String,
+    val reason: String,
+    val signature: String? = null
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("tool", tool)
+        .put("target", target)
+        .put("reason", reason)
 }
 
 data class AgentTurnRequest(
@@ -131,5 +157,6 @@ data class AgentTurnRequest(
     val history: List<String>,
     val activeApp: ActiveApp? = null,
     val deviceContext: DeviceContext? = null,
-    val lastResults: List<AgentToolResult> = emptyList()
+    val lastResults: List<AgentToolResult> = emptyList(),
+    val doNotRepeat: List<AgentDoNotRepeat> = emptyList()
 )

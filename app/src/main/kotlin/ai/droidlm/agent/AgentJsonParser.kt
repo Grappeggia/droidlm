@@ -1,5 +1,7 @@
 package ai.droidlm.agent
 
+import ai.droidlm.intent.ActionConfidence
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -44,7 +46,9 @@ class AgentJsonParser {
                     id = obj.optString("id").takeIf { it.isNotBlank() } ?: "call_1",
                     name = action.normalizedToolName(),
                     args = args,
-                    reason = obj.optString("reason")
+                    reason = obj.optString("reason"),
+                    confidence = parseConfidence(obj, args),
+                    expectedResult = parseExpectedResult(obj, args)
                 )
             )
         )
@@ -63,7 +67,9 @@ class AgentJsonParser {
             id = obj.optString("id").takeIf { it.isNotBlank() } ?: "call_$ordinal",
             name = rawName.normalizedToolName(),
             args = args,
-            reason = reason
+            reason = reason,
+            confidence = parseConfidence(obj, args),
+            expectedResult = parseExpectedResult(obj, args)
         )
     }
 
@@ -75,6 +81,18 @@ class AgentJsonParser {
         }
         return args
     }
+
+    private fun parseConfidence(obj: JSONObject, args: JSONObject): ActionConfidence = ActionConfidence.parse(
+        obj.optString("confidence").takeIf { it.isNotBlank() }
+            ?: args.optString("confidence").takeIf { it.isNotBlank() }
+    )
+
+    private fun parseExpectedResult(obj: JSONObject, args: JSONObject): String? =
+        obj.optString("expectedResult").takeIf { it.isNotBlank() }
+            ?: args.optString("expectedResult").takeIf { it.isNotBlank() }
+            ?: obj.optString("expected_result").takeIf { it.isNotBlank() }
+            ?: args.optString("expected_result").takeIf { it.isNotBlank() }
+
 
     private fun parseStatus(rawStatus: String, calls: List<AgentToolCall>): AgentDecisionStatus {
         val normalized = rawStatus.trim().uppercase()

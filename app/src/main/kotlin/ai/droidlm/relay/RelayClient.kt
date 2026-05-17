@@ -2,6 +2,7 @@ package ai.droidlm.relay
 
 import ai.droidlm.context.UiContextJson
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
+import ai.droidlm.intent.ActionConfidence
 import ai.droidlm.intent.AnchorPosition
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DocumentEdit
@@ -72,7 +73,15 @@ data class PlanPreviewStep(
     val action: DroidLmAction,
     val actionLabel: String,
     val reason: String,
-    val requiresConfirmation: Boolean
+    val requiresConfirmation: Boolean,
+    val confidence: ActionConfidence = ActionConfidence.LOW,
+    val expectedResult: String? = null
+)
+
+data class PlannedAction(
+    val action: DroidLmAction,
+    val confidence: ActionConfidence = ActionConfidence.LOW,
+    val expectedResult: String? = null
 )
 
 data class PlanPreview(
@@ -83,7 +92,8 @@ data class PlanPreview(
     val steps: List<PlanPreviewStep>
 ) {
     val isSafe: Boolean
-        get() = riskLevel.equals("LOW", ignoreCase = true) && !requiresConfirmation && steps.none { it.requiresConfirmation }
+        get() = riskLevel.equals("LOW", ignoreCase = true) && !requiresConfirmation &&
+            steps.none { it.requiresConfirmation || it.confidence == ActionConfidence.LOW }
 }
 
 data class OpenAiKeySetupResponse(
@@ -183,12 +193,19 @@ class RelayClient(
     }
 
     suspend fun planAction(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<DroidLmAction> {
+        return when (val result = planActionWithMetadata(baseUrl, requestBody)) {
+            is RelayCallResult.Failure -> result
+            is RelayCallResult.Success -> RelayCallResult.Success(result.value.action)
+        }
+    }
+
+    suspend fun planActionWithMetadata(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<PlannedAction> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
         val request = Request.Builder()
             .url("$normalized/plan-action")
             .post(requestBody.toJson().toString().toRequestBody(JSON_MEDIA_TYPE))
             .build()
-        return execute(request, ::parsePlanActionJson)
+        return execute(request, ::parsePlannedActionJson)
     }
 
     suspend fun planPreview(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
@@ -284,12 +301,15 @@ class RelayClient(
         val stepsArray = obj.optJSONArray("steps") ?: JSONArray()
         val steps = (0 until stepsArray.length()).mapNotNull { index ->
             stepsArray.optJSONObject(index)?.let { step ->
+                val planned = parsePlannedActionJson(step.toString())
                 PlanPreviewStep(
                     index = step.optInt("index", index + 1),
-                    action = parsePlanActionJson(step.toString()),
+                    action = planned.action,
                     actionLabel = step.optString("action", "NO_OP"),
                     reason = step.optString("reason", ""),
-                    requiresConfirmation = step.optBoolean("requiresConfirmation", false)
+                    requiresConfirmation = step.optBoolean("requiresConfirmation", false),
+                    confidence = planned.confidence,
+                    expectedResult = planned.expectedResult
                 )
             }
         }
@@ -302,9 +322,19 @@ class RelayClient(
         )
     }
 
-    fun parsePlanActionJson(json: String): DroidLmAction {
+    fun parsePlanActionJson(json: String): DroidLmAction = parsePlannedActionJson(json).action
+
+    fun parsePlannedActionJson(json: String): PlannedAction {
         val obj = coerceActionObject(JSONObject(json))
-        return when (obj.optString("action").uppercase()) {
+        return PlannedAction(
+            action = parsePlanActionObject(obj),
+            confidence = ActionConfidence.parse(obj.optString("confidence").takeIf { it.isNotBlank() }),
+            expectedResult = obj.optString("expectedResult").takeIf { it.isNotBlank() }
+                ?: obj.optString("expected_result").takeIf { it.isNotBlank() }
+        )
+    }
+
+    private fun parsePlanActionObject(obj: JSONObject): DroidLmAction = when (obj.optString("action").uppercase()) {
             "OPEN_APP" -> DroidLmAction.OpenApp(
                 appName = obj.optString("appName").takeIf { it.isNotBlank() },
                 packageName = obj.getString("packageName"),
@@ -519,7 +549,7 @@ class RelayClient(
             "NO_OP" -> DroidLmAction.NoOp(obj.optString("message", obj.optString("reason", "No operation")))
             else -> DroidLmAction.NeedLlmPlanning("Relay returned unsupported action: ${obj.optString("action")}")
         }
-    }
+
 
     fun parseVisionAnalysisJson(json: String): VisionAnalysis {
         val obj = JSONObject(json)

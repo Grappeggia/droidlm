@@ -2,10 +2,12 @@ package ai.droidlm.execution
 
 import ai.droidlm.agent.AgentBudgets
 import ai.droidlm.agent.AgentDecisionStatus
+import ai.droidlm.agent.AgentDoNotRepeat
 import ai.droidlm.agent.AgentRecoveryCandidate
 import ai.droidlm.agent.AgentRecoveryPolicy
 import ai.droidlm.agent.AgentToolRegistry
 import ai.droidlm.agent.AgentToolResult
+import ai.droidlm.agent.AgentToolCall
 import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.agent.AgentVerifier
 import ai.droidlm.agent.ToolRisk
@@ -107,6 +109,7 @@ internal class ExecutionAgentLoopRunner(
                 "agent_turn_started",
                 mapOf("turn" to turn, "toolCalls" to totalToolCalls, "historySize" to history.size, "packageCount" to packages.size, "activePackage" to activeApp?.packageName)
             )
+            val doNotRepeat = buildDoNotRepeat(toolResults)
             val request = AgentTurnRequest(
                 goal = goal,
                 turnIndex = turn,
@@ -117,7 +120,8 @@ internal class ExecutionAgentLoopRunner(
                 history = history.takeLast(12),
                 activeApp = activeApp,
                 deviceContext = deviceContext,
-                lastResults = toolResults.takeLast(5)
+                lastResults = toolResults.takeLast(5),
+                doNotRepeat = doNotRepeat
             )
             val decision = when (val agentResult = openAiClient.nextAgentTurn(apiKey, settings.openAiModel, request)) {
                 is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(agentResult), agentResult.errorCode))
@@ -189,6 +193,18 @@ internal class ExecutionAgentLoopRunner(
                     break
                 }
                 val execution = executionResult.getOrThrow()
+                val repeat = doNotRepeat.firstOrNull { it.signature == signatureFor(call) }
+                if (repeat != null) {
+                    val message = "Agent attempted to repeat ${repeat.tool} on ${repeat.target}: ${repeat.reason}"
+                    debugEvent(diagnosticSessionId, "agent_tool_repeat_blocked", mapOf("turn" to turn, "tool" to call.name, "target" to repeat.target, "reason" to repeat.reason))
+                    history += "${call.name}[${call.id}] blocked: $message"
+                    consecutiveFailures += 1
+                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                        return finish(ActionResult.fail(message, "AGENT_REPEAT_BLOCKED"))
+                    }
+                    shouldObserveAgain = true
+                    break
+                }
                 if (execution.spec.mutating) {
                     mutatingCallsThisTurn += 1
                     if (mutatingCallsThisTurn > budgets.maxMutatingToolCallsPerTurn) {
@@ -201,7 +217,25 @@ internal class ExecutionAgentLoopRunner(
                 if (safety.blocked) {
                     return finish(ActionResult.fail(safety.reason ?: "Agent action blocked by safety policy", "AGENT_SAFETY_BLOCKED"))
                 }
-                val needsConfirmation = safety.needsConfirmationPrompt(settings.requireRiskConfirmation) || agentToolNeedsConfirmation(execution.spec.risk, settings.requireRiskConfirmation)
+                val confidencePolicy = ActionConfidencePolicy.evaluate(
+                    confidence = call.confidence,
+                    action = execution.action,
+                    risk = execution.spec.risk,
+                    mutating = execution.spec.mutating,
+                    safetyRequiresConfirmation = safety.requiresConfirmation || safety.mandatoryConfirmation
+                )
+                if (!confidencePolicy.allowed) {
+                    val message = confidencePolicy.reason ?: "Agent confidence policy blocked ${execution.spec.name}"
+                    debugEvent(diagnosticSessionId, "agent_confidence_policy_blocked", mapOf("turn" to turn, "tool" to execution.spec.name, "confidence" to call.confidence.name, "message" to message))
+                    history += "${execution.spec.name}[${call.id}] blocked by confidence policy: $message"
+                    consecutiveFailures += 1
+                    if (consecutiveFailures >= budgets.maxConsecutiveFailures) {
+                        return finish(ActionResult.fail(message, "AGENT_CONFIDENCE_BLOCKED"))
+                    }
+                    shouldObserveAgain = true
+                    break
+                }
+                val needsConfirmation = confidencePolicy.requiresConfirmation || safety.needsConfirmationPrompt(settings.requireRiskConfirmation) || agentToolNeedsConfirmation(execution.spec.risk, settings.requireRiskConfirmation)
                 if (needsConfirmation) {
                     val confirmed = requestConfirmation(
                         goal,
@@ -235,7 +269,18 @@ internal class ExecutionAgentLoopRunner(
                 } else {
                     rawResult
                 }
-                val toolResult = AgentToolResult(call.id, execution.spec.name, lastResult, execution.spec.mutating, requiresFreshObservation, verification)
+                val toolResult = AgentToolResult(
+                    callId = call.id,
+                    toolName = execution.spec.name,
+                    result = lastResult,
+                    mutating = execution.spec.mutating,
+                    requiresFreshObservationAfter = requiresFreshObservation,
+                    verification = verification,
+                    target = targetFor(call, execution.action),
+                    signature = signatureFor(call),
+                    confidence = call.confidence,
+                    expectedResult = call.expectedResult
+                )
                 toolResults += toolResult
                 history += toolResult.summary()
                 currentState = afterState ?: currentState
@@ -250,7 +295,9 @@ internal class ExecutionAgentLoopRunner(
                         "errorCode" to lastResult.errorCode,
                         "freshObservation" to requiresFreshObservation,
                         "verificationStatus" to verification.status.name,
-                        "verificationMessage" to verification.message
+                        "verificationMessage" to verification.message,
+                        "confidence" to call.confidence.name,
+                        "expectedResult" to call.expectedResult
                     )
                 )
                 if (!lastResult.success) {
@@ -307,6 +354,81 @@ internal class ExecutionAgentLoopRunner(
             }
         }
         return finish(ActionResult.fail("Agent reached turn limit (${budgets.maxTurns})", "AGENT_MAX_TURNS"))
+    }
+
+    private fun buildDoNotRepeat(results: List<AgentToolResult>): List<AgentDoNotRepeat> = results
+        .asReversed()
+        .filter { result -> result.mutating && !result.signature.isNullOrBlank() && shouldAvoidRepeating(result) }
+        .distinctBy { result -> result.signature }
+        .take(8)
+        .map { result ->
+            AgentDoNotRepeat(
+                tool = result.toolName,
+                target = result.target ?: result.signature.orEmpty(),
+                reason = doNotRepeatReason(result),
+                signature = result.signature
+            )
+        }
+
+    private fun shouldAvoidRepeating(result: AgentToolResult): Boolean {
+        if (!result.result.success) return true
+        val verificationMessage = result.verification?.message.orEmpty()
+        return verificationMessage.contains("UI signature did not change", ignoreCase = true) ||
+            verificationMessage.contains("verification failed", ignoreCase = true)
+    }
+
+    private fun doNotRepeatReason(result: AgentToolResult): String {
+        if (!result.result.success) return result.result.message
+        return result.verification?.message ?: "No observable result after mutating action"
+    }
+
+    private fun signatureFor(call: AgentToolCall): String {
+        val args = call.args
+        val target = listOf(
+            args.optString("nodeId"),
+            args.optString("targetNodeId"),
+            args.optString("text"),
+            args.optString("label"),
+            args.optString("targetText"),
+            args.optString("anchorText"),
+            args.optString("packageName"),
+            args.optString("appName"),
+            args.optString("uri"),
+            args.optString("url")
+        ).firstOrNull { it.isNotBlank() }
+            ?: listOf(args.optString("x"), args.optString("y")).filter { it.isNotBlank() }.joinToString(",").ifBlank { call.reason }
+        return "${call.name}:${target.trim().lowercase()}"
+    }
+
+    private fun targetFor(call: AgentToolCall, action: DroidLmAction): String = when (action) {
+        is DroidLmAction.OpenApp -> action.appName ?: action.packageName
+        is DroidLmAction.OpenAppStoreListing -> action.appName ?: action.packageName
+        is DroidLmAction.TapNode -> action.nodeId
+        is DroidLmAction.FocusNode -> action.nodeId
+        is DroidLmAction.TapText -> action.text
+        is DroidLmAction.LongPressNode -> action.nodeId ?: action.text ?: call.reason
+        is DroidLmAction.Scroll -> action.targetNodeId ?: action.untilText ?: action.direction.name
+        is DroidLmAction.NavigateToArtifactTarget -> action.label
+        is DroidLmAction.SetToggle -> action.nodeId ?: action.label ?: call.reason
+        is DroidLmAction.ExpandCollapse -> action.nodeId ?: action.label ?: call.reason
+        is DroidLmAction.SetSlider -> action.nodeId ?: action.label ?: call.reason
+        is DroidLmAction.FindTextOnScreen -> action.text
+        is DroidLmAction.SearchAccessibilityContent -> action.query ?: action.sectionLabel ?: action.exclude ?: call.reason
+        is DroidLmAction.SwitchApp -> action.appName ?: action.packageName ?: call.reason
+        is DroidLmAction.OpenUrl -> action.url
+        is DroidLmAction.OpenDeepLink -> action.uri
+        is DroidLmAction.PickFromChooser -> action.itemText
+        is DroidLmAction.PickFile -> action.fileName
+        is DroidLmAction.PickPhoto -> action.photoLabel
+        is DroidLmAction.ShareToApp -> action.appName ?: action.packageName ?: call.reason
+        is DroidLmAction.SetSelection -> action.nodeId ?: "${action.start}-${action.end}"
+        is DroidLmAction.SetFullText -> action.nodeId ?: "current editable"
+        is DroidLmAction.TapTextAnchor -> action.anchorText
+        is DroidLmAction.VerifyTextChange -> action.expectedText
+        is DroidLmAction.InsertTextAtAnchor -> action.anchorText
+        is DroidLmAction.ReplaceTextRange -> action.targetText
+        is DroidLmAction.ReplaceDocumentText -> action.targetText
+        else -> call.reason.ifBlank { action.displayName() }
     }
 
     private fun canContinueWithinSameArtifactTurn(

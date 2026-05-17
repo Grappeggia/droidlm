@@ -141,6 +141,9 @@ class OpenAiClientTest {
             assertTrue(prompt.contains("SEARCH_ACCESSIBILITY_CONTENT"))
             assertTrue(prompt.contains("accessibilityContentContext"))
             assertTrue(prompt.contains("Do not use FIND_TEXT_ON_SCREEN to search for an excluded word"))
+            assertTrue(prompt.contains("confidence"))
+            assertTrue(prompt.contains("expectedResult"))
+            assertTrue(prompt.contains("Decision contract"))
             assertFalse(prompt.contains("com.google.android.apps.docs.editors.sheets\",\"reason\":\"why"))
         }
     }
@@ -163,6 +166,10 @@ class OpenAiClientTest {
             assertTrue(prompt.contains("Available tools"))
             assertTrue(prompt.contains("Remaining tool calls: 8"))
             assertTrue(prompt.contains("OPEN_APP"))
+            assertTrue(prompt.contains("doNotRepeat") || prompt.contains("Do not repeat"))
+            assertTrue(prompt.contains("confidence"))
+            assertTrue(prompt.contains("expectedResult"))
+            assertTrue(prompt.contains("LOW must gather more observation"))
         }
     }
 
@@ -195,7 +202,7 @@ class OpenAiClientTest {
           "riskLevel":"LOW",
           "requiresConfirmation":false,
           "steps":[
-            {"index":1,"action":"OPEN_APP","appName":"Drive","packageName":"com.google.android.apps.docs","reason":"Open Drive","requiresConfirmation":false}
+            {"index":1,"action":"OPEN_APP","appName":"Drive","packageName":"com.google.android.apps.docs","reason":"Open Drive","requiresConfirmation":false,"confidence":"HIGH","expectedResult":"Drive opens"}
           ]
         }
     """.trimIndent()

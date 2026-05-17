@@ -1,5 +1,6 @@
 package ai.droidlm.relay
 
+import ai.droidlm.intent.ActionConfidence
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
@@ -99,6 +100,9 @@ class RelayClientTest {
     @Test fun planActionJsonParse() {
         val action = RelayClient().parsePlanActionJson("{\"action\":\"OPEN_APP\",\"appName\":\"Drive\",\"packageName\":\"com.google.android.apps.docs\",\"reason\":\"test\",\"requiresConfirmation\":false}")
         assertTrue(action is DroidLmAction.OpenApp)
+        val planned = RelayClient().parsePlannedActionJson("{\"action\":\"OPEN_APP\",\"appName\":\"Drive\",\"packageName\":\"com.google.android.apps.docs\",\"reason\":\"test\",\"confidence\":\"HIGH\",\"expectedResult\":\"Drive opens\"}")
+        assertEquals(ActionConfidence.HIGH, planned.confidence)
+        assertEquals("Drive opens", planned.expectedResult)
     }
 
     @Test fun planActionJsonParsesAppStoreListing() {
@@ -209,12 +213,14 @@ class RelayClientTest {
             "summary":"Open Drive",
             "riskLevel":"LOW",
             "requiresConfirmation":false,
-            "steps":[{"index":1,"action":"OPEN_APP","appName":"Drive","packageName":"com.google.android.apps.docs","reason":"Open Drive","requiresConfirmation":false}]
+            "steps":[{"index":1,"action":"OPEN_APP","appName":"Drive","packageName":"com.google.android.apps.docs","reason":"Open Drive","requiresConfirmation":false,"confidence":"HIGH","expectedResult":"Drive opens"}]
         }""")
         assertEquals("gpt-5.4-nano", plan.model)
         assertTrue(plan.isSafe)
         assertEquals(1, plan.steps.size)
         assertTrue(plan.steps.first().action is DroidLmAction.OpenApp)
+        assertEquals(ActionConfidence.HIGH, plan.steps.first().confidence)
+        assertEquals("Drive opens", plan.steps.first().expectedResult)
     }
 
     @Test fun planActionRequestIncludesDeviceContext() = runTest {

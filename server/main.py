@@ -144,6 +144,8 @@ ACTION_SCHEMA = {
         },
         "reason": {"type": "string"},
         "requiresConfirmation": {"type": "boolean"},
+        "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+        "expectedResult": {"type": "string"},
         "appName": {"type": "string"},
         "packageName": {"type": "string"},
         "x": {"type": "integer"},
@@ -166,7 +168,7 @@ ACTION_SCHEMA = {
         "replacementText": {"type": "string"},
         "confirmationPrompt": {"type": "string"},
     },
-    "required": ["action", "reason", "requiresConfirmation"],
+    "required": ["action", "reason", "requiresConfirmation", "confidence"],
     "additionalProperties": True,
 }
 
@@ -185,7 +187,7 @@ PLAN_SCHEMA = {
                     "index": {"type": "integer"},
                     **ACTION_SCHEMA["properties"],
                 },
-                "required": ["index", "action", "reason", "requiresConfirmation"],
+                "required": ["index", "action", "reason", "requiresConfirmation", "confidence"],
                 "additionalProperties": True,
             },
         },
@@ -336,7 +338,10 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
         "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal, local actions. Never claim actions were executed. "
         "Set riskLevel HIGH and requiresConfirmation true for payments, purchases, messages, emails, deletes, credentials, account/security/privacy changes, installs, uninstalls, or private-data sharing. "
-        "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing."
+        "Use LOW only for harmless actions like opening an app, pressing back/home, OCR, or non-sensitive local text editing. "
+        "Decision contract: do not choose mutating actions unless the target is present in the current observation, the action searches/navigates, or the action recovers from a documented failure. "
+        "Every step must include confidence HIGH, MEDIUM, or LOW plus expectedResult for mutating actions. HIGH can execute directly when low risk; MEDIUM only when reversible and low risk; LOW must gather observation, search, OCR, or ask the user before mutating. "
+        "After a mutating action, predict the observable result. If it does not occur, do not repeat the same action. Use node tools before coordinate tools and artifact tools before UI tools for Docs/Sheets. Return DONE immediately when complete. "
     )
     user = {
         "goal": payload.goal,
@@ -380,7 +385,11 @@ async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
         "Do not emit LONG_PRESS from LONG_CLICK node actions unless exact x/y coordinates are available. "
         "Ask confirmation before sharing, deleting, moving, uploading, downloading, renaming, or editing sensitive document/spreadsheet content. "
         "Prefer safe, minimal actions. Ask for confirmation for risky operations. Never claim you executed an action. "
-        "Use DONE when task is complete. Do not request actions outside the available Android tool schema."
+        "Use DONE when task is complete. Do not request actions outside the available Android tool schema. "
+        "Every action must include confidence HIGH, MEDIUM, or LOW plus expectedResult for mutating actions. "
+        "Decision contract: do not choose a mutating action unless the target is present in the current observation, the action searches/navigates, or the action recovers from a documented failure. "
+        "HIGH can execute directly when low risk; MEDIUM only when reversible and low risk; LOW must gather observation, search, OCR, or ask the user before mutating. "
+        "After a mutating action, predict the observable result. If it does not occur, do not repeat the same action. Use node tools before coordinate tools and artifact tools before UI tools for Docs/Sheets. Return DONE immediately when complete. "
     )
     user = {
         "goal": payload.goal,
