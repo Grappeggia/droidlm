@@ -76,6 +76,71 @@ class AppRuntimeStoresTest {
         assertNull(runtime.currentGateway())
     }
 
+    @Test fun accessibilityRuntimeTracksEventStreamState() {
+        val runtime = AccessibilityRuntime()
+
+        val first = runtime.recordAccessibilityEvent(
+            eventType = 1,
+            packageName = "com.example",
+            className = "ExampleActivity",
+            contentChangeTypes = 2,
+            windowChangeTypes = null,
+            eventTimeMs = 100L,
+            observedAtElapsedMs = 1_000L
+        )
+        val second = runtime.recordAccessibilityEvent(
+            eventType = 2,
+            packageName = "com.example.next",
+            className = "NextActivity",
+            contentChangeTypes = 4,
+            windowChangeTypes = 8,
+            eventTimeMs = 150L,
+            observedAtElapsedMs = 1_250L
+        )
+
+        val state = runtime.eventState.value
+        assertTrue(state.hasEvents)
+        assertSame(second, state.lastEvent)
+        assertSame(first, state.previousEvent)
+        assertEquals(2L, state.sequence)
+        assertEquals(50L, state.quietForMs(1_300L))
+        assertEquals(0L, state.quietForMs(1_200L))
+        assertEquals("com.example.next", state.lastEvent?.packageName)
+        assertEquals(8, state.lastEvent?.windowChangeTypes)
+    }
+
+    @Test fun accessibilityRuntimeResetsEventStreamOnAttachAndDetach() {
+        val runtime = AccessibilityRuntime()
+        runtime.recordAccessibilityEvent(
+            eventType = 1,
+            packageName = "com.example",
+            className = "ExampleActivity",
+            contentChangeTypes = null,
+            windowChangeTypes = null,
+            eventTimeMs = 100L,
+            observedAtElapsedMs = 1_000L
+        )
+
+        val token = runtime.attach(FakeAccessibilityGateway())
+
+        assertFalse(runtime.eventState.value.hasEvents)
+        assertEquals(0L, runtime.eventState.value.sequence)
+
+        runtime.recordAccessibilityEvent(
+            eventType = 2,
+            packageName = "com.example",
+            className = "ExampleActivity",
+            contentChangeTypes = null,
+            windowChangeTypes = null,
+            eventTimeMs = 120L,
+            observedAtElapsedMs = 1_200L
+        )
+        runtime.detach(token)
+
+        assertFalse(runtime.eventState.value.hasEvents)
+        assertEquals(0L, runtime.eventState.value.sequence)
+    }
+
     private class FakeAccessibilityGateway : AccessibilityGateway {
         override fun captureState(includeAllWindows: Boolean): PortalState = PortalState(null, null, null, null, emptyList())
         override suspend fun tap(x: Int, y: Int): ActionResult = ActionResult.ok()

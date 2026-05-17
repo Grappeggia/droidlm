@@ -39,16 +39,29 @@ class DroidLMAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         accessibilityEventCount += 1
         val now = SystemClock.elapsedRealtime()
+        val eventSnapshot = deps.accessibilityRuntime.recordAccessibilityEvent(
+            eventType = event?.eventType,
+            packageName = event?.packageName?.toString(),
+            className = event?.className?.toString(),
+            contentChangeTypes = event?.contentChangeTypesCompat(),
+            windowChangeTypes = event?.windowChangeTypesCompat(),
+            eventTimeMs = event?.eventTime,
+            observedAtElapsedMs = now
+        )
         if (accessibilityEventCount == 1L || accessibilityEventCount % 25L == 0L || now - lastAccessibilityEventLogAtMs >= 5_000L) {
             lastAccessibilityEventLogAtMs = now
             recordLifecycle(
                 "accessibility_event_observed",
                 mapOf(
                     "count" to accessibilityEventCount,
-                    "type" to event?.eventType,
-                    "package" to event?.packageName?.toString(),
-                    "className" to event?.className?.toString(),
-                    "textCount" to (event?.text?.size ?: 0)
+                    "sequence" to eventSnapshot.sequence,
+                    "type" to eventSnapshot.eventType,
+                    "package" to eventSnapshot.packageName,
+                    "className" to eventSnapshot.className,
+                    "contentChangeTypes" to eventSnapshot.contentChangeTypes,
+                    "windowChangeTypes" to eventSnapshot.windowChangeTypes,
+                    "textCount" to (event?.text?.size ?: 0),
+                    "quietForMs" to deps.accessibilityRuntime.eventState.value.quietForMs(now)
                 )
             )
         }
@@ -69,6 +82,12 @@ class DroidLMAccessibilityService : AccessibilityService() {
     private fun recordLifecycle(event: String, fields: Map<String, Any?> = emptyMap()) {
         runCatching { deps.speechDiagnosticsLogger.record(null, event, fields) }
     }
+
+    private fun AccessibilityEvent.contentChangeTypesCompat(): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) contentChangeTypes else null
+
+    private fun AccessibilityEvent.windowChangeTypesCompat(): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) windowChanges else null
 
     fun captureState(includeAllWindows: Boolean): PortalState {
         val metrics = resources.displayMetrics
