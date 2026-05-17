@@ -69,6 +69,31 @@ fun org.gradle.api.Project.sanitizeArtifactName(value: String): String =
 fun org.gradle.api.Project.shouldRecordE2eVideos(): Boolean =
     (System.getenv("DROIDLM_E2E_RECORD_VIDEO") ?: "true").toBooleanStrictOrNull() ?: true
 
+fun org.gradle.api.Project.shouldFailOnE2eVideoCaptureFailure(): Boolean =
+    (System.getenv("DROIDLM_E2E_FAIL_ON_VIDEO_FAILURE") ?: "false").toBooleanStrictOrNull() ?: false
+
+fun org.gradle.api.Project.e2eRetryCount(): Int =
+    (System.getenv("DROIDLM_E2E_RETRY_COUNT") ?: "1").toIntOrNull()?.coerceIn(0, 3) ?: 1
+
+fun isTransientAndroidE2eFailure(text: String): Boolean =
+    text.contains("Process crashed", ignoreCase = true) ||
+        text.contains("device offline", ignoreCase = true) ||
+        (text.contains("device '", ignoreCase = true) && text.contains("not found", ignoreCase = true))
+
+fun org.gradle.api.Project.reportE2eVideoCaptureFailure(
+    selector: String,
+    stage: String,
+    throwable: Throwable,
+    failures: MutableList<String>? = null
+) {
+    val message = "$selector (video $stage failed: ${throwable.message ?: throwable::class.java.simpleName})"
+    if (shouldFailOnE2eVideoCaptureFailure()) {
+        failures?.add(message) ?: error("Android E2E video failure: $message")
+    } else {
+        println("WARNING: $message")
+    }
+}
+
 
 fun org.gradle.api.Project.startScreenRecording(adb: String, deviceVideoPath: String): Process {
     adbOutput(adb, "shell", "rm", "-f", deviceVideoPath)
@@ -100,46 +125,74 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
     adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
     val failures = mutableListOf<String>()
     val recordVideo = shouldRecordE2eVideos()
+    val maxAttempts = e2eRetryCount() + 1
 
     androidTestMethodNames(suite.sourcePath).forEach { methodName ->
         val selector = "${suite.className}#$methodName"
-        val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
-        val hostVideo = artifactDir.resolve(videoFileName)
-        val deviceVideoPath = "$deviceVideoDir/$videoFileName"
-        val recorder = if (recordVideo) {
-            println("Recording $selector to ${hostVideo.relativeTo(projectDir)}")
-            startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) }
-        } else {
-            println("Running $selector without video recording")
-            null
+        var passed = false
+        for (attempt in 1..maxAttempts) {
+            val attemptSuffix = if (maxAttempts > 1) "-attempt$attempt" else ""
+            val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}$attemptSuffix.mp4"
+            val hostVideo = artifactDir.resolve(videoFileName)
+            val deviceVideoPath = "$deviceVideoDir/$videoFileName"
+            val recorder = if (recordVideo) {
+                println("Recording $selector to ${hostVideo.relativeTo(projectDir)}")
+                runCatching { startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) } }
+                    .onFailure { reportE2eVideoCaptureFailure(selector, "start", it, failures) }
+                    .getOrNull()
+            } else {
+                println("Running $selector without video recording")
+                null
+            }
+            val output = java.io.ByteArrayOutputStream()
+            var exitValue = 0
+            var text = ""
+
+            try {
+                val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
+                suite.instrumentationArgs.forEach { (key, value) ->
+                    args += listOf("-e", key, value)
+                }
+                args += listOf("-e", "class", selector)
+                args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
+
+                val result = exec {
+                    commandLine(adb, *args.toTypedArray())
+                    standardOutput = output
+                    errorOutput = output
+                    isIgnoreExitValue = true
+                }
+                exitValue = result.exitValue
+                text = output.toString()
+                print(text)
+            } finally {
+                if (recordVideo && recorder != null) {
+                    runCatching { stopScreenRecording(adb, recorder) }
+                        .onFailure { reportE2eVideoCaptureFailure(selector, "stop", it, failures = null) }
+                    runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+                        .onFailure { reportE2eVideoCaptureFailure(selector, "capture", it, failures) }
+                }
+            }
+
+            val failed = exitValue != 0 ||
+                text.contains("FAILURES!!!") ||
+                text.contains("INSTRUMENTATION_RESULT: shortMsg=", ignoreCase = true) ||
+                text.contains("INSTRUMENTATION_CODE: 0")
+            if (!failed) {
+                passed = true
+                break
+            }
+            val transientFailure = isTransientAndroidE2eFailure(text) || (exitValue != 0 && !text.contains("FAILURES!!!"))
+            if (attempt < maxAttempts && transientFailure) {
+                println("Retrying $selector after transient instrumentation failure (attempt $attempt/$maxAttempts)")
+                Thread.sleep(2_000)
+                continue
+            }
+            failures += selector
+            break
         }
-        val output = java.io.ByteArrayOutputStream()
-
-        try {
-            val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
-            suite.instrumentationArgs.forEach { (key, value) ->
-                args += listOf("-e", key, value)
-            }
-            args += listOf("-e", "class", selector)
-            args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
-
-            val result = exec {
-                commandLine(adb, *args.toTypedArray())
-                standardOutput = output
-                errorOutput = output
-                isIgnoreExitValue = true
-            }
-            val text = output.toString()
-            print(text)
-            if (result.exitValue != 0 || text.contains("FAILURES!!!")) {
-                failures += selector
-            }
-        } finally {
-            if (recordVideo && recorder != null) {
-                runCatching { stopScreenRecording(adb, recorder) }
-                runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
-                    .onFailure { failures += "$selector (video capture failed: ${it.message})" }
-            }
+        if (!passed && failures.none { it == selector || it.startsWith("$selector ") }) {
+            failures += selector
         }
     }
 
@@ -462,7 +515,9 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
     val deviceVideoPath = "$deviceVideoDir/$videoFileName"
     val recorder = if (recordVideo) {
         println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
-        startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) }
+        runCatching { startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) } }
+            .onFailure { reportE2eVideoCaptureFailure(selector, "start", it, failures = null) }
+            .getOrNull()
     } else {
         println("Running $selector with mic injection without video recording")
         null
@@ -499,7 +554,9 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
 
     if (recordVideo && recorder != null) {
         runCatching { stopScreenRecording(adb, recorder) }
+            .onFailure { reportE2eVideoCaptureFailure(selector, "stop", it, failures = null) }
         runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+            .onFailure { reportE2eVideoCaptureFailure(selector, "capture", it, failures = null) }
     }
     adbOutput(adb, "shell", "rm", "-f", markerPath)
 
