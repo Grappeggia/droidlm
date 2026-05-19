@@ -26,6 +26,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -137,7 +138,7 @@ class DroidLmDocsAgentLoopStressReleaseE2ETest {
             waitForEditableNode(5_000)
         )
 
-        val result = app.executor.executeTranscript(scenario.prompt)
+        val result = withTimeout(AGENT_LOOP_TIMEOUT_MS) { app.executor.executeTranscript(scenario.prompt) }
         val settled = waitUntilSuspend(8_000) {
             currentPackageName() == DOCS_PACKAGE &&
                 file.readText() == scenario.expectedDocument &&
@@ -198,6 +199,8 @@ class DroidLmDocsAgentLoopStressReleaseE2ETest {
               "id":"$id",
               "name":"$name",
               "reason":"$reason",
+              "confidence":"HIGH",
+              "expectedResult":${jsonString(reason)},
               "args":{${rawArgsJson}}
             }
         """.trimIndent()
@@ -889,6 +892,7 @@ class DroidLmDocsAgentLoopStressReleaseE2ETest {
 
     companion object {
         private const val DOCS_PACKAGE = "com.google.android.apps.docs.editors.docs"
+        private const val AGENT_LOOP_TIMEOUT_MS = 45_000L
 
         private fun extractHeadings(text: String): List<String> {
             val lines = text.replace("\r\n", "\n").split("\n")

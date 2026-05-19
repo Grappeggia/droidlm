@@ -26,6 +26,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -106,7 +107,7 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         openDocument(file)
         assertTrue("Expected scripted Docs portal to expose an editable target before running AGENT_LOOP", waitForEditableNode(5_000))
 
-        val result = app.executor.executeTranscript(SHORT_PROMPT)
+        val result = withTimeout(AGENT_LOOP_TIMEOUT_MS) { app.executor.executeTranscript(SHORT_PROMPT) }
         val settled = waitUntilSuspend(10_000) {
             currentPackageName() == DOCS_PACKAGE &&
                 file.readText() == EXPECTED_DOCUMENT &&
@@ -193,6 +194,8 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
               "id":"$id",
               "name":"$name",
               "reason":"$reason",
+              "confidence":"HIGH",
+              "expectedResult":${jsonString(reason)},
               "args":{${argsJson}}
             }
         """.trimIndent()
@@ -545,6 +548,7 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
 
     companion object {
         private const val DOCS_PACKAGE = "com.google.android.apps.docs.editors.docs"
+        private const val AGENT_LOOP_TIMEOUT_MS = 45_000L
         private const val SHORT_PROMPT = "Make this doc review-ready for tomorrow and leave me back at Overview."
         private const val EXPECTED_AGENT_TURNS = 7
         private val SEED_DOCUMENT = """

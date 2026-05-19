@@ -329,6 +329,15 @@ stop_profile() {
   fail "Timed out waiting for $name ($serial) to stop after kill"
 }
 
+is_transient_profile_failure_log() {
+  local log_file="$1"
+  [[ -f "$log_file" ]] || return 1
+  grep -Fqi "Process crashed" "$log_file" ||
+    grep -Fqi "device offline" "$log_file" ||
+    grep -Fqi "failed to get feature set" "$log_file" ||
+    (grep -Fqi "device '" "$log_file" && grep -Fqi "not found" "$log_file")
+}
+
 run_profile() {
   local profile="$1"
   shift
@@ -351,15 +360,41 @@ run_profile() {
       log "Warning: could not configure adb reverse for $serial tcp:$relay_port"
     fi
   fi
-  log "Running Gradle on $name ($serial): $*"
   local stop_after_run="${DROIDLM_MATRIX_STOP_AFTER_RUN:-false}"
-  set +e
-  (
-    cd "$REPO_ROOT"
-    ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL="$debug_log_upload_url" "$GRADLEW" "$@" </dev/null
-  )
-  local status=$?
-  set -e
+  local max_retries="${DROIDLM_E2E_PROFILE_RETRY_COUNT:-1}"
+  if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+    max_retries=1
+  fi
+  local retry_count=0
+  local status=0
+  local task_label="${1:-gradle}"
+  task_label="${task_label//[^A-Za-z0-9._-]/_}"
+  while :; do
+    local gradle_log
+    gradle_log="$(mktemp "/tmp/droidlm-${name}-${task_label}.XXXX.log")"
+    log "Running Gradle on $name ($serial): $*"
+    set +e
+    (
+      cd "$REPO_ROOT"
+      ANDROID_SERIAL="$serial" DROIDLM_E2E_GRPC_PORT="$grpc_port" DROIDLM_E2E_RELAY_URL="$relay_url" DROIDLM_E2E_DEBUG_LOG_UPLOAD_URL="$debug_log_upload_url" "$GRADLEW" "$@" </dev/null 2>&1 | tee "$gradle_log"
+    )
+    status=$?
+    set -e
+    if (( status == 0 )); then
+      rm -f "$gradle_log"
+      break
+    fi
+    if (( retry_count >= max_retries )) || ! is_transient_profile_failure_log "$gradle_log"; then
+      log "Gradle output saved to $gradle_log"
+      break
+    fi
+    retry_count=$((retry_count + 1))
+    log "Transient device failure on $name ($serial); rebooting and retrying Gradle task (retry $retry_count/$max_retries)"
+    rm -f "$gradle_log"
+    stop_profile "$profile"
+    boot_profile "$profile"
+    configure_device_state "$serial"
+  done
   if [[ "$stop_after_run" == "true" ]]; then
     stop_profile "$profile"
   fi

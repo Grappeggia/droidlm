@@ -100,6 +100,8 @@ internal object ActionConfidencePolicy {
         is DroidLmAction.MoveCursor,
         is DroidLmAction.TapTextAnchor,
         is DroidLmAction.InsertTextAtAnchor,
+        is DroidLmAction.ReplaceTextRange,
+        is DroidLmAction.ApplyDocumentEdits,
         is DroidLmAction.AppendText,
         is DroidLmAction.PrependText,
         is DroidLmAction.FormatCurrentLineAsBullet,
@@ -116,8 +118,6 @@ internal object ActionConfidencePolicy {
         DroidLmAction.OcrScreen,
         is DroidLmAction.AnalyzeScreenshot,
         is DroidLmAction.DeleteSelectedText,
-        is DroidLmAction.ReplaceTextRange,
-        is DroidLmAction.ApplyDocumentEdits,
         is DroidLmAction.ReplaceDocumentText -> ToolRisk.SENSITIVE
 
         is DroidLmAction.OpenUrl,
