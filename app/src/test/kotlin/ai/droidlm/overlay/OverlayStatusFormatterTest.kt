@@ -128,7 +128,7 @@ class OverlayStatusFormatterTest {
         assertEquals("Plan: Open Drive", OverlayStatusFormatter.compactPlan(plan))
     }
 
-    @Test fun fullPlanIncludesSummaryRiskAndDetailedSteps() {
+    @Test fun fullPlanIncludesSummaryRiskAndStepsWithoutReasons() {
         val plan = PlanPreview(
             model = "gpt-5.4-nano",
             summary = "Open Sheets and type a value",
@@ -141,7 +141,7 @@ class OverlayStatusFormatterTest {
         )
 
         assertEquals(
-            "Open Sheets and type a value\nRisk: MEDIUM; confirmation required\n1. Open Google Sheets\n2. Type text\n   type in selected cell",
+            "Open Sheets and type a value\nRisk: MEDIUM; confirmation required\n1. Open Google Sheets\n2. Type text",
             OverlayStatusFormatter.fullPlan(plan)
         )
     }

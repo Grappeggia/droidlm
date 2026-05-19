@@ -734,15 +734,11 @@ private fun PlanPreviewCard(
     val plan = pendingPlan.plan
     Text("GPT plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Transcript: ${pendingPlan.transcript}")
-    Text("Model: ${plan.model}")
     Text("Risk: ${plan.riskLevel}")
     Text(plan.summary, fontWeight = FontWeight.SemiBold)
     plan.steps.forEach { step ->
         val actionLabel = ActionUiFormatter.full(step.action, step.actionLabel, step.reason)
         Text("${step.index}. $actionLabel")
-        if (step.reason.isNotBlank() && ActionUiFormatter.reasonAddsDetail(step.reason, actionLabel)) {
-            Text(step.reason, color = DroidLmColors.TextMuted)
-        }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = onAcceptOnce) { Text("Accept Once") }

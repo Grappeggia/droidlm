@@ -61,9 +61,6 @@ object OverlayStatusFormatter {
         plan.steps.forEach { step ->
             val actionLabel = ActionUiFormatter.full(step.action, step.actionLabel, step.reason)
             lines += "${step.index}. $actionLabel"
-            if (step.reason.isNotBlank() && ActionUiFormatter.reasonAddsDetail(step.reason, actionLabel)) {
-                lines += "   ${step.reason}"
-            }
         }
         return lines.joinToString("\n").take(maxChars)
     }
