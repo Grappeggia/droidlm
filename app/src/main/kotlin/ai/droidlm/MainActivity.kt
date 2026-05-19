@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -456,7 +455,7 @@ private fun SettingsPage(
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
-        SetupStatusCard(
+        SetupStatusSection(
             accessibilityEnabled = accessibilityEnabled,
             micGranted = micGranted,
             notificationGranted = notificationGranted,
@@ -466,7 +465,8 @@ private fun SettingsPage(
             onRequestNotificationPermission = onRequestNotificationPermission,
             onOpenAiKey = { showOpenAiKeyDialog = true }
         )
-        SettingsCard(settings, viewModel)
+        SettingsSectionDivider()
+        AssistantSettingsSection(settings, viewModel)
         VersionFooter()
     }
 
@@ -505,6 +505,29 @@ private fun SetupStatusCard(
     onRequestNotificationPermission: () -> Unit,
     onOpenAiKey: (() -> Unit)? = null
 ) = DroidCard {
+    SetupStatusSection(
+        accessibilityEnabled = accessibilityEnabled,
+        micGranted = micGranted,
+        notificationGranted = notificationGranted,
+        settings = settings,
+        onOpenAccessibility = onOpenAccessibility,
+        onRequestMicPermission = onRequestMicPermission,
+        onRequestNotificationPermission = onRequestNotificationPermission,
+        onOpenAiKey = onOpenAiKey
+    )
+}
+
+@Composable
+private fun SetupStatusSection(
+    accessibilityEnabled: Boolean,
+    micGranted: Boolean,
+    notificationGranted: Boolean,
+    settings: DroidLmSettings,
+    onOpenAccessibility: () -> Unit,
+    onRequestMicPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenAiKey: (() -> Unit)? = null
+) {
     val items = listOfNotNull(
         SetupStatusItem("Accessibility", accessibilityEnabled, onOpenAccessibility),
         SetupStatusItem("Microphone", micGranted, onRequestMicPermission),
@@ -514,10 +537,11 @@ private fun SetupStatusCard(
     val enabledItems = items.filter { it.enabled }
     val missingItems = items.filterNot { it.enabled }
 
-    Text("Setup status", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
-    Spacer(Modifier.height(10.dp))
-    SetupStatusRow("Enabled", enabledItems)
-    SetupStatusRow("Missing", missingItems)
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Setup status", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+        SetupStatusRow("Enabled", enabledItems)
+        SetupStatusRow("Missing", missingItems)
+    }
 }
 
 private data class SetupStatusItem(
@@ -553,6 +577,16 @@ private fun SetupStatusRow(label: String, items: List<SetupStatusItem>) {
             }
         }
     }
+}
+
+@Composable
+private fun SettingsSectionDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(DroidLmColors.TextMuted.copy(alpha = 0.18f))
+    )
 }
 
 @Composable
@@ -729,10 +763,10 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 
 
 @Composable
-private fun SettingsCard(
+private fun AssistantSettingsSection(
     settings: DroidLmSettings,
     viewModel: DroidLmViewModel
-) = DroidCard {
+) {
     val saveDebugLogsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
@@ -748,66 +782,68 @@ private fun SettingsCard(
     var showDebugShareDialog by remember { mutableStateOf(false) }
     var debugIssueDescription by remember { mutableStateOf("") }
 
-    Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
 
-    Text("Diagnostics", fontWeight = FontWeight.SemiBold)
-    ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
-    Text(
-        "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots.",
-        color = DroidLmColors.TextMuted
-    )
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Upload") }
-        OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
-        OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }
-    }
-    if (showDebugShareDialog) {
-        AlertDialog(
-            onDismissRequest = { showDebugShareDialog = false },
-            title = { Text("Describe the issue") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Add any details that would help diagnose what happened. This description will be saved inside the uploaded zip.",
-                        color = DroidLmColors.TextMuted
-                    )
-                    OutlinedTextField(
-                        value = debugIssueDescription,
-                        onValueChange = { debugIssueDescription = it.take(MAX_DEBUG_ISSUE_DESCRIPTION_CHARS) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("What were you experiencing?") },
-                        minLines = 4,
-                        maxLines = 8
-                    )
-                    Text(
-                        "${debugIssueDescription.length}/$MAX_DEBUG_ISSUE_DESCRIPTION_CHARS characters",
-                        color = DroidLmColors.TextMuted,
-                        fontSize = 12.sp
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.shareDebugLogs(debugIssueDescription)
-                        showDebugShareDialog = false
-                        debugIssueDescription = ""
+        Text("Diagnostics", fontWeight = FontWeight.SemiBold)
+        ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)
+        Text(
+            "When enabled, DroidLM keeps speech diagnostic events plus retained debug audio and screenshots.",
+            color = DroidLmColors.TextMuted
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { showDebugShareDialog = true }) { Text("Upload") }
+            OutlinedButton(onClick = { saveDebugLogsLauncher.launch(viewModel.debugLogsExportFileName()) }) { Text("Save") }
+            OutlinedButton(onClick = viewModel::clearDebugLogs) { Text("Clear") }
+        }
+        if (showDebugShareDialog) {
+            AlertDialog(
+                onDismissRequest = { showDebugShareDialog = false },
+                title = { Text("Describe the issue") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Add any details that would help diagnose what happened. This description will be saved inside the uploaded zip.",
+                            color = DroidLmColors.TextMuted
+                        )
+                        OutlinedTextField(
+                            value = debugIssueDescription,
+                            onValueChange = { debugIssueDescription = it.take(MAX_DEBUG_ISSUE_DESCRIPTION_CHARS) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("What were you experiencing?") },
+                            minLines = 4,
+                            maxLines = 8
+                        )
+                        Text(
+                            "${debugIssueDescription.length}/$MAX_DEBUG_ISSUE_DESCRIPTION_CHARS characters",
+                            color = DroidLmColors.TextMuted,
+                            fontSize = 12.sp
+                        )
                     }
-                ) { Text("Upload logs") }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showDebugShareDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-    if (debugUpdateState.visible) {
-        DebugBuildUpgradeSection(
-            state = debugUpdateState,
-            onUpgrade = viewModel::upgradeToLatestDebugBuild,
-            onAllowInstall = {
-                debugInstallPermissionLauncher.launch(viewModel.debugBuildInstallPermissionIntent())
-            }
-        )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.shareDebugLogs(debugIssueDescription)
+                            showDebugShareDialog = false
+                            debugIssueDescription = ""
+                        }
+                    ) { Text("Upload logs") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showDebugShareDialog = false }) { Text("Cancel") }
+                }
+            )
+        }
+        if (debugUpdateState.visible) {
+            DebugBuildUpgradeSection(
+                state = debugUpdateState,
+                onUpgrade = viewModel::upgradeToLatestDebugBuild,
+                onAllowInstall = {
+                    debugInstallPermissionLauncher.launch(viewModel.debugBuildInstallPermissionIntent())
+                }
+            )
+        }
     }
 }
 
