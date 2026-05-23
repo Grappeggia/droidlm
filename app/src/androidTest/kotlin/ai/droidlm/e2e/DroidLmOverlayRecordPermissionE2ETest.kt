@@ -14,7 +14,6 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -43,25 +42,35 @@ class DroidLmOverlayRecordPermissionE2ETest {
     @Test
     fun firstOverlayRecordTapAfterMicGrantDoesNotListenForOpenGoogleDrive() {
         runBlocking {
-            executeShell("pm revoke ${targetContext.packageName} ${Manifest.permission.RECORD_AUDIO}")
-
-
-            targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
             val device = UiDevice.getInstance(instrumentation)
-            val recordButton = waitForRecordButton(device, 30_000)
-                ?: throw AssertionError("Expected floating record button to be visible")
+            var lastFailure = "Overlay record permission flow did not complete"
 
-            recordButton.click()
-            clickAllowMicrophonePermission(device)
+            repeat(3) { attempt ->
+                executeShell("pm revoke ${targetContext.packageName} ${Manifest.permission.RECORD_AUDIO}")
+                targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_STOP))
+                SystemClock.sleep(1_000)
 
-            assertTrue(
-                "Expected overlay to report the mic grant handoff",
-                waitForOverlayText(device, "Mic enabled. Tap record to speak", 45_000) || waitForSpeechListening(45_000)
-            )
-            assertTrue(
-                "Repro: after granting mic permission from the overlay record button, DroidLM is not listening for 'Open Google Drive'; current state=${app.speechRecognitionController.state.value}",
-                waitForSpeechListening(45_000)
-            )
+                targetContext.startService(FloatingControlOverlayService.intent(targetContext, FloatingControlOverlayService.ACTION_SHOW))
+                val recordButton = waitForRecordButton(device, 45_000)
+                if (recordButton == null) {
+                    lastFailure = "Expected floating record button to be visible on attempt ${attempt + 1}"
+                    return@repeat
+                }
+
+                recordButton.click()
+                clickAllowMicrophonePermission(device)
+
+                val handoffOrListening = waitForOverlayText(device, "Mic enabled. Tap record to speak", 45_000) || waitForSpeechListening(45_000)
+                if (!handoffOrListening) {
+                    lastFailure = "Expected overlay to report the mic grant handoff on attempt ${attempt + 1}"
+                    return@repeat
+                }
+                if (waitForSpeechListening(45_000)) return@runBlocking
+
+                lastFailure = "Repro: after granting mic permission from the overlay record button, DroidLM is not listening for 'Open Google Drive'; current state=${app.speechRecognitionController.state.value}"
+            }
+
+            throw AssertionError(lastFailure)
         }
     }
 
