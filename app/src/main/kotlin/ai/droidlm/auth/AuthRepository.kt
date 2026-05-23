@@ -6,7 +6,8 @@ import kotlinx.coroutines.flow.StateFlow
 data class AuthUser(
     val uid: String,
     val displayName: String?,
-    val email: String?
+    val email: String?,
+    val emailVerified: Boolean = false
 ) {
     val displayLabel: String
         get() = displayName?.takeIf { it.isNotBlank() }
@@ -32,5 +33,8 @@ interface AuthRepository {
     suspend fun signInWithEmail(email: String, password: String)
     suspend fun createAccountWithEmail(email: String, password: String)
     suspend fun sendPasswordReset(email: String)
+    suspend fun currentIdToken(forceRefresh: Boolean = false): String?
+    suspend fun reloadCurrentUser()
+
     fun signOut()
 }

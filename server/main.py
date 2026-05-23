@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFil
 from fastapi.responses import Response
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+from allowlist import AllowlistError, allowlist_error_payload, require_allowlisted_user
 
 load_dotenv()
 
@@ -202,6 +203,19 @@ async def health() -> Dict[str, bool]:
     return {"ok": True}
 
 
+@app.post("/allowlist/check")
+async def check_allowlist(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Dict[str, Any]:
+    try:
+        user = require_allowlisted_user(authorization)
+        return {"allowed": True, "email": user.email, "uid": user.uid}
+    except AllowlistError as error:
+        if error.status_code in {401, 403}:
+            return {"allowed": False, "message": error.message, "errorCode": error.error_code}
+        raise HTTPException(status_code=error.status_code, detail=allowlist_error_payload(error)["detail"]) from error
+
+
 @app.get("/planner/status")
 async def planner_status() -> Dict[str, Any]:
     key_configured = bool(read_openai_key())
@@ -240,7 +254,9 @@ async def upload_debug_logs(
     logs: UploadFile = File(...),
     appPackage: Optional[str] = Form(default=None),
     appVersion: Optional[str] = Form(default=None),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
 ) -> DebugLogUploadResponse:
+    verify_allowlisted_header(authorization)
     content_type = (logs.content_type or "application/zip").lower()
     if content_type not in {"application/zip", "application/octet-stream", "application/x-zip-compressed"}:
         raise HTTPException(status_code=415, detail="Only zip debug log uploads are accepted")
@@ -296,7 +312,9 @@ async def transcribe(
     audio: UploadFile = File(...),
     language: Optional[str] = Form(default=None),
     modelHint: Optional[str] = Form(default=None),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
 ) -> Dict[str, Any]:
+    verify_allowlisted_header(authorization)
     openai_client = require_openai()
     content_type = (audio.content_type or "").lower()
     if not content_type.startswith("audio/") and content_type not in {"application/octet-stream"}:
@@ -322,7 +340,11 @@ async def transcribe(
 
 
 @app.post("/plan-preview")
-async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
+async def plan_preview(
+    payload: PlanActionRequest,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Dict[str, Any]:
+    verify_allowlisted_header(authorization)
     openai_client = require_openai()
     system = (
         "You plan safe Android UI actions for DroidLM. Return JSON only. "
@@ -371,7 +393,11 @@ async def plan_preview(payload: PlanActionRequest) -> Dict[str, Any]:
 
 
 @app.post("/plan-action")
-async def plan_action(payload: PlanActionRequest) -> Dict[str, Any]:
+async def plan_action(
+    payload: PlanActionRequest,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Dict[str, Any]:
+    verify_allowlisted_header(authorization)
     openai_client = require_openai()
     system = (
         "You control an Android device through a limited tool interface. Return one JSON action only. "
@@ -421,7 +447,9 @@ async def analyze_screenshot(
     goal: str = Form(...),
     uiState: Optional[str] = Form(default=None),
     deviceContext: Optional[str] = Form(default=None),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
 ) -> Dict[str, Any]:
+    verify_allowlisted_header(authorization)
     openai_client = require_openai()
     content_type = (image.content_type or "").lower()
     if content_type not in {"image/png", "image/jpeg", "image/webp"}:
@@ -463,7 +491,10 @@ async def analyze_screenshot(
 
 
 @app.post("/realtime-token")
-async def realtime_token() -> Dict[str, str]:
+async def realtime_token(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Dict[str, str]:
+    verify_allowlisted_header(authorization)
     require_openai()
     return {"message": "Ephemeral realtime token generation is not implemented in the MVP"}
 
@@ -502,6 +533,13 @@ class GcsDebugLogStore:
             "data": data,
             "contentType": blob.content_type or "application/octet-stream",
         }
+
+
+def verify_allowlisted_header(authorization: Optional[str]) -> None:
+    try:
+        require_allowlisted_user(authorization)
+    except AllowlistError as error:
+        raise HTTPException(status_code=error.status_code, detail=allowlist_error_payload(error)["detail"]) from error
 
 
 _debug_log_store: Optional[GcsDebugLogStore] = None

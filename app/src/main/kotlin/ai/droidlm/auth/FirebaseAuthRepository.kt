@@ -107,9 +107,10 @@ class FirebaseAuthRepository(
         setLoading("Creating account...")
         runCatching {
             auth.createUserWithEmailAndPassword(normalizedEmail, password).await()
+            auth.currentUser?.sendEmailVerification()?.await()
         }.onSuccess {
-            updateUser(auth.currentUser, "Account created.")
-            logs.log(ActionLogType.ACTION_RESULT, "Created Firebase email account")
+            updateUser(auth.currentUser, "Account created. Check your email to verify the account before continuing.")
+            logs.log(ActionLogType.ACTION_RESULT, "Created Firebase email account and sent verification email")
         }.onFailure { error ->
             val message = error.friendlyAuthMessage("Could not create account")
             setError(message)
@@ -136,6 +137,17 @@ class FirebaseAuthRepository(
             setError(message)
             logs.log(ActionLogType.ERROR, "Password reset failed: $message")
         }
+    }
+
+    override suspend fun currentIdToken(forceRefresh: Boolean): String? {
+        val user = firebaseAuth?.currentUser ?: return null
+        return runCatching { user.getIdToken(forceRefresh).await().token }.getOrNull()
+    }
+
+    override suspend fun reloadCurrentUser() {
+        val user = firebaseAuth?.currentUser ?: return
+        runCatching { user.reload().await() }
+        updateUser(firebaseAuth.currentUser, message = null)
     }
 
     override fun signOut() {
@@ -215,7 +227,8 @@ class FirebaseAuthRepository(
     private fun FirebaseUser.toAuthUser(): AuthUser = AuthUser(
         uid = uid,
         displayName = displayName,
-        email = email
+        email = email,
+        emailVerified = isEmailVerified
     )
 
     private fun Context.stringResourceOrBlank(name: String): String {

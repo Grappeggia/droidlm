@@ -36,6 +36,7 @@ class DroidLmViewModel(
     private val app = application
     val settings = deps.settingsRepository.settings
     val authState = deps.authRepository.authState
+    val allowlistState = deps.allowlistRepository.accessState
     val logs = deps.actionLogRepository.logs
     val executionState = deps.executor.uiState
     val pendingConfirmation = deps.executor.pendingConfirmation
@@ -227,6 +228,8 @@ class DroidLmViewModel(
     }
 
     fun signOut() = deps.authRepository.signOut()
+    fun refreshAllowlistAccess() = deps.allowlistRepository.refresh()
+
 
     fun cancelCurrentTask() {
         deps.executor.cancelActive()
@@ -391,8 +394,8 @@ class DroidLmViewModel(
     }
 
     fun completeOnboarding() = viewModelScope.launch {
-        if (!deps.authRepository.authState.value.signedIn) {
-            deps.actionLogRepository.log(ActionLogType.ERROR, "Onboarding requires sign-in before completion")
+        if (!deps.authRepository.authState.value.signedIn || !deps.allowlistRepository.accessState.value.allowed) {
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Onboarding requires allowlisted sign-in before completion")
             return@launch
         }
         deps.settingsRepository.updateOnboardingCompletedVersion(ONBOARDING_VERSION)

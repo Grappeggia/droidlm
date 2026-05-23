@@ -1,6 +1,7 @@
 package ai.droidlm
 
 import ai.droidlm.auth.AuthState
+import ai.droidlm.auth.AllowlistState
 import ai.droidlm.di.appGraph
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
@@ -139,6 +140,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsState(initial = DroidLmSettings())
     val authState by viewModel.authState.collectAsState()
+    val allowlistState by viewModel.allowlistState.collectAsState()
     val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsState()
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
@@ -147,7 +149,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
-    val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION || !authState.signedIn
+    val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION || !authState.signedIn || !allowlistState.allowed
 
     var showSettings by remember { mutableStateOf(false) }
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
@@ -244,6 +246,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     OnboardingPage(
                         settings = settings,
                         authState = authState,
+                        allowlistState = allowlistState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
                         accessibilityEnabled = accessibilityEnabled,
@@ -261,6 +264,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onSignInWithEmail = viewModel::signInWithEmail,
                         onCreateAccountWithEmail = viewModel::createAccountWithEmail,
                         onSendPasswordReset = viewModel::sendPasswordReset,
+                        onRefreshAccess = viewModel::refreshAllowlistAccess,
                         onDone = viewModel::completeOnboarding,
                         onOpenSettings = {
                             viewModel.completeOnboarding()
@@ -273,6 +277,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                     SettingsPage(
                         settings = settings,
                         authState = authState,
+                        allowlistState = allowlistState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
                         accessibilityEnabled = accessibilityEnabled,
@@ -290,6 +295,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onSignInWithEmail = viewModel::signInWithEmail,
                         onCreateAccountWithEmail = viewModel::createAccountWithEmail,
                         onSendPasswordReset = viewModel::sendPasswordReset,
+                        onRefreshAccess = viewModel::refreshAllowlistAccess,
                         onSignOut = viewModel::signOut,
                     )
                 }
@@ -393,6 +399,7 @@ private fun MainControlRow(
 private fun OnboardingPage(
     settings: DroidLmSettings,
     authState: AuthState,
+    allowlistState: AllowlistState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
     accessibilityEnabled: Boolean,
@@ -408,6 +415,7 @@ private fun OnboardingPage(
     onSignInWithEmail: (String, String) -> Unit,
     onCreateAccountWithEmail: (String, String) -> Unit,
     onSendPasswordReset: (String) -> Unit,
+    onRefreshAccess: () -> Unit,
     onDone: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -425,10 +433,12 @@ private fun OnboardingPage(
             title = "Account",
             description = "Sign in once so DroidLM can identify your device session and keep onboarding secure.",
             authState = authState,
+            allowlistState = allowlistState,
             onSignInWithGoogle = onSignInWithGoogle,
             onSignInWithEmail = onSignInWithEmail,
             onCreateAccountWithEmail = onCreateAccountWithEmail,
-            onSendPasswordReset = onSendPasswordReset
+            onSendPasswordReset = onSendPasswordReset,
+            onRefreshAccess = onRefreshAccess,
         )
         SetupStatusCard(
             accessibilityEnabled = accessibilityEnabled,
@@ -447,11 +457,10 @@ private fun OnboardingPage(
             Text("Optional, but useful for diagnosing voice, overlay, and automation issues. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
         }
         DroidCard {
-            Button(onClick = onDone, enabled = authState.signedIn) { Text("Start using DroidLM") }
-            OutlinedButton(onClick = onOpenSettings, enabled = authState.signedIn) { Text("Review all settings") }
-            if (!authState.signedIn) {
-                Text("Sign in to continue.", color = DroidLmColors.TextMuted)
-            }
+            val accountReady = authState.signedIn && allowlistState.allowed
+            Button(onClick = onDone, enabled = accountReady) { Text("Start using DroidLM") }
+            OutlinedButton(onClick = onOpenSettings, enabled = accountReady) { Text("Review all settings") }
+            Text(accountSetupHint(authState, allowlistState), color = DroidLmColors.TextMuted)
         }
     }
 
@@ -472,6 +481,7 @@ private fun OnboardingPage(
 private fun SettingsPage(
     settings: DroidLmSettings,
     authState: AuthState,
+    allowlistState: AllowlistState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
     accessibilityEnabled: Boolean,
@@ -487,6 +497,7 @@ private fun SettingsPage(
     onSignInWithEmail: (String, String) -> Unit,
     onCreateAccountWithEmail: (String, String) -> Unit,
     onSendPasswordReset: (String) -> Unit,
+    onRefreshAccess: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     var showOpenAiKeyDialog by remember { mutableStateOf(false) }
@@ -497,10 +508,12 @@ private fun SettingsPage(
             title = "Account",
             description = "DroidLM uses this account to identify you across setup and cloud-backed features.",
             authState = authState,
+            allowlistState = allowlistState,
             onSignInWithGoogle = onSignInWithGoogle,
             onSignInWithEmail = onSignInWithEmail,
             onCreateAccountWithEmail = onCreateAccountWithEmail,
             onSendPasswordReset = onSendPasswordReset,
+            onRefreshAccess = onRefreshAccess,
             onSignOut = onSignOut
         )
         SetupStatusSection(
@@ -552,10 +565,12 @@ private fun AccountCard(
     title: String,
     description: String,
     authState: AuthState,
+    allowlistState: AllowlistState,
     onSignInWithGoogle: () -> Unit,
     onSignInWithEmail: (String, String) -> Unit,
     onCreateAccountWithEmail: (String, String) -> Unit,
     onSendPasswordReset: (String) -> Unit,
+    onRefreshAccess: () -> Unit,
     onSignOut: (() -> Unit)? = null
 ) {
     var showEmailDialog by remember { mutableStateOf(false) }
@@ -567,11 +582,12 @@ private fun AccountCard(
     DroidCard {
         Text(title, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
         Text(description, color = DroidLmColors.TextMuted)
-        AccountStatus(authState)
+        AccountStatus(authState, allowlistState)
         if (authState.signedIn) {
             onSignOut?.let {
                 OutlinedButton(onClick = it, enabled = !authState.loading) { Text("Sign out") }
             }
+            OutlinedButton(onClick = onRefreshAccess, enabled = !authState.loading && !allowlistState.checking) { Text("Refresh access") }
         } else {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -601,7 +617,7 @@ private fun AccountCard(
 }
 
 @Composable
-private fun AccountStatus(authState: AuthState) {
+private fun AccountStatus(authState: AuthState, allowlistState: AllowlistState) {
     val user = authState.user
     if (user == null) {
         Text(if (authState.configured) "Not signed in" else "Sign-in is not configured", fontWeight = FontWeight.SemiBold)
@@ -610,8 +626,18 @@ private fun AccountStatus(authState: AuthState) {
         user.email?.takeIf { it.isNotBlank() }?.let { email ->
             Text(email, color = DroidLmColors.TextMuted)
         }
+        Text(accountSetupHint(authState, allowlistState), color = if (allowlistState.allowed) Color(0xFF166534) else DroidLmColors.TextMuted)
     }
 }
+
+private fun accountSetupHint(authState: AuthState, allowlistState: AllowlistState): String = when {
+    !authState.signedIn -> "Sign in to continue."
+    authState.user?.emailVerified == false -> "Verify your email address before using DroidLM."
+    allowlistState.checking -> "Checking allowlist access..."
+    allowlistState.allowed -> "Access approved."
+    else -> allowlistState.message ?: "This account is not on the DroidLM allowlist."
+}
+
 
 @Composable
 private fun EmailPasswordDialog(

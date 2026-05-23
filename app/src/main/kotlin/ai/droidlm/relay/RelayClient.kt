@@ -107,6 +107,14 @@ data class DebugLogUploadResponse(
     val sizeBytes: Long
 )
 
+data class AllowlistCheckResponse(
+    val allowed: Boolean,
+    val email: String? = null,
+    val uid: String? = null,
+    val message: String? = null,
+    val errorCode: String? = null
+)
+
 data class VisionBoundingBox(val x: Int, val y: Int, val width: Int, val height: Int)
 
 data class VisionSuggestedAction(
@@ -135,7 +143,8 @@ class RelayClient(
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(90, TimeUnit.SECONDS)
         .build(),
-    private val diagnostics: SpeechDiagnosticsLogger? = null
+    private val diagnostics: SpeechDiagnosticsLogger? = null,
+    private val firebaseIdTokenProvider: suspend (forceRefresh: Boolean) -> String? = { null }
 ) {
     suspend fun health(baseUrl: String): RelayCallResult<Boolean> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
@@ -148,6 +157,18 @@ class RelayClient(
         val request = Request.Builder().url("$normalized/planner/status").get().build()
         return execute(request, ::parsePlannerStatusJson)
     }
+    suspend fun checkAllowlist(baseUrl: String, forceRefresh: Boolean = false): RelayCallResult<AllowlistCheckResponse> {
+        val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Access verification URL is not configured", "NO_ALLOWLIST_URL")
+        val token = firebaseIdTokenProvider(forceRefresh)
+            ?: return RelayCallResult.Failure("Sign in to verify DroidLM access", "AUTH_TOKEN_MISSING")
+        val request = Request.Builder()
+            .url("$normalized/allowlist/check")
+            .post(ByteArray(0).toRequestBody(null))
+            .addBearer(token)
+            .build()
+        return execute(request, ::parseAllowlistCheckJson)
+    }
+
 
     suspend fun saveOpenAiKey(baseUrl: String, setupToken: String, apiKey: String): RelayCallResult<OpenAiKeySetupResponse> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
@@ -185,11 +206,10 @@ class RelayClient(
             .addFormDataPart("audio", audioFile.name, audioFile.asRequestBody(mediaType))
         language?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("language", it) }
         modelHint?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("modelHint", it) }
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$normalized/transcribe")
             .post(bodyBuilder.build())
-            .build()
-        return execute(request, ::parseTranscriptionJson)
+        return execute(requestBuilder.addFirebaseBearer().build(), ::parseTranscriptionJson)
     }
 
     suspend fun planAction(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<DroidLmAction> {
@@ -201,20 +221,18 @@ class RelayClient(
 
     suspend fun planActionWithMetadata(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<PlannedAction> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$normalized/plan-action")
             .post(requestBody.toJson().toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-        return execute(request, ::parsePlannedActionJson)
+        return execute(requestBuilder.addFirebaseBearer().build(), ::parsePlannedActionJson)
     }
 
     suspend fun planPreview(baseUrl: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$normalized/plan-preview")
             .post(requestBody.toJson().toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-        return execute(request, ::parsePlanPreviewJson)
+        return execute(requestBuilder.addFirebaseBearer().build(), ::parsePlanPreviewJson)
     }
 
     suspend fun analyzeScreenshot(
@@ -231,11 +249,10 @@ class RelayClient(
             .addFormDataPart("goal", goal)
         uiStateJson?.let { bodyBuilder.addFormDataPart("uiState", it) }
         deviceContext?.let { bodyBuilder.addFormDataPart("deviceContext", it.toJson().toString()) }
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$normalized/analyze-screenshot")
             .post(bodyBuilder.build())
-            .build()
-        return execute(request, ::parseVisionAnalysisJson)
+        return execute(requestBuilder.addFirebaseBearer().build(), ::parseVisionAnalysisJson)
     }
 
     suspend fun uploadDebugLogsToUrl(
@@ -250,11 +267,21 @@ class RelayClient(
             .addFormDataPart("logs", zipFile.name, zipFile.asRequestBody("application/zip".toMediaType()))
             .addFormDataPart("appPackage", appPackage)
         appVersion?.takeIf { it.isNotBlank() }?.let { bodyBuilder.addFormDataPart("appVersion", it) }
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(normalized)
             .post(bodyBuilder.build())
-            .build()
-        return execute(request, ::parseDebugLogUploadJson)
+        return execute(requestBuilder.addFirebaseBearer().build(), ::parseDebugLogUploadJson)
+    }
+
+    fun parseAllowlistCheckJson(json: String): AllowlistCheckResponse {
+        val obj = JSONObject(json)
+        return AllowlistCheckResponse(
+            allowed = obj.optBoolean("allowed", false),
+            email = obj.optString("email").takeIf { it.isNotBlank() },
+            uid = obj.optString("uid").takeIf { it.isNotBlank() },
+            message = obj.optString("message").takeIf { it.isNotBlank() },
+            errorCode = obj.optString("errorCode").takeIf { it.isNotBlank() }
+        )
     }
 
     fun parseTranscriptionJson(json: String): TranscriptionResponse {
@@ -624,6 +651,14 @@ class RelayClient(
             })
         }
     }
+
+    private suspend fun Request.Builder.addFirebaseBearer(): Request.Builder {
+        val token = firebaseIdTokenProvider(false)
+        return if (token.isNullOrBlank()) this else addBearer(token)
+    }
+
+    private fun Request.Builder.addBearer(token: String): Request.Builder =
+        addHeader("Authorization", "Bearer $token")
 
     private fun parseRelayError(body: String): Pair<String?, String?> {
         return runCatching {

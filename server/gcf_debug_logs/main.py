@@ -1,4 +1,6 @@
 import json
+import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -73,6 +75,10 @@ class GcsDebugLogStore:
 
 
 _debug_log_store: Optional[GcsDebugLogStore] = None
+_hmac_key: Optional[bytes] = None
+_firestore_client: Any = None
+_firebase_app: Any = None
+
 
 
 def droidlm_debug_log_upload(request: Any):
@@ -83,10 +89,14 @@ def droidlm_debug_log_upload(request: Any):
                 return json_response({"ok": True})
             raise DebugLogHttpError(404, "Unknown path", "NOT_FOUND")
         if request.method != "POST":
-            raise DebugLogHttpError(405, "Only POST debug log uploads are supported", "METHOD_NOT_ALLOWED")
+            raise DebugLogHttpError(405, "Only POST requests are supported", "METHOD_NOT_ALLOWED")
+        if path == "/allowlist/check":
+            user = require_allowlisted_request(request)
+            return json_response({"allowed": True, "email": user.get("email", ""), "uid": user.get("uid", user.get("sub", ""))})
         if path not in {"/", "/debug-logs"}:
             raise DebugLogHttpError(404, "Unknown path", "NOT_FOUND")
 
+        require_allowlisted_request(request)
         logs = request.files.get("logs") if hasattr(request, "files") else None
         if logs is None:
             raise DebugLogHttpError(400, "Debug log upload is missing the logs file", "DEBUG_LOG_FILE_MISSING")
@@ -218,6 +228,111 @@ def form_value(request: Any, key: str) -> Optional[str]:
     trimmed = value.strip()
     return trimmed or None
 
+
+
+def require_allowlisted_request(request: Any) -> Dict[str, Any]:
+    decoded = verify_firebase_token(bearer_token(request.headers.get("Authorization") if hasattr(request, "headers") else None))
+    email = normalize_email(str(decoded.get("email") or ""))
+    if not email:
+        raise DebugLogHttpError(401, "Firebase token does not include an email", "AUTH_EMAIL_MISSING")
+    if not decoded.get("email_verified", False):
+        raise DebugLogHttpError(403, "Verify your email address before using DroidLM", "AUTH_EMAIL_UNVERIFIED")
+    document_id = allowlist_doc_id(email, require_hmac_key())
+    try:
+        snapshot = firestore_client().collection(os.getenv("DROIDLM_ALLOWLIST_COLLECTION", "allowlist_entries")).document(document_id).get()
+    except Exception as error:
+        raise DebugLogHttpError(503, f"Could not read allowlist: {error}", "ALLOWLIST_READ_FAILED") from error
+    if not snapshot.exists or not bool((snapshot.to_dict() or {}).get("enabled", True)):
+        raise DebugLogHttpError(403, "This account is not on the DroidLM allowlist", "AUTH_NOT_ALLOWLISTED")
+    return decoded
+
+
+def bearer_token(authorization: Optional[str]) -> str:
+    value = (authorization or "").strip()
+    if not value:
+        raise DebugLogHttpError(401, "Missing Firebase ID token", "AUTH_TOKEN_MISSING")
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise DebugLogHttpError(401, "Authorization must be a Bearer Firebase ID token", "AUTH_TOKEN_INVALID")
+    return token.strip()
+
+
+def verify_firebase_token(token: str) -> Dict[str, Any]:
+    global _firebase_app
+    firebase_project = os.getenv("DROIDLM_FIREBASE_PROJECT_ID") or allowlist_project()
+    if not firebase_project:
+        raise DebugLogHttpError(503, "Firebase project is not configured", "ALLOWLIST_CONFIG_MISSING")
+    try:
+        from firebase_admin import auth, credentials, get_app, initialize_app
+    except Exception as error:
+        raise DebugLogHttpError(503, f"Firebase Admin SDK is not available: {error}", "ALLOWLIST_DEPENDENCY_MISSING") from error
+    if _firebase_app is None:
+        try:
+            _firebase_app = get_app("droidlm-allowlist")
+        except ValueError:
+            _firebase_app = initialize_app(credentials.ApplicationDefault(), {"projectId": firebase_project}, name="droidlm-allowlist")
+    try:
+        return auth.verify_id_token(token, app=_firebase_app, check_revoked=False)
+    except Exception as error:
+        raise DebugLogHttpError(401, "Firebase ID token could not be verified", "AUTH_TOKEN_INVALID") from error
+
+
+def allowlist_project() -> Optional[str]:
+    return (
+        os.getenv("DROIDLM_ALLOWLIST_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("GCLOUD_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT")
+    )
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def allowlist_doc_id(email: str, hmac_key: bytes) -> str:
+    return hmac.new(hmac_key, normalize_email(email).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def require_hmac_key() -> bytes:
+    global _hmac_key
+    if _hmac_key is not None:
+        return _hmac_key
+    project = allowlist_project()
+    if not project:
+        raise DebugLogHttpError(503, "Allowlist project is not configured", "ALLOWLIST_CONFIG_MISSING")
+    try:
+        from google.cloud import secretmanager
+    except Exception as error:
+        raise DebugLogHttpError(503, f"Secret Manager SDK is not available: {error}", "ALLOWLIST_DEPENDENCY_MISSING") from error
+    name = os.getenv("DROIDLM_ALLOWLIST_HMAC_SECRET", "droidlm-allowlist-hmac-key")
+    if not name.startswith("projects/"):
+        name = f"projects/{project}/secrets/{name}/versions/latest"
+    elif "/versions/" not in name:
+        name = f"{name}/versions/latest"
+    try:
+        response = secretmanager.SecretManagerServiceClient().access_secret_version(request={"name": name})
+    except Exception as error:
+        raise DebugLogHttpError(503, f"Could not read allowlist secret: {error}", "ALLOWLIST_SECRET_READ_FAILED") from error
+    _hmac_key = response.payload.data
+    if not _hmac_key:
+        raise DebugLogHttpError(503, "Allowlist HMAC secret is empty", "ALLOWLIST_CONFIG_MISSING")
+    return _hmac_key
+
+
+def firestore_client() -> Any:
+    global _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
+    project = allowlist_project()
+    if not project:
+        raise DebugLogHttpError(503, "Allowlist project is not configured", "ALLOWLIST_CONFIG_MISSING")
+    try:
+        from google.cloud import firestore
+    except Exception as error:
+        raise DebugLogHttpError(503, f"Firestore SDK is not available: {error}", "ALLOWLIST_DEPENDENCY_MISSING") from error
+    _firestore_client = firestore.Client(project=project)
+    return _firestore_client
 
 def read_int_env(name: str, default: int) -> int:
     raw = os.getenv(name)

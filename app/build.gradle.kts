@@ -33,6 +33,10 @@ val defaultDebugLogUploadUrl = "https://us-central1-droidlm-495821.cloudfunction
 val debugLogUploadUrl = providers.gradleProperty("droidlm.debugLogUploadUrl")
     .orElse(providers.environmentVariable("DROIDLM_DEBUG_LOG_UPLOAD_URL"))
     .orElse(defaultDebugLogUploadUrl)
+val defaultAllowlistCheckUrl = defaultDebugLogUploadUrl
+val allowlistCheckUrl = providers.gradleProperty("droidlm.allowlistCheckUrl")
+    .orElse(providers.environmentVariable("DROIDLM_ALLOWLIST_CHECK_URL"))
+    .orElse(defaultAllowlistCheckUrl)
 val defaultCloudScreenshotAnalysisUrl = ""
 val cloudScreenshotAnalysisUrl = providers.gradleProperty("droidlm.cloudScreenshotAnalysisUrl")
     .orElse(providers.environmentVariable("DROIDLM_CLOUD_SCREENSHOT_ANALYSIS_URL"))
@@ -113,6 +117,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DEBUG_LOG_UPLOAD_URL", "\"${buildConfigString(debugLogUploadUrl.get().trim())}\"")
         buildConfigField("String", "CLOUD_SCREENSHOT_ANALYSIS_URL", "\"${buildConfigString(cloudScreenshotAnalysisUrl.get().trim())}\"")
+        buildConfigField("String", "ALLOWLIST_CHECK_URL", "\"${buildConfigString(allowlistCheckUrl.get().trim())}\"")
     }
 
     sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)

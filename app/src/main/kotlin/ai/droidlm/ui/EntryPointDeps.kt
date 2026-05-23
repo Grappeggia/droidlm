@@ -1,6 +1,7 @@
 package ai.droidlm.ui
 
 import ai.droidlm.auth.AuthRepository
+import ai.droidlm.auth.AllowlistRepository
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
@@ -22,6 +23,7 @@ data class MainActivityDeps(
 data class DroidLmViewModelDeps(
     val settingsRepository: SettingsRepository,
     val authRepository: AuthRepository,
+    val allowlistRepository: AllowlistRepository,
     val actionLogRepository: ActionLogRepository,
     val speechDiagnosticsLogger: SpeechDiagnosticsLogger,
     val debugLogStore: DebugLogStore,

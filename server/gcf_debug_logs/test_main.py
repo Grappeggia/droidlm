@@ -35,22 +35,26 @@ class FakeFile:
 
 
 class FakeRequest:
-    def __init__(self, method, path="/", files=None, form=None):
+    def __init__(self, method, path="/", files=None, form=None, headers=None):
         self.method = method
         self.path = path
         self.files = files or {}
         self.form = form or {}
+        self.headers = headers or {}
 
 
 class DebugLogFunctionTest(unittest.TestCase):
     def setUp(self):
         self.original_store = main._debug_log_store
         self.original_max = os.environ.get("DROIDLM_MAX_DEBUG_LOG_BYTES")
+        self.original_allowlist = main.require_allowlisted_request
         main._debug_log_store = None
         os.environ["DROIDLM_MAX_DEBUG_LOG_BYTES"] = "1024"
+        main.require_allowlisted_request = lambda _request: {"email": "allowed@example.com", "email_verified": True}
 
     def tearDown(self):
         main._debug_log_store = self.original_store
+        main.require_allowlisted_request = self.original_allowlist
         if self.original_max is None:
             os.environ.pop("DROIDLM_MAX_DEBUG_LOG_BYTES", None)
         else:

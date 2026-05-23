@@ -1,3 +1,6 @@
 functions-framework
 python-dotenv
 google-cloud-storage
+firebase-admin
+google-cloud-firestore
+google-cloud-secret-manager

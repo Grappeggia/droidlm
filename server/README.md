@@ -21,10 +21,15 @@ Set `DROIDLM_DEBUG_LOG_BUCKET=droidlm-debug-logs` and `DROIDLM_DEBUG_LOG_PROJECT
 
 A Cloud Functions 2nd gen version of the upload endpoint lives in `server/gcf_debug_logs/`. Deploy it with `scripts/deploy-debug-log-upload-function.sh`. Android debug-log upload uses the hidden `BuildConfig.DEBUG_LOG_UPLOAD_URL` endpoint, which defaults to the hosted function root; override it at build time with `DROIDLM_DEBUG_LOG_UPLOAD_URL` or `-Pdroidlm.debugLogUploadUrl=...` for development builds.
 
+## Allowlist enforcement
+
+Cloud-backed DroidLM endpoints require a Firebase ID token for a verified email that exists in the encrypted Google Cloud allowlist. The allowlist stores HMAC document IDs in Firestore and encrypted metadata via Cloud KMS; keep allowlist entries, HMAC keys, and KMS material in Google Cloud only. Configure deployments with `DROIDLM_FIREBASE_PROJECT_ID`, `DROIDLM_ALLOWLIST_PROJECT`, `DROIDLM_ALLOWLIST_COLLECTION`, and `DROIDLM_ALLOWLIST_HMAC_SECRET`.
+
 
 ## Endpoints
 
 - `GET /health` returns `{ "ok": true }`.
+- `POST /allowlist/check` verifies the Firebase token and reports allowlist access.
 - `POST /transcribe` accepts an audio multipart field named `audio` and returns `{ "text": "..." }`.
 - `POST /plan-action` returns exactly one DroidLM JSON action object.
 - `POST /analyze-screenshot` accepts a PNG/JPEG/WebP screenshot and returns OCR/vision JSON.
