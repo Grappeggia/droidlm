@@ -14,6 +14,7 @@ import ai.droidlm.settings.WakeWordProvider
 import ai.droidlm.voice.WakeWordForegroundService
 import android.app.Application
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -34,6 +35,7 @@ class DroidLmViewModel(
 ) : AndroidViewModel(application) {
     private val app = application
     val settings = deps.settingsRepository.settings
+    val authState = deps.authRepository.authState
     val logs = deps.actionLogRepository.logs
     val executionState = deps.executor.uiState
     val pendingConfirmation = deps.executor.pendingConfirmation
@@ -210,6 +212,22 @@ class DroidLmViewModel(
         }
     }
 
+    fun signInWithGoogle(context: Context) = viewModelScope.launch { deps.authRepository.signInWithGoogle(context) }
+
+    fun signInWithEmail(email: String, password: String) = viewModelScope.launch {
+        deps.authRepository.signInWithEmail(email, password)
+    }
+
+    fun createAccountWithEmail(email: String, password: String) = viewModelScope.launch {
+        deps.authRepository.createAccountWithEmail(email, password)
+    }
+
+    fun sendPasswordReset(email: String) = viewModelScope.launch {
+        deps.authRepository.sendPasswordReset(email)
+    }
+
+    fun signOut() = deps.authRepository.signOut()
+
     fun cancelCurrentTask() {
         deps.executor.cancelActive()
         app.startService(WakeWordForegroundService.intent(app, WakeWordForegroundService.ACTION_CANCEL))
@@ -373,6 +391,10 @@ class DroidLmViewModel(
     }
 
     fun completeOnboarding() = viewModelScope.launch {
+        if (!deps.authRepository.authState.value.signedIn) {
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Onboarding requires sign-in before completion")
+            return@launch
+        }
         deps.settingsRepository.updateOnboardingCompletedVersion(ONBOARDING_VERSION)
         deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Onboarding completed")
     }
@@ -440,7 +462,7 @@ class DroidLmViewModel(
     }.getOrNull()
 
     companion object {
-        const val ONBOARDING_VERSION = 1
+        const val ONBOARDING_VERSION = 2
     }
 
 }

@@ -1,5 +1,6 @@
 package ai.droidlm
 
+import ai.droidlm.auth.AuthState
 import ai.droidlm.di.appGraph
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
@@ -49,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,6 +66,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -135,6 +138,7 @@ private object DroidLmColors {
 private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val context = LocalContext.current
     val settings by viewModel.settings.collectAsState(initial = DroidLmSettings())
+    val authState by viewModel.authState.collectAsState()
     val accessibilityEnabled by viewModel.accessibilityEnabled.collectAsState()
     val listening by viewModel.listeningState.collectAsState()
     val execution by viewModel.executionState.collectAsState()
@@ -143,7 +147,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
-    val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION
+    val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION || !authState.signedIn
 
     var showSettings by remember { mutableStateOf(false) }
     var micGranted by remember { mutableStateOf(hasPermission(context, Manifest.permission.RECORD_AUDIO)) }
@@ -239,6 +243,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 item {
                     OnboardingPage(
                         settings = settings,
+                        authState = authState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
                         accessibilityEnabled = accessibilityEnabled,
@@ -252,6 +257,10 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
+                        onSignInWithGoogle = { viewModel.signInWithGoogle(context) },
+                        onSignInWithEmail = viewModel::signInWithEmail,
+                        onCreateAccountWithEmail = viewModel::createAccountWithEmail,
+                        onSendPasswordReset = viewModel::sendPasswordReset,
                         onDone = viewModel::completeOnboarding,
                         onOpenSettings = {
                             viewModel.completeOnboarding()
@@ -263,6 +272,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                 item {
                     SettingsPage(
                         settings = settings,
+                        authState = authState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
                         accessibilityEnabled = accessibilityEnabled,
@@ -276,6 +286,11 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         onSaveOpenAiKey = viewModel::saveOpenAiApiKey,
                         onClearOpenAiKey = viewModel::clearOpenAiApiKey,
                         onDismissPlannerKeySetup = viewModel::dismissPlannerKeySetup,
+                        onSignInWithGoogle = { viewModel.signInWithGoogle(context) },
+                        onSignInWithEmail = viewModel::signInWithEmail,
+                        onCreateAccountWithEmail = viewModel::createAccountWithEmail,
+                        onSendPasswordReset = viewModel::sendPasswordReset,
+                        onSignOut = viewModel::signOut,
                     )
                 }
             } else {
@@ -377,6 +392,7 @@ private fun MainControlRow(
 @Composable
 private fun OnboardingPage(
     settings: DroidLmSettings,
+    authState: AuthState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
     accessibilityEnabled: Boolean,
@@ -388,6 +404,10 @@ private fun OnboardingPage(
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
+    onSignInWithGoogle: () -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onCreateAccountWithEmail: (String, String) -> Unit,
+    onSendPasswordReset: (String) -> Unit,
     onDone: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -401,6 +421,15 @@ private fun OnboardingPage(
                 color = DroidLmColors.TextMuted
             )
         }
+        AccountCard(
+            title = "Account",
+            description = "Sign in once so DroidLM can identify your device session and keep onboarding secure.",
+            authState = authState,
+            onSignInWithGoogle = onSignInWithGoogle,
+            onSignInWithEmail = onSignInWithEmail,
+            onCreateAccountWithEmail = onCreateAccountWithEmail,
+            onSendPasswordReset = onSendPasswordReset
+        )
         SetupStatusCard(
             accessibilityEnabled = accessibilityEnabled,
             micGranted = micGranted,
@@ -418,8 +447,11 @@ private fun OnboardingPage(
             Text("Optional, but useful for diagnosing voice, overlay, and automation issues. Exports are zipped for sharing.", color = DroidLmColors.TextMuted)
         }
         DroidCard {
-            Button(onClick = onDone) { Text("Start using DroidLM") }
-            OutlinedButton(onClick = onOpenSettings) { Text("Review all settings") }
+            Button(onClick = onDone, enabled = authState.signedIn) { Text("Start using DroidLM") }
+            OutlinedButton(onClick = onOpenSettings, enabled = authState.signedIn) { Text("Review all settings") }
+            if (!authState.signedIn) {
+                Text("Sign in to continue.", color = DroidLmColors.TextMuted)
+            }
         }
     }
 
@@ -439,6 +471,7 @@ private fun OnboardingPage(
 @Composable
 private fun SettingsPage(
     settings: DroidLmSettings,
+    authState: AuthState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
     accessibilityEnabled: Boolean,
@@ -450,11 +483,26 @@ private fun SettingsPage(
     onSaveOpenAiKey: (String) -> Unit,
     onClearOpenAiKey: () -> Unit,
     onDismissPlannerKeySetup: () -> Unit,
+    onSignInWithGoogle: () -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onCreateAccountWithEmail: (String, String) -> Unit,
+    onSendPasswordReset: (String) -> Unit,
+    onSignOut: () -> Unit,
 ) {
     var showOpenAiKeyDialog by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
+        AccountCard(
+            title = "Account",
+            description = "DroidLM uses this account to identify you across setup and cloud-backed features.",
+            authState = authState,
+            onSignInWithGoogle = onSignInWithGoogle,
+            onSignInWithEmail = onSignInWithEmail,
+            onCreateAccountWithEmail = onCreateAccountWithEmail,
+            onSendPasswordReset = onSendPasswordReset,
+            onSignOut = onSignOut
+        )
         SetupStatusSection(
             accessibilityEnabled = accessibilityEnabled,
             micGranted = micGranted,
@@ -491,6 +539,135 @@ private fun VersionFooter() {
         modifier = Modifier.fillMaxWidth(),
         color = DroidLmColors.TextMuted,
         fontSize = 13.sp
+    )
+}
+
+private enum class EmailAuthMode {
+    SIGN_IN,
+    CREATE
+}
+
+@Composable
+private fun AccountCard(
+    title: String,
+    description: String,
+    authState: AuthState,
+    onSignInWithGoogle: () -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onCreateAccountWithEmail: (String, String) -> Unit,
+    onSendPasswordReset: (String) -> Unit,
+    onSignOut: (() -> Unit)? = null
+) {
+    var showEmailDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(authState.signedIn) {
+        if (authState.signedIn) showEmailDialog = false
+    }
+
+    DroidCard {
+        Text(title, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+        Text(description, color = DroidLmColors.TextMuted)
+        AccountStatus(authState)
+        if (authState.signedIn) {
+            onSignOut?.let {
+                OutlinedButton(onClick = it, enabled = !authState.loading) { Text("Sign out") }
+            }
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onSignInWithGoogle,
+                    enabled = authState.configured && !authState.loading
+                ) { Text("Continue with Google") }
+                OutlinedButton(
+                    onClick = { showEmailDialog = true },
+                    enabled = authState.configured && !authState.loading
+                ) { Text("Continue with Email") }
+            }
+        }
+        authState.message?.takeIf { it.isNotBlank() }?.let { message ->
+            Text(message, color = DroidLmColors.TextMuted)
+        }
+    }
+
+    if (showEmailDialog) {
+        EmailPasswordDialog(
+            authState = authState,
+            onSignIn = onSignInWithEmail,
+            onCreateAccount = onCreateAccountWithEmail,
+            onSendPasswordReset = onSendPasswordReset,
+            onDismiss = { showEmailDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun AccountStatus(authState: AuthState) {
+    val user = authState.user
+    if (user == null) {
+        Text(if (authState.configured) "Not signed in" else "Sign-in is not configured", fontWeight = FontWeight.SemiBold)
+    } else {
+        Text("Signed in as ${user.displayLabel}", fontWeight = FontWeight.SemiBold)
+        user.email?.takeIf { it.isNotBlank() }?.let { email ->
+            Text(email, color = DroidLmColors.TextMuted)
+        }
+    }
+}
+
+@Composable
+private fun EmailPasswordDialog(
+    authState: AuthState,
+    onSignIn: (String, String) -> Unit,
+    onCreateAccount: (String, String) -> Unit,
+    onSendPasswordReset: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var mode by remember { mutableStateOf(EmailAuthMode.SIGN_IN) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val creating = mode == EmailAuthMode.CREATE
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (creating) "Create account" else "Sign in with email") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Email") }
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    label = { Text("Password") }
+                )
+                if (creating) {
+                    Text("Use at least 6 characters.", color = DroidLmColors.TextMuted)
+                }
+                TextButton(onClick = { mode = if (creating) EmailAuthMode.SIGN_IN else EmailAuthMode.CREATE }) {
+                    Text(if (creating) "Already have an account? Sign in" else "Need an account? Create one")
+                }
+                TextButton(onClick = { onSendPasswordReset(email) }, enabled = !authState.loading) {
+                    Text("Send password reset email")
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (creating) onCreateAccount(email, password) else onSignIn(email, password)
+                },
+                enabled = !authState.loading
+            ) { Text(if (creating) "Create account" else "Sign in") }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Close") }
+        }
     )
 }
 

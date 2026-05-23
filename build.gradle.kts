@@ -1,7 +1,8 @@
 plugins {
     id("com.android.application") version "8.12.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.1.20" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.1.20" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.0" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.0" apply false
+    id("com.google.gms.google-services") version "4.4.4" apply false
 }
 
 data class WorkspaceApp(
@@ -24,6 +25,10 @@ val googleWorkspaceApps = listOf(
     WorkspaceApp("Google Sheets", "com.google.android.apps.docs.editors.sheets"),
     WorkspaceApp("Google Play Store", "com.android.vending", installableFromPlay = false)
 )
+
+val droidLmPackageName = "com.studionext54.droidlm"
+val droidLmDebugPackageName = "$droidLmPackageName.debug"
+val droidLmDebugTestPackageName = "$droidLmDebugPackageName.test"
 
 fun org.gradle.api.Project.androidAdbPath(): String {
     val androidHome = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
@@ -154,7 +159,7 @@ fun org.gradle.api.Project.runInstrumentedSuiteWithVideos(adb: String, suite: An
                     args += listOf("-e", key, value)
                 }
                 args += listOf("-e", "class", selector)
-                args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
+                args += "$droidLmDebugTestPackageName/androidx.test.runner.AndroidJUnitRunner"
 
                 val result = exec {
                     commandLine(adb, *args.toTypedArray())
@@ -527,7 +532,7 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
     suite.instrumentationArgs.forEach { (key, value) -> args += listOf("-e", key, value) }
     args += listOf("-e", "micAudioMarkerPath", markerPath)
     args += listOf("-e", "class", selector)
-    args += "ai.droidlm.debug.test/androidx.test.runner.AndroidJUnitRunner"
+    args += "$droidLmDebugTestPackageName/androidx.test.runner.AndroidJUnitRunner"
 
     val instrumentation = ProcessBuilder(adb, *args.toTypedArray()).redirectErrorStream(true).start()
     val output = java.io.ByteArrayOutputStream()
@@ -576,8 +581,8 @@ fun org.gradle.api.Project.runSupportLogMicRegressionE2e(adb: String) {
     ensureEmulatorHostAudioForE2e(adb)
     convertPcm16MonoToWav(supportLogPcm, supportLogWav, gainDb = 30)
     checkEmulatorGrpcStatus(supportLogWav)
-    adbOutput(adb, "uninstall", "ai.droidlm.debug")
-    adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+    adbOutput(adb, "uninstall", droidLmDebugPackageName)
+    adbOutput(adb, "uninstall", droidLmDebugTestPackageName)
     adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
     adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
     runMicInjectedInstrumentedTest(
@@ -809,8 +814,8 @@ tasks.register("connectedWorkspaceFileOpsReleaseE2e") {
         project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.sheets")
         project.adbOutput(adb, "install", "-r", docsStubApk)
         project.adbOutput(adb, "install", "-r", sheetsStubApk)
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adb, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
@@ -834,13 +839,13 @@ tasks.register("connectedDocsAgentLoopReleaseE2e") {
         val docsStubApk = project(":docsStub").layout.buildDirectory.file("outputs/apk/debug/docsStub-debug.apk").get().asFile.absolutePath
         project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.docs")
         project.adbOutput(adb, "install", "-r", docsStubApk)
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adb, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
-        project.adbOutput(adb, "shell", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
-        project.adbOutput(adb, "shell", "cmd", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
-        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "ai.droidlm.debug/ai.droidlm.portal.DroidLMAccessibilityService")
+        project.adbOutput(adb, "shell", "appops", "set", droidLmDebugPackageName, "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "cmd", "appops", "set", droidLmDebugPackageName, "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "$droidLmDebugPackageName/ai.droidlm.portal.DroidLMAccessibilityService")
         project.adbOutput(adb, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
         runInstrumentedSuiteWithVideos(
             adb,
@@ -864,13 +869,13 @@ tasks.register("connectedDocsAgentLoopStressReleaseE2e") {
         val docsStubApk = project(":docsStub").layout.buildDirectory.file("outputs/apk/debug/docsStub-debug.apk").get().asFile.absolutePath
         project.adbOutput(adb, "uninstall", "com.google.android.apps.docs.editors.docs")
         project.adbOutput(adb, "install", "-r", docsStubApk)
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adb, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adb, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adb, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adb, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
-        project.adbOutput(adb, "shell", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
-        project.adbOutput(adb, "shell", "cmd", "appops", "set", "ai.droidlm.debug", "MANAGE_EXTERNAL_STORAGE", "allow")
-        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "ai.droidlm.debug/ai.droidlm.portal.DroidLMAccessibilityService")
+        project.adbOutput(adb, "shell", "appops", "set", droidLmDebugPackageName, "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "cmd", "appops", "set", droidLmDebugPackageName, "MANAGE_EXTERNAL_STORAGE", "allow")
+        project.adbOutput(adb, "shell", "settings", "put", "secure", "enabled_accessibility_services", "$droidLmDebugPackageName/ai.droidlm.portal.DroidLMAccessibilityService")
         project.adbOutput(adb, "shell", "settings", "put", "secure", "accessibility_enabled", "1")
         runInstrumentedSuiteWithVideos(
             adb,
@@ -904,8 +909,8 @@ tasks.register("connectedVoiceE2e") {
 
     doLast {
         val adbPath = project.androidAdbPath()
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
@@ -934,8 +939,8 @@ tasks.register("connectedVoskOfflineE2e") {
 
     doLast {
         val adbPath = project.androidAdbPath()
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
@@ -961,8 +966,8 @@ tasks.register("connectedDebugLogUploadE2e") {
             ?: System.getenv("DROIDLM_E2E_DEBUG_LOG_RELAY_URL")
             ?: System.getenv("DROIDLM_E2E_RELAY_URL")
         uploadUrl?.takeIf { it.isNotBlank() }?.let { instrumentationArgs["debugLogUploadUrl"] = it }
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
@@ -1015,8 +1020,8 @@ tasks.register("connectedHoverMicAudioE2e") {
         project.prepareOpenGoogleDriveE2eWav(sourceAudioFile)
         project.convertAudioToWav(sourceAudioFile, audioFile)
         project.checkEmulatorGrpcStatus(audioFile)
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         val instrumentationArgs = mutableMapOf("preferOfflineSpeechRecognition" to "true")
@@ -1056,8 +1061,8 @@ tasks.register("connectedHoverMicCaptureRegressionE2e") {
         project.prepareOpenGoogleDriveE2eWav(sourceAudioFile)
         project.convertAudioToWav(sourceAudioFile, audioFile)
         project.checkEmulatorGrpcStatus(audioFile)
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         val instrumentationArgs = mutableMapOf(
@@ -1117,8 +1122,8 @@ tasks.register("connectedEmulatorMicProbeE2e") {
         project.convertAudioToWav(sourceAudioFile, audioFile)
         project.ensureEmulatorHostAudioForE2e(adbPath)
         project.checkEmulatorGrpcStatus(audioFile)
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         project.runMicInjectedInstrumentedTest(
@@ -1145,16 +1150,16 @@ tasks.register("connectedOnDeviceAudioSourceE2e") {
         val wavFile = file("build/e2e-audio/open-google-drive.wav")
         val pcmFile = file("build/e2e-audio/open-google-drive-16k-mono.pcm")
         val tmpAudioPath = "/data/local/tmp/droidlm-open-google-drive-16k-mono.pcm"
-        val deviceAudioPath = "/data/data/ai.droidlm.debug/files/droidlm-open-google-drive-16k-mono.pcm"
+        val deviceAudioPath = "/data/data/$droidLmDebugPackageName/files/droidlm-open-google-drive-16k-mono.pcm"
         project.prepareOpenGoogleDriveE2eWav(wavFile)
         project.convertAudioToPcm(wavFile, pcmFile)
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug")
-        project.adbOutput(adbPath, "uninstall", "ai.droidlm.debug.test")
+        project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
+        project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
         project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         project.adbOutput(adbPath, "push", pcmFile.absolutePath, tmpAudioPath)
-        project.adbOutput(adbPath, "shell", "run-as", "ai.droidlm.debug", "mkdir", "-p", "files")
-        project.adbOutput(adbPath, "shell", "run-as", "ai.droidlm.debug", "cp", tmpAudioPath, "files/droidlm-open-google-drive-16k-mono.pcm")
+        project.adbOutput(adbPath, "shell", "run-as", droidLmDebugPackageName, "mkdir", "-p", "files")
+        project.adbOutput(adbPath, "shell", "run-as", droidLmDebugPackageName, "cp", tmpAudioPath, "files/droidlm-open-google-drive-16k-mono.pcm")
         runInstrumentedSuiteWithVideos(
             adbPath,
             AndroidE2eSuite(

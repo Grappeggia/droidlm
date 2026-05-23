@@ -16,7 +16,7 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-const APP_ID = "ai.droidlm";
+const APP_ID = "com.studionext54.droidlm";
 const DEFAULT_REPO = "Grappeggia/droidlm";
 const DEFAULT_RELAY_URL = "http://127.0.0.1:8787";
 const USER_AGENT = `droidlm-cli/${loadVersion()}`;

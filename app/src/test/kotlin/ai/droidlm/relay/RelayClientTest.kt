@@ -40,7 +40,7 @@ class RelayClientTest {
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
-                val result = RelayClient().uploadDebugLogsToUrl(server.url("/").toString(), bundle, "ai.droidlm.debug", "0.1-debug")
+                val result = RelayClient().uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 assertEquals("debug-logs/synthetic/bundle.zip", result.value.objectName)
                 val request = server.takeRequest()
@@ -48,7 +48,7 @@ class RelayClientTest {
                 val body = request.body.readUtf8()
                 assertTrue(body.contains("name=\"logs\""))
                 assertTrue(body.contains("name=\"appPackage\""))
-                assertTrue(body.contains("ai.droidlm.debug"))
+                assertTrue(body.contains("com.studionext54.droidlm.debug"))
             } finally {
                 bundle.delete()
             }
@@ -63,7 +63,7 @@ class RelayClientTest {
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
                 val directUrl = server.url("/upload-debug-logs").toString()
-                val result = RelayClient().uploadDebugLogsToUrl(directUrl, bundle, "ai.droidlm.debug", "0.1-debug")
+                val result = RelayClient().uploadDebugLogsToUrl(directUrl, bundle, "com.studionext54.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 val request = server.takeRequest()
                 assertEquals("/upload-debug-logs", request.path)

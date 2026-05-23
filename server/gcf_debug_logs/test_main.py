@@ -62,7 +62,7 @@ class DebugLogFunctionTest(unittest.TestCase):
             filename="bundle.zip",
             content_type="application/zip",
             data=b"abc",
-            app_package="ai.droidlm.debug",
+            app_package="com.studionext54.droidlm.debug",
             app_version="0.1-debug",
             store=store,
         )
@@ -71,7 +71,7 @@ class DebugLogFunctionTest(unittest.TestCase):
         self.assertEqual("gs://example-debug-logs/debug-logs/synthetic/bundle.zip", payload["gsUri"])
         self.assertEqual(3, payload["sizeBytes"])
         self.assertEqual("application/zip", store.writes[0]["content_type"])
-        self.assertEqual("ai.droidlm.debug", store.writes[0]["metadata"]["appPackage"])
+        self.assertEqual("com.studionext54.droidlm.debug", store.writes[0]["metadata"]["appPackage"])
         self.assertEqual("0.1-debug", store.writes[0]["metadata"]["appVersion"])
 
     def test_entrypoint_accepts_root_post(self):
@@ -81,7 +81,7 @@ class DebugLogFunctionTest(unittest.TestCase):
             method="POST",
             path="/",
             files={"logs": FakeFile("bundle.zip", "application/zip", b"zip")},
-            form={"appPackage": "ai.droidlm.debug", "appVersion": "0.1-debug"},
+            form={"appPackage": "com.studionext54.droidlm.debug", "appVersion": "0.1-debug"},
         )
 
         body, status_code, headers = main.droidlm_debug_log_upload(request)

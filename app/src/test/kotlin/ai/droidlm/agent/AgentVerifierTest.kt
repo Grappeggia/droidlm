@@ -19,7 +19,7 @@ class AgentVerifierTest {
         val result = verifier.verify(
             DroidLmAction.OpenApp("Drive", "com.google.android.apps.docs", "open"),
             ActionResult.ok("launched"),
-            beforeState = state("ai.droidlm.debug"),
+            beforeState = state("com.studionext54.droidlm.debug"),
             afterState = state("com.google.android.apps.docs")
         )
 
@@ -30,8 +30,8 @@ class AgentVerifierTest {
         val result = verifier.verify(
             DroidLmAction.OpenApp("Drive", "com.google.android.apps.docs", "open"),
             ActionResult.ok("launched"),
-            beforeState = state("ai.droidlm.debug"),
-            afterState = state("ai.droidlm.debug")
+            beforeState = state("com.studionext54.droidlm.debug"),
+            afterState = state("com.studionext54.droidlm.debug")
         )
 
         assertEquals(AgentVerificationStatus.FAILED, result.status)

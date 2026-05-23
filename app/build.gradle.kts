@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URI
 import java.security.MessageDigest
 
@@ -5,7 +6,11 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
 }
+
+val hasGoogleServicesConfig = file("google-services.json").isFile
+
 
 val baseVersionCode = 29
 val baseVersionName = "0.1.28"
@@ -98,10 +103,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "ai.droidlm"
+        applicationId = "com.studionext54.droidlm"
         minSdk = 29
         targetSdk = 36
         versionCode = baseVersionCode
+        buildConfigField("boolean", "FIREBASE_AUTH_CONFIGURED", hasGoogleServicesConfig.toString())
         versionName = baseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -144,15 +150,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+
     buildFeatures {
         compose = true
         buildConfig = true
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -186,6 +196,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.bihe0832.android:lib-sherpa-onnx:6.25.21")
     implementation("com.alphacephei:vosk-android:0.3.47")

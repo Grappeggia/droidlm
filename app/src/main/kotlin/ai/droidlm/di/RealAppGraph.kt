@@ -1,6 +1,7 @@
 package ai.droidlm.di
 
 import ai.droidlm.appinventory.AppInventoryRepository
+import ai.droidlm.auth.FirebaseAuthRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.context.AccessibilityContentContextProvider
 import ai.droidlm.context.DeviceContextAggregator
@@ -55,6 +56,7 @@ class RealAppGraph(
 
     override val settingsRepository = SettingsRepository(application)
     override val actionLogRepository = ActionLogRepository()
+    override val authRepository = FirebaseAuthRepository(application, actionLogRepository)
     override val promptHistoryRepository = PromptHistoryRepository(application)
     override val speechDiagnosticsLogger = SpeechDiagnosticsLogger(application, settingsRepository, actionLogRepository)
     override val debugLogStore = DebugLogStore(application, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
@@ -138,6 +140,7 @@ class RealAppGraph(
 
     override fun droidLmViewModelDeps(): DroidLmViewModelDeps = DroidLmViewModelDeps(
         settingsRepository = settingsRepository,
+        authRepository = authRepository,
         actionLogRepository = actionLogRepository,
         speechDiagnosticsLogger = speechDiagnosticsLogger,
         debugLogStore = debugLogStore,

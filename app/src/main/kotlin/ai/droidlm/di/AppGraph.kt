@@ -1,6 +1,7 @@
 package ai.droidlm.di
 
 import ai.droidlm.appinventory.AppInventoryRepository
+import ai.droidlm.auth.AuthRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.diagnostics.DebugLogStore
@@ -35,6 +36,7 @@ import android.content.Context
 
 interface AppGraph {
     val settingsRepository: SettingsRepository
+    val authRepository: AuthRepository
     val actionLogRepository: ActionLogRepository
     val speechDiagnosticsLogger: SpeechDiagnosticsLogger
     val debugLogStore: DebugLogStore

@@ -21,3 +21,4 @@ __pycache__/
 support-logs/
 app/src/androidTest/assets/droidlm-audio-*-vosk.pcm
 
+app/google-services.json

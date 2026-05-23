@@ -422,8 +422,8 @@ Set execution mode to `MOBILERUN_CLOUD_TASK`, save a Mobilerun API key, and set 
 
 Debug and production builds use separate package IDs and release channels:
 
-- Debug build type installs as `ai.droidlm.debug` and appends `-debug` or `-debug.<iteration>` to `versionName`.
-- Release build type installs as `ai.droidlm`.
+- Debug build type installs as `com.studionext54.droidlm.debug` and appends `-debug` or `-debug.<iteration>` to `versionName`.
+- Release build type installs as `com.studionext54.droidlm`.
 - Debug releases use prerelease tags like `v0.1.26-debug.15` and assets like `DroidLM-0.1.26-debug.15-debug.apk`.
 - Production releases use stable tags like `v0.1.26` and assets like `DroidLM-0.1.26-release.apk`.
 - Production signing is read only from `DROIDLM_RELEASE_STORE_FILE`, `DROIDLM_RELEASE_STORE_PASSWORD`, `DROIDLM_RELEASE_KEY_ALIAS`, and `DROIDLM_RELEASE_KEY_PASSWORD`.
