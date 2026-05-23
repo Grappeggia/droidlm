@@ -40,11 +40,13 @@ class RelayClientTest {
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
-                val result = RelayClient().uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
+                    .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 assertEquals("debug-logs/synthetic/bundle.zip", result.value.objectName)
                 val request = server.takeRequest()
                 assertEquals("/", request.path)
+                assertEquals("Bearer test-token", request.getHeader("Authorization"))
                 val body = request.body.readUtf8()
                 assertTrue(body.contains("name=\"logs\""))
                 assertTrue(body.contains("name=\"appPackage\""))
@@ -63,15 +65,40 @@ class RelayClientTest {
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
                 val directUrl = server.url("/upload-debug-logs").toString()
-                val result = RelayClient().uploadDebugLogsToUrl(directUrl, bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
+                    .uploadDebugLogsToUrl(directUrl, bundle, "com.studionext54.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 val request = server.takeRequest()
                 assertEquals("/upload-debug-logs", request.path)
+                assertEquals("Bearer test-token", request.getHeader("Authorization"))
             } finally {
                 bundle.delete()
             }
         }
     }
+
+    @Test fun debugLogUploadFailsLocallyWhenTokenMissing() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{}"))
+            server.start()
+            val bundle = File.createTempFile("droidlm-debug", ".zip")
+            try {
+                bundle.writeBytes(byteArrayOf(1, 2, 3))
+                val result = RelayClient(
+                    firebaseIdTokenProvider = {
+                        FirebaseBearerTokenResult.Unavailable("Sign in before uploading debug logs", "AUTH_TOKEN_MISSING")
+                    }
+                ).uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                assertTrue(result is RelayCallResult.Failure)
+                result as RelayCallResult.Failure
+                assertEquals("AUTH_TOKEN_MISSING", result.errorCode)
+                assertEquals(0, server.requestCount)
+            } finally {
+                bundle.delete()
+            }
+        }
+    }
+
 
     @Test fun invalidJsonError() {
         val result = runCatching { RelayClient().parseTranscriptionJson("not-json") }

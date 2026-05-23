@@ -3,6 +3,7 @@ package ai.droidlm.di
 import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.auth.FirebaseAuthRepository
 import ai.droidlm.auth.AllowlistRepository
+import ai.droidlm.auth.AuthTokenResult
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.context.AccessibilityContentContextProvider
 import ai.droidlm.context.DeviceContextAggregator
@@ -29,6 +30,7 @@ import ai.droidlm.portal.PortalRuntimeOverrides
 import ai.droidlm.prompts.PromptHistoryRepository
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.runtime.AccessibilityRuntime
+import ai.droidlm.relay.FirebaseBearerTokenResult
 import ai.droidlm.runtime.ListeningRuntime
 import ai.droidlm.runtime.OverlayRuntime
 import ai.droidlm.safety.SafetyClassifier
@@ -63,7 +65,32 @@ class RealAppGraph(
     override val debugLogStore = DebugLogStore(application, settingsRepository, actionLogRepository, speechDiagnosticsLogger)
     override val relayClient = RelayClient(
         diagnostics = speechDiagnosticsLogger,
-        firebaseIdTokenProvider = { forceRefresh -> authRepository.currentIdToken(forceRefresh) }
+        firebaseIdTokenProvider = { forceRefresh ->
+            when (val token = authRepository.currentIdTokenResult(forceRefresh)) {
+                is AuthTokenResult.Success -> FirebaseBearerTokenResult.Success(token.token)
+                AuthTokenResult.NoCurrentUser -> FirebaseBearerTokenResult.Unavailable(
+                    message = "Sign in to continue",
+                    errorCode = "AUTH_TOKEN_MISSING",
+                    diagnostics = mapOf("result" to "no_current_user", "forceRefresh" to forceRefresh)
+                )
+                AuthTokenResult.AuthNotConfigured -> FirebaseBearerTokenResult.Unavailable(
+                    message = "Firebase Auth is not configured",
+                    errorCode = "AUTH_NOT_CONFIGURED",
+                    diagnostics = mapOf("result" to "auth_not_configured", "forceRefresh" to forceRefresh)
+                )
+                is AuthTokenResult.Failure -> FirebaseBearerTokenResult.Unavailable(
+                    message = "Could not refresh signed-in session: ${token.message}",
+                    errorCode = token.errorCode ?: "AUTH_TOKEN_REFRESH_FAILED",
+                    diagnostics = mapOf(
+                        "result" to "refresh_failed",
+                        "forceRefresh" to forceRefresh,
+                        "errorClass" to token.errorClass,
+                        "errorCode" to token.errorCode,
+                        "message" to token.message
+                    )
+                )
+            }
+        }
     )
     override val allowlistRepository = AllowlistRepository(authRepository, relayClient, actionLogRepository)
     override val openAiClient = OpenAiClient(debugLogStore = debugLogStore, networkDiagnostics = NetworkDiagnostics(application))

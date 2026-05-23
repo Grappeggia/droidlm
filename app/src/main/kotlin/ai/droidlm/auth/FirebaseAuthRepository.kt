@@ -139,9 +139,32 @@ class FirebaseAuthRepository(
         }
     }
 
-    override suspend fun currentIdToken(forceRefresh: Boolean): String? {
-        val user = firebaseAuth?.currentUser ?: return null
-        return runCatching { user.getIdToken(forceRefresh).await().token }.getOrNull()
+    override suspend fun currentIdTokenResult(forceRefresh: Boolean): AuthTokenResult {
+        val auth = firebaseAuth ?: return AuthTokenResult.AuthNotConfigured
+        val user = auth.currentUser ?: return AuthTokenResult.NoCurrentUser
+        return runCatching { user.getIdToken(forceRefresh).await().token?.takeIf { it.isNotBlank() } }
+            .fold(
+                onSuccess = { token ->
+                    token?.let(AuthTokenResult::Success)
+                        ?: AuthTokenResult.Failure(
+                            message = "Firebase returned an empty ID token",
+                            errorClass = "EmptyFirebaseIdToken",
+                            errorCode = "AUTH_TOKEN_EMPTY"
+                        )
+                },
+                onFailure = { error ->
+                    logs.log(
+                        ActionLogType.ERROR,
+                        "Firebase ID token refresh failed: ${error::class.java.simpleName}",
+                        error.message
+                    )
+                    AuthTokenResult.Failure(
+                        message = error.localizedMessage ?: error::class.java.simpleName,
+                        errorClass = error::class.java.name,
+                        errorCode = "AUTH_TOKEN_REFRESH_FAILED"
+                    )
+                }
+            )
     }
 
     override suspend fun reloadCurrentUser() {

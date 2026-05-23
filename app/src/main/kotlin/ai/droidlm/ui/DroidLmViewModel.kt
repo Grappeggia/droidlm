@@ -1,5 +1,8 @@
 package ai.droidlm.ui
 
+import ai.droidlm.auth.AuthState
+import ai.droidlm.auth.AuthTokenResult
+import ai.droidlm.auth.AllowlistState
 import ai.droidlm.diagnostics.DebugLogUploadEndpoint
 import ai.droidlm.update.DebugBuildPreparationResult
 import ai.droidlm.update.DebugUpdatePhase
@@ -312,9 +315,24 @@ class DroidLmViewModel(
         deps.debugLogStore.recordEvent("upload_requested", mapOf("issueDescriptionLength" to issueDescription.trim().length))
         deps.overlayRuntime.showNotice(
             title = "Uploading debug logs",
-            details = "Preparing the bundle for upload.",
+            details = "Checking signed-in access before preparing the bundle.",
             kind = OverlayNoticeKind.INFO
         )
+
+        val authSnapshot = deps.authRepository.authState.value
+        val allowlistSnapshot = deps.allowlistRepository.accessState.value
+        val authMetadata = debugLogUploadAuthMetadata(authSnapshot, allowlistSnapshot)
+        deps.debugLogStore.recordEvent("upload_auth_preflight", authMetadata)
+        debugLogUploadAuthBlock(authSnapshot, allowlistSnapshot)?.let { (message, errorCode) ->
+            failDebugLogUpload(
+                message = message,
+                errorCode = errorCode,
+                eventMetadata = authMetadata + mapOf("reason" to "auth_preflight_blocked")
+            )
+            return@launch
+        }
+
+        val firebaseIdToken = resolveDebugLogUploadToken() ?: return@launch
         val file = withContext(Dispatchers.IO) { deps.debugLogStore.createBundle(issueDescription) }
         if (file == null) {
             deps.debugLogStore.recordEvent("upload_empty")
@@ -346,7 +364,7 @@ class DroidLmViewModel(
             return@launch
         }
 
-        val result = deps.relayClient.uploadDebugLogsToUrl(uploadUrl, file, app.packageName, appVersionName())
+        val result = deps.relayClient.uploadDebugLogsToUrl(uploadUrl, file, app.packageName, appVersionName(), firebaseIdToken)
         when (result) {
             is RelayCallResult.Success -> {
                 val upload = result.value
@@ -386,6 +404,95 @@ class DroidLmViewModel(
             }
         }
     }
+
+    private suspend fun resolveDebugLogUploadToken(): String? {
+        val first = deps.authRepository.currentIdTokenResult(forceRefresh = false)
+        deps.debugLogStore.recordEvent("upload_token_preflight", debugLogUploadTokenMetadata("cached", false, first))
+        if (first is AuthTokenResult.Success) return first.token
+
+        val refreshed = deps.authRepository.currentIdTokenResult(forceRefresh = true)
+        deps.debugLogStore.recordEvent("upload_token_preflight", debugLogUploadTokenMetadata("refreshed", true, refreshed))
+        if (refreshed is AuthTokenResult.Success) return refreshed.token
+
+        val message = when (refreshed) {
+            AuthTokenResult.AuthNotConfigured -> "Firebase Auth is not configured."
+            AuthTokenResult.NoCurrentUser -> "Sign in again before uploading debug logs."
+            is AuthTokenResult.Failure -> "Could not refresh signed-in session: ${refreshed.message}"
+            is AuthTokenResult.Success -> "Signed-in session is ready."
+        }
+        val errorCode = when (refreshed) {
+            AuthTokenResult.AuthNotConfigured -> "AUTH_NOT_CONFIGURED"
+            AuthTokenResult.NoCurrentUser -> "AUTH_TOKEN_MISSING"
+            is AuthTokenResult.Failure -> refreshed.errorCode ?: "AUTH_TOKEN_REFRESH_FAILED"
+            is AuthTokenResult.Success -> null
+        }
+        failDebugLogUpload(
+            message = message,
+            errorCode = errorCode,
+            eventMetadata = debugLogUploadTokenMetadata("failed", true, refreshed) + mapOf("reason" to "token_unavailable")
+        )
+        return null
+    }
+
+    private fun debugLogUploadAuthBlock(auth: AuthState, allowlist: AllowlistState): Pair<String, String>? = when {
+        !auth.configured -> "Firebase Auth is not configured." to "AUTH_NOT_CONFIGURED"
+        !auth.ready || auth.loading -> "Sign-in state is still loading. Try again in a moment." to "AUTH_NOT_READY"
+        !auth.signedIn -> "Sign in before uploading debug logs." to "AUTH_TOKEN_MISSING"
+        auth.user?.emailVerified == false -> "Verify your email address before uploading debug logs." to "AUTH_EMAIL_UNVERIFIED"
+        allowlist.checking -> "DroidLM access is still being verified. Try again in a moment." to "ALLOWLIST_CHECKING"
+        !allowlist.allowed -> (allowlist.message ?: "Refresh access before uploading debug logs.") to (allowlist.errorCode ?: "AUTH_NOT_ALLOWLISTED")
+        else -> null
+    }
+
+    private fun failDebugLogUpload(message: String, errorCode: String?, eventMetadata: Map<String, Any?>) {
+        deps.debugLogStore.recordEvent(
+            "upload_failed",
+            eventMetadata + mapOf("message" to message, "errorCode" to errorCode)
+        )
+        deps.actionLogRepository.log(ActionLogType.ERROR, "Could not upload debug logs: $message", errorCode)
+        deps.overlayRuntime.showNotice(
+            title = "Debug log upload failed",
+            details = message,
+            kind = OverlayNoticeKind.ERROR
+        )
+    }
+
+    private fun debugLogUploadAuthMetadata(auth: AuthState, allowlist: AllowlistState): Map<String, Any?> = mapOf(
+        "authConfigured" to auth.configured,
+        "authReady" to auth.ready,
+        "authLoading" to auth.loading,
+        "signedIn" to auth.signedIn,
+        "uidPresent" to (auth.user?.uid?.isNotBlank() == true),
+        "emailPresent" to (!auth.user?.email.isNullOrBlank()),
+        "emailVerified" to auth.user?.emailVerified,
+        "allowlistConfigured" to allowlist.configured,
+        "allowlistChecking" to allowlist.checking,
+        "allowlisted" to allowlist.allowed,
+        "allowlistErrorCode" to allowlist.errorCode,
+        "appPackage" to app.packageName,
+        "appVersion" to appVersionName()
+    )
+
+    private fun debugLogUploadTokenMetadata(attempt: String, forceRefresh: Boolean, result: AuthTokenResult): Map<String, Any?> {
+        val base = mutableMapOf<String, Any?>(
+            "attempt" to attempt,
+            "forceRefresh" to forceRefresh,
+            "tokenAvailable" to (result is AuthTokenResult.Success)
+        )
+        when (result) {
+            is AuthTokenResult.Success -> base["result"] = "success"
+            AuthTokenResult.NoCurrentUser -> base["result"] = "no_current_user"
+            AuthTokenResult.AuthNotConfigured -> base["result"] = "auth_not_configured"
+            is AuthTokenResult.Failure -> {
+                base["result"] = "failure"
+                base["errorClass"] = result.errorClass
+                base["errorCode"] = result.errorCode
+                base["message"] = result.message
+            }
+        }
+        return base
+    }
+
 
     fun clearDebugLogs() {
         deps.debugLogStore.recordEvent("clear_requested", mapOf("source" to "settings_ui"))

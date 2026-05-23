@@ -137,6 +137,16 @@ sealed class RelayCallResult<out T> {
     data class Failure(val message: String, val errorCode: String? = null, val cause: Throwable? = null) : RelayCallResult<Nothing>()
 }
 
+sealed class FirebaseBearerTokenResult {
+    data class Success(val token: String) : FirebaseBearerTokenResult()
+    data class Unavailable(
+        val message: String,
+        val errorCode: String,
+        val diagnostics: Map<String, Any?> = emptyMap()
+    ) : FirebaseBearerTokenResult()
+}
+
+
 class RelayClient(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -144,7 +154,9 @@ class RelayClient(
         .writeTimeout(90, TimeUnit.SECONDS)
         .build(),
     private val diagnostics: SpeechDiagnosticsLogger? = null,
-    private val firebaseIdTokenProvider: suspend (forceRefresh: Boolean) -> String? = { null }
+    private val firebaseIdTokenProvider: suspend (forceRefresh: Boolean) -> FirebaseBearerTokenResult = {
+        FirebaseBearerTokenResult.Unavailable("Sign in to continue", "AUTH_TOKEN_MISSING")
+    }
 ) {
     suspend fun health(baseUrl: String): RelayCallResult<Boolean> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
@@ -159,8 +171,11 @@ class RelayClient(
     }
     suspend fun checkAllowlist(baseUrl: String, forceRefresh: Boolean = false): RelayCallResult<AllowlistCheckResponse> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Access verification URL is not configured", "NO_ALLOWLIST_URL")
-        val token = firebaseIdTokenProvider(forceRefresh)
-            ?: return RelayCallResult.Failure("Sign in to verify DroidLM access", "AUTH_TOKEN_MISSING")
+        val tokenResult = firebaseIdTokenProvider(forceRefresh)
+        val token = when (tokenResult) {
+            is FirebaseBearerTokenResult.Success -> tokenResult.token
+            is FirebaseBearerTokenResult.Unavailable -> return RelayCallResult.Failure(tokenResult.message, tokenResult.errorCode)
+        }
         val request = Request.Builder()
             .url("$normalized/allowlist/check")
             .post(ByteArray(0).toRequestBody(null))
@@ -168,7 +183,6 @@ class RelayClient(
             .build()
         return execute(request, ::parseAllowlistCheckJson)
     }
-
 
     suspend fun saveOpenAiKey(baseUrl: String, setupToken: String, apiKey: String): RelayCallResult<OpenAiKeySetupResponse> {
         val normalized = normalizeBaseUrl(baseUrl) ?: return RelayCallResult.Failure("Relay URL is not configured", "NO_RELAY_URL")
@@ -259,10 +273,30 @@ class RelayClient(
         uploadUrl: String,
         zipFile: File,
         appPackage: String,
-        appVersion: String? = null
+        appVersion: String? = null,
+        firebaseIdToken: String? = null
     ): RelayCallResult<DebugLogUploadResponse> {
         val normalized = normalizeBaseUrl(uploadUrl) ?: return RelayCallResult.Failure("Debug log upload URL is not configured", "NO_DEBUG_LOG_UPLOAD_URL")
         if (!zipFile.exists() || zipFile.length() <= 0) return RelayCallResult.Failure("Debug log bundle is empty", "EMPTY_DEBUG_LOGS")
+        val tokenResult = firebaseIdToken?.takeIf { it.isNotBlank() }?.let(FirebaseBearerTokenResult::Success)
+            ?: firebaseIdTokenProvider(false).let { first ->
+                if (first is FirebaseBearerTokenResult.Success) first else firebaseIdTokenProvider(true)
+            }
+        val token = when (tokenResult) {
+            is FirebaseBearerTokenResult.Success -> tokenResult.token
+            is FirebaseBearerTokenResult.Unavailable -> {
+                diagnostics?.record(
+                    null,
+                    "debug_log_upload_auth_unavailable",
+                    mapOf(
+                        "errorCode" to tokenResult.errorCode,
+                        "message" to tokenResult.message,
+                        "diagnostics" to tokenResult.diagnostics
+                    )
+                )
+                return RelayCallResult.Failure(tokenResult.message, tokenResult.errorCode)
+            }
+        }
         val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("logs", zipFile.name, zipFile.asRequestBody("application/zip".toMediaType()))
             .addFormDataPart("appPackage", appPackage)
@@ -270,7 +304,8 @@ class RelayClient(
         val requestBuilder = Request.Builder()
             .url(normalized)
             .post(bodyBuilder.build())
-        return execute(requestBuilder.addFirebaseBearer().build(), ::parseDebugLogUploadJson)
+            .addBearer(token)
+        return execute(requestBuilder.build(), ::parseDebugLogUploadJson)
     }
 
     fun parseAllowlistCheckJson(json: String): AllowlistCheckResponse {
@@ -653,8 +688,10 @@ class RelayClient(
     }
 
     private suspend fun Request.Builder.addFirebaseBearer(): Request.Builder {
-        val token = firebaseIdTokenProvider(false)
-        return if (token.isNullOrBlank()) this else addBearer(token)
+        return when (val token = firebaseIdTokenProvider(false)) {
+            is FirebaseBearerTokenResult.Success -> addBearer(token.token)
+            is FirebaseBearerTokenResult.Unavailable -> this
+        }
     }
 
     private fun Request.Builder.addBearer(token: String): Request.Builder =
