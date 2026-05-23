@@ -42,6 +42,7 @@ class DroidLmDebugLogUploadE2ETest {
         get() = ApplicationProvider.getApplicationContext()
 
     private var server: MockWebServer? = null
+    private var allowlistServer: MockWebServer? = null
 
     @Before
     fun setUp() = runBlocking {
@@ -51,13 +52,19 @@ class DroidLmDebugLogUploadE2ETest {
         )
         val args = InstrumentationRegistry.getArguments()
         val liveUploadUrl = args.getString("debugLogUploadUrl")?.takeIf { it.isNotBlank() }
+        allowlistServer = MockWebServer().also { mockServer ->
+            repeat(2) {
+                mockServer.enqueue(
+                    MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Type", "application/json")
+                        .setBody("""{"allowed":true,"email":"e2e@example.test","message":"Access approved."}""")
+                )
+            }
+            mockServer.start()
+        }
         val uploadUrl = liveUploadUrl ?: MockWebServer().also { mockServer ->
-            mockServer.enqueue(
-                MockResponse()
-                    .setResponseCode(200)
-                    .setHeader("Content-Type", "application/json")
-                    .setBody("""{"allowed":true,"email":"e2e@example.test","message":"Access approved."}""")
-            )
+
             mockServer.enqueue(
                 MockResponse()
                     .setResponseCode(200)
@@ -81,6 +88,7 @@ class DroidLmDebugLogUploadE2ETest {
     fun tearDown() {
         runBlocking {
             runCatching { server?.shutdown() }
+            runCatching { allowlistServer?.shutdown() }
             runCatching { DebugLogUploadEndpoint.clearOverrideForTesting() }
             runCatching { app.settingsRepository.updateDebugLoggingEnabled(false) }
             runCatching { app.speechDiagnosticsLogger.setEnabled(false) }
@@ -103,10 +111,10 @@ class DroidLmDebugLogUploadE2ETest {
             authRepository = fakeAuth,
             relayClient = relayClient,
             logs = app.actionLogRepository,
-            endpointProvider = { DebugLogUploadEndpoint.url() }
+            endpointProvider = { allowlistServer?.url("/")?.toString() ?: DebugLogUploadEndpoint.url() }
         )
         assertTrue("Expected test account to be allowlisted", allowlistRepository.ensureAllowed(forceRefresh = true))
-        server?.let { mockServer ->
+        allowlistServer?.let { mockServer ->
             val allowlistRequest = mockServer.takeRequest(10, TimeUnit.SECONDS)
             assertNotNull("Expected the app to check allowlist access", allowlistRequest)
             assertEquals("/allowlist/check", allowlistRequest!!.path?.substringBefore('?'))
