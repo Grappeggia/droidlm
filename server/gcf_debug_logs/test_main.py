@@ -103,6 +103,21 @@ class DebugLogFunctionTest(unittest.TestCase):
         self.assertEqual("application/json", headers["Content-Type"])
         self.assertEqual({"ok": True}, json.loads(body))
 
+    def test_upload_requires_firebase_bearer(self):
+        main.require_allowlisted_request = self.original_allowlist
+        request = FakeRequest(
+            method="POST",
+            path="/debug-logs",
+            files={"logs": FakeFile("bundle.zip", "application/zip", b"zip")},
+        )
+
+        body, status_code, _ = main.droidlm_debug_log_upload(request)
+
+        self.assertEqual(401, status_code)
+        payload = json.loads(body)
+        self.assertEqual("AUTH_TOKEN_MISSING", payload["errorCode"])
+
+
     def test_upload_rejects_large_payload(self):
         request = FakeRequest(
             method="POST",
