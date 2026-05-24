@@ -68,6 +68,8 @@ internal class PushToTalkSessionRunner(
         "OPENAI_API_KEY_MISSING" -> "Add OpenAI key for plans"
         "ON_DEVICE_MODEL_MISSING" -> "Download local planner"
         "ON_DEVICE_MODEL_UNSUPPORTED" -> "Need a supported flagship"
+        "ON_DEVICE_AGENT_UNAVAILABLE" -> "Use local action loop"
+        "PRIVACY_MODE_CLOUD_DISABLED" -> "Privacy mode blocks cloud tasks"
         "AMBIGUOUS_OPEN_APP" -> "Need a more specific app"
         else -> "Command failed"
     }

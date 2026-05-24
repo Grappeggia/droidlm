@@ -1,10 +1,12 @@
 package ai.droidlm.ondevice
 
 import ai.droidlm.intent.DroidLmActionContract
+import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
 import ai.droidlm.openai.PromptContextBudgeter
 import ai.droidlm.relay.PlanPreview
+import ai.droidlm.relay.PlannedAction
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayClient
 import ai.droidlm.relay.RelayPlanRequest
@@ -157,9 +159,10 @@ class OnDevicePlanner(
     suspend fun planPreview(request: RelayPlanRequest): RelayCallResult<PlanPreview> {
         return runCatching {
             ensureReady()
+            val promptContext = buildPromptContext(request)
             val rawResponse = engine.generateJson(
                 systemPrompt = SYSTEM_PROMPT,
-                userPrompt = buildUserPrompt(request),
+                userPrompt = buildPlanPreviewPrompt(request, promptContext),
                 jsonSchema = PLAN_PREVIEW_JSON_SCHEMA.toString(),
                 maxTokens = MAX_COMPLETION_TOKENS,
                 temperature = TEMPERATURE,
@@ -185,6 +188,48 @@ class OnDevicePlanner(
                     else -> Status(Status.Phase.ERROR, error.message ?: "On-device planning failed")
                 }
                 RelayCallResult.Failure(error.message ?: "On-device planning failed", errorCodeFor(error), error)
+            }
+        )
+    }
+
+    suspend fun planActionWithMetadata(
+        request: RelayPlanRequest,
+        step: Int,
+        maxSteps: Int
+    ): RelayCallResult<PlannedAction> {
+        return runCatching {
+            ensureReady()
+            val promptContext = buildPromptContext(request)
+            val rawResponse = engine.generateJson(
+                systemPrompt = SYSTEM_PROMPT,
+                userPrompt = buildActionPrompt(request, promptContext, step, maxSteps),
+                jsonSchema = ACTION_JSON_SCHEMA.toString(),
+                maxTokens = MAX_COMPLETION_TOKENS,
+                temperature = TEMPERATURE,
+                topK = TOP_K,
+                topP = TOP_P,
+                minP = MIN_P,
+                presencePenalty = PRESENCE_PENALTY
+            )
+            relayParser.parsePlannedActionJson(rawResponse)
+        }.fold(
+            onSuccess = { plannedAction ->
+                logs.log(
+                    ActionLogType.PARSED_ACTION,
+                    "On-device next action: ${plannedAction.action.displayName()}",
+                    "confidence=${plannedAction.confidence.name}; expectedResult=${plannedAction.expectedResult.orEmpty().take(120)}"
+                )
+                RelayCallResult.Success(plannedAction)
+            },
+            onFailure = { error ->
+                _status.value = when (status.value.phase) {
+                    Status.Phase.NOT_DOWNLOADED,
+                    Status.Phase.UNSUPPORTED,
+                    Status.Phase.DOWNLOADING,
+                    Status.Phase.LOADING -> status.value
+                    else -> Status(Status.Phase.ERROR, error.message ?: "On-device action planning failed")
+                }
+                RelayCallResult.Failure(error.message ?: "On-device action planning failed", errorCodeFor(error), error)
             }
         )
     }
@@ -226,8 +271,8 @@ class OnDevicePlanner(
         }
     }
 
-    private fun buildUserPrompt(request: RelayPlanRequest): String {
-        val promptContext = PromptContextBudgeter.build(
+    private fun buildPromptContext(request: RelayPlanRequest): PromptContextBudgeter.BudgetedPromptContext =
+        PromptContextBudgeter.build(
             goal = request.goal,
             activeApp = request.activeApp,
             deviceContext = request.deviceContext,
@@ -236,6 +281,11 @@ class OnDevicePlanner(
             history = request.history,
             targetContextTokens = LOCAL_PROMPT_CONTEXT_TOKENS
         )
+
+    private fun buildPlanPreviewPrompt(
+        request: RelayPlanRequest,
+        promptContext: PromptContextBudgeter.BudgetedPromptContext
+    ): String {
         return buildString {
             appendLine("Goal:")
             appendLine(request.goal)
@@ -246,6 +296,35 @@ class OnDevicePlanner(
             appendLine("Use installed package names only when opening or switching apps.")
             appendLine("If the task appears risky, destructive, or privacy-sensitive, set requiresConfirmation to true and use a HIGH risk level.")
             appendLine("Supported actions: ${DroidLmActionContract.supportedActionsPrompt}")
+            appendLine()
+            appendLine("Prompt context JSON:")
+            append(promptContext.json.toString())
+        }
+    }
+
+    private fun buildActionPrompt(
+        request: RelayPlanRequest,
+        promptContext: PromptContextBudgeter.BudgetedPromptContext,
+        step: Int,
+        maxSteps: Int
+    ): String {
+        val recentHistory = JSONArray(request.history.takeLast(8))
+        return buildString {
+            appendLine("Goal:")
+            appendLine(request.goal)
+            appendLine()
+            appendLine("Action loop step: $step of $maxSteps")
+            appendLine("Return only JSON that matches the schema exactly.")
+            appendLine("Choose the single best next Android action from the current visible state.")
+            appendLine("If the goal is already complete, return action DONE.")
+            appendLine("If there is no safe justified action from the visible state, return action NO_OP with a short reason.")
+            appendLine("Do not repeat a failing action unless the history shows new evidence or the screen changed.")
+            appendLine("Prefer visible text, node-backed actions, waiting, or scrolling over guessed coordinates.")
+            appendLine("Use OPEN_APP or SWITCH_APP only with package names present in the prompt context.")
+            appendLine("Supported actions: ${DroidLmActionContract.supportedActionsPrompt}")
+            appendLine()
+            appendLine("Recent loop history JSON:")
+            appendLine(recentHistory.toString())
             appendLine()
             appendLine("Prompt context JSON:")
             append(promptContext.json.toString())
@@ -333,51 +412,19 @@ class OnDevicePlanner(
                     .put("maxItems", 4)
                     .put("items", JSONObject()
                         .put("type", "object")
-                        .put("properties", JSONObject()
-                            .put("index", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 4))
-                            .put("action", enumValues(*DroidLmActionContract.supportedActions.toTypedArray()))
-                            .put("confidence", enumValues("HIGH", "MEDIUM", "LOW"))
-                            .put("reason", boundedString(1, 280))
-                            .put("requiresConfirmation", JSONObject().put("type", "boolean"))
-                            .put("expectedResult", boundedString(1, 280))
-                            .put("packageName", boundedString(1, 180))
-                            .put("appName", boundedString(1, 180))
-                            .put("x", integerRange(0, 10_000))
-                            .put("y", integerRange(0, 10_000))
-                            .put("startX", integerRange(0, 10_000))
-                            .put("startY", integerRange(0, 10_000))
-                            .put("endX", integerRange(0, 10_000))
-                            .put("endY", integerRange(0, 10_000))
-                            .put("durationMs", integerRange(0, 60_000))
-                            .put("nodeId", boundedString(1, 240))
-                            .put("direction", boundedString(1, 32))
-                            .put("amount", boundedString(1, 32))
-                            .put("untilText", boundedString(1, 240))
-                            .put("text", boundedString(1, 280))
-                            .put("label", boundedString(1, 280))
-                            .put("role", boundedString(1, 80))
-                            .put("containerNodeId", boundedString(1, 240))
-                            .put("buttonText", boundedString(1, 160))
-                            .put("menu", boundedString(1, 80))
-                            .put("imeAction", boundedString(1, 80))
-                            .put("kind", boundedString(1, 80))
-                            .put("value", JSONObject().put("type", "boolean"))
-                            .put("expanded", JSONObject().put("type", "boolean"))
-                            .put("url", boundedString(1, 512))
-                            .put("mimeType", boundedString(1, 120))
-                            .put("anchorText", boundedString(1, 280))
-                            .put("targetText", boundedString(1, 280))
-                            .put("replacementText", boundedString(1, 280))
-                            .put("insertText", boundedString(1, 280))
-                            .put("sectionLabel", boundedString(1, 180))
-                            .put("message", boundedString(1, 280))
-                        )
+                        .put("properties", actionPropertiesSchema().put("index", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 4)))
                         .put("required", JSONArray(listOf("index", "action", "confidence", "reason", "requiresConfirmation", "expectedResult")))
                         .put("additionalProperties", false)
                     )
                 )
             )
             .put("required", JSONArray(listOf("model", "summary", "riskLevel", "requiresConfirmation", "steps")))
+            .put("additionalProperties", false)
+
+        private val ACTION_JSON_SCHEMA = JSONObject()
+            .put("type", "object")
+            .put("properties", actionPropertiesSchema())
+            .put("required", JSONArray(listOf("action", "confidence", "reason", "expectedResult")))
             .put("additionalProperties", false)
 
         private const val SYSTEM_PROMPT = """
@@ -405,5 +452,43 @@ Keep plans concise and practical for the current screen.
             .put("type", "integer")
             .put("minimum", minimum)
             .put("maximum", maximum)
+
+        private fun actionPropertiesSchema(): JSONObject = JSONObject()
+            .put("action", enumValues(*DroidLmActionContract.supportedActions.toTypedArray()))
+            .put("confidence", enumValues("HIGH", "MEDIUM", "LOW"))
+            .put("reason", boundedString(1, 280))
+            .put("requiresConfirmation", JSONObject().put("type", "boolean"))
+            .put("expectedResult", boundedString(1, 280))
+            .put("packageName", boundedString(1, 180))
+            .put("appName", boundedString(1, 180))
+            .put("x", integerRange(0, 10_000))
+            .put("y", integerRange(0, 10_000))
+            .put("startX", integerRange(0, 10_000))
+            .put("startY", integerRange(0, 10_000))
+            .put("endX", integerRange(0, 10_000))
+            .put("endY", integerRange(0, 10_000))
+            .put("durationMs", integerRange(0, 60_000))
+            .put("nodeId", boundedString(1, 240))
+            .put("direction", boundedString(1, 32))
+            .put("amount", boundedString(1, 32))
+            .put("untilText", boundedString(1, 240))
+            .put("text", boundedString(1, 280))
+            .put("label", boundedString(1, 280))
+            .put("role", boundedString(1, 80))
+            .put("containerNodeId", boundedString(1, 240))
+            .put("buttonText", boundedString(1, 160))
+            .put("menu", boundedString(1, 80))
+            .put("imeAction", boundedString(1, 80))
+            .put("kind", boundedString(1, 80))
+            .put("value", JSONObject().put("type", "boolean"))
+            .put("expanded", JSONObject().put("type", "boolean"))
+            .put("url", boundedString(1, 512))
+            .put("mimeType", boundedString(1, 120))
+            .put("anchorText", boundedString(1, 280))
+            .put("targetText", boundedString(1, 280))
+            .put("replacementText", boundedString(1, 280))
+            .put("insertText", boundedString(1, 280))
+            .put("sectionLabel", boundedString(1, 180))
+            .put("message", boundedString(1, 280))
     }
 }

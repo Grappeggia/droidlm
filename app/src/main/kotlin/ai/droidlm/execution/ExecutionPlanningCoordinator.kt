@@ -371,7 +371,22 @@ internal class ExecutionPlanningCoordinator(
     suspend fun handlePlanning(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
         if (settings.privacyModeEnabled) {
-            return planTranscript(goal, diagnosticSessionId, recordPrompt = false)
+            return when (settings.executionMode) {
+                ExecutionMode.LOCAL_RULE_FIRST -> planTranscript(goal, diagnosticSessionId, recordPrompt = false)
+                ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps, diagnosticSessionId)
+                ExecutionMode.AGENT_LOOP -> finish(
+                    ActionResult.fail(
+                        "Privacy mode does not support agent loop yet. Use local action loop or reviewed planning.",
+                        "ON_DEVICE_AGENT_UNAVAILABLE"
+                    )
+                )
+                ExecutionMode.MOBILERUN_CLOUD_TASK -> finish(
+                    ActionResult.fail(
+                        "Privacy mode disables Mobilerun cloud tasks. Use local action loop or reviewed planning.",
+                        "PRIVACY_MODE_CLOUD_DISABLED"
+                    )
+                )
+            }
         }
         if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
             return runAgentLoop(goal, diagnosticSessionId)
@@ -382,7 +397,7 @@ internal class ExecutionPlanningCoordinator(
         }
         return when (settings.executionMode) {
             ExecutionMode.LOCAL_RULE_FIRST -> planTranscript(goal, diagnosticSessionId, recordPrompt = false)
-            ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps)
+            ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps, diagnosticSessionId)
             ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, diagnosticSessionId)
             ExecutionMode.MOBILERUN_CLOUD_TASK -> runMobilerunTask(goal)
         }
@@ -443,36 +458,51 @@ internal class ExecutionPlanningCoordinator(
         return finish(ActionResult.ok("Plan executed: ${pending.plan.summary}"))
     }
 
-    private suspend fun runLocalLlmLoop(goal: String, maxSteps: Int): ActionResult {
+    private suspend fun runLocalLlmLoop(goal: String, maxSteps: Int, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
         val history = mutableListOf<String>()
         var lastResult = ActionResult.ok("Started local LLM loop")
         for (step in 1..maxSteps.coerceAtLeast(1)) {
             cancellationResult()?.let { return finish(it) }
-            debugEvent(null, "local_loop_step_started", mapOf("step" to step, "maxSteps" to maxSteps, "historySize" to history.size))
+            debugEvent(diagnosticSessionId, "local_loop_step_started", mapOf("step" to step, "maxSteps" to maxSteps, "historySize" to history.size, "endpointMode" to if (settings.privacyModeEnabled) "on_device_qwen3_action_loop" else "direct_openai"))
             uiState.value = uiState.value.copy(status = "Planning step $step/$maxSteps")
             val state = portalController.getState()
-            val deviceContext = deviceContextAggregator.collect(goal, state, history, null)
+            val deviceContext = deviceContextAggregator.collect(goal, state, history, diagnosticSessionId)
             val packages = deviceContext.packages
             val activeApp = deviceContext.activeApp
-            val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
-            if (apiKey.isBlank()) {
-                plannerKeySetupRequest.value = PlannerKeySetupRequest(
-                    kind = PlannerSetupKind.OPENAI_API_KEY,
-                    message = "GPT planning requires an OpenAI API key saved on this device.",
-                    retryTranscript = goal
-                )
-                return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
+            val request = RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp, deviceContext)
+            val planned = if (settings.privacyModeEnabled) {
+                onDevicePlanner.planActionWithMetadata(request, step, maxSteps)
+            } else {
+                val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
+                if (apiKey.isBlank()) {
+                    plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                        kind = PlannerSetupKind.OPENAI_API_KEY,
+                        message = "GPT planning requires an OpenAI API key saved on this device.",
+                        retryTranscript = goal
+                    )
+                    return finish(ActionResult.fail("OpenAI API key is required for GPT planning", "OPENAI_API_KEY_MISSING"))
+                }
+                openAiClient.planActionWithMetadata(apiKey, settings.openAiModel, request)
             }
-            when (val planned = openAiClient.planActionWithMetadata(apiKey, settings.openAiModel, RelayPlanRequest(goal, state, packages, history, maxSteps, activeApp, deviceContext))) {
-                is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(planned), planned.errorCode))
+            when (planned) {
+                is RelayCallResult.Failure -> {
+                    if (settings.privacyModeEnabled && (planned.errorCode == OnDevicePlanner.ERROR_MODEL_MISSING || planned.errorCode == OnDevicePlanner.ERROR_MODEL_UNSUPPORTED)) {
+                        plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                            kind = PlannerSetupKind.ON_DEVICE_MODEL,
+                            message = onDevicePlanner.setupMessage(),
+                            retryTranscript = goal
+                        )
+                    }
+                    return finish(ActionResult.fail(if (settings.privacyModeEnabled) planned.message else userFacingPlannerMessage(planned), planned.errorCode))
+                }
                 is RelayCallResult.Success -> {
                     val plannedAction = planned.value
                     val action = plannedAction.action
                     logs.log(ActionLogType.PARSED_ACTION, action.displayName())
                     if (action == DroidLmAction.Done) return finish(ActionResult.ok("Task complete"))
                     val safety = safetyClassifier.classify(goal, action, state, settings.sensitiveAppScreenshotDenylist)
-                    recordSafetyDecision(null, "local_loop_step_$step", safety, settings.requireRiskConfirmation)
+                    recordSafetyDecision(diagnosticSessionId, "local_loop_step_$step", safety, settings.requireRiskConfirmation)
                     val confidencePolicy = ActionConfidencePolicy.evaluate(
                         confidence = plannedAction.confidence,
                         action = action,
@@ -480,17 +510,17 @@ internal class ExecutionPlanningCoordinator(
                     )
                     if (!confidencePolicy.allowed) {
                         val message = confidencePolicy.reason ?: "Planner confidence policy blocked ${action.displayName()}"
-                        debugEvent(null, "local_loop_confidence_blocked", mapOf("step" to step, "action" to action.displayName(), "confidence" to plannedAction.confidence.name, "message" to message))
+                        debugEvent(diagnosticSessionId, "local_loop_confidence_blocked", mapOf("step" to step, "action" to action.displayName(), "confidence" to plannedAction.confidence.name, "message" to message))
                         history += "${action.displayName()} blocked by confidence policy: $message"
                         lastResult = ActionResult.fail(message, "PLAN_CONFIDENCE_BLOCKED")
                         continue
                     }
                     if (confidencePolicy.requiresConfirmation || safety.needsConfirmationPrompt(settings.requireRiskConfirmation)) {
-                        val confirmed = requestConfirmation(goal, action, safety.reason ?: confidencePolicy.reason ?: "This action is sensitive", null, null)
+                        val confirmed = requestConfirmation(goal, action, safety.reason ?: confidencePolicy.reason ?: "This action is sensitive", diagnosticSessionId, null)
                         if (!confirmed) return finish(ActionResult.fail("Planner action cancelled", "CONFIRMATION_REJECTED"))
                     }
-                    lastResult = executeAction(action, goal, false, null)
-                    debugEvent(null, "local_loop_step_result", mapOf("step" to step, "action" to action.displayName(), "success" to lastResult.success, "errorCode" to lastResult.errorCode))
+                    lastResult = executeAction(action, goal, false, diagnosticSessionId)
+                    debugEvent(diagnosticSessionId, "local_loop_step_result", mapOf("step" to step, "action" to action.displayName(), "success" to lastResult.success, "errorCode" to lastResult.errorCode, "expectedResult" to plannedAction.expectedResult))
                     history += "${action.displayName()} -> ${lastResult.success}: ${lastResult.message}"
                     if (!lastResult.success || action is DroidLmAction.NoOp) return finish(lastResult)
                 }
