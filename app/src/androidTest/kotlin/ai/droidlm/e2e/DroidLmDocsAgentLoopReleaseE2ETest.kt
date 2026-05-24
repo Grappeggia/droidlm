@@ -140,6 +140,28 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         )
     }
 
+    @Test
+    fun reportedSummaryOfDocsCaseOpensSummaryDocumentFromList() = runBlocking {
+        portal.loadReportedDocumentList()
+        server.dispatcher = reportedIssueDispatcher()
+
+        val result = withTimeout(AGENT_LOOP_TIMEOUT_MS) { app.executor.executeTranscript(REPORTED_ISSUE_PROMPT) }
+        val settled = waitUntilSuspend(5_000) { portal.openedDocumentTitle == "Summary of Docs" }
+        val firstRequest = requestBodies.firstOrNull().orEmpty()
+
+        assertTrue(
+            "Expected reported Docs-list flow to succeed; result=${result.message}; opened=${portal.openedDocumentTitle}; requests=${requestCount.get()}",
+            result.success
+        )
+        assertTrue("Expected the Summary of Docs row to be opened", settled)
+        assertEquals("Summary of Docs", portal.openedDocumentTitle)
+        assertTrue("Expected prompt to include structured collection context", firstRequest.contains("structuredCollections"))
+        assertTrue("Expected prompt to include Summary of Docs", firstRequest.contains("Summary of Docs"))
+        assertTrue("Expected prompt to expose Summary of Docs as an openable row", firstRequest.contains("OPEN_ROW"))
+        assertTrue("Expected prompt to include the Summary row node id", firstRequest.contains("summary-row"))
+        assertTrue("Expected prompt to include the reported distractor document", firstRequest.contains("Distractor Meeting Notes"))
+    }
+
     private fun scriptedAgentDispatcher(): Dispatcher {
         val responses = listOf(
             decision(
@@ -167,6 +189,23 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
                 toolCallJson("turn_6", "NAVIGATE_TO_ARTIFACT_TARGET", "Return to Overview", "label" to "Overview", "kind" to "control")
             ),
             done("Review-ready checklist completed")
+        )
+        return object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requestBodies += request.body.readUtf8()
+                val index = requestCount.getAndIncrement()
+                return openAiResponse(responses.getOrElse(index) { done("No more scripted actions") })
+            }
+        }
+    }
+
+    private fun reportedIssueDispatcher(): Dispatcher {
+        val responses = listOf(
+            decision(
+                message = "Open the Summary of Docs row",
+                toolCallJson("turn_1", "TAP_NODE", "Open the grounded Summary of Docs row", "nodeId" to "summary-row")
+            ),
+            done("Summary of Docs opened")
         )
         return object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -296,6 +335,11 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         private var documentText: String = SEED_DOCUMENT
         private var selectionStart: Int = 0
         private var selectionEnd: Int = 0
+        var openedDocumentTitle: String? = null
+            private set
+
+        private var showingDocumentList: Boolean = false
+        private var documentListEntries: List<DocumentListEntry> = emptyList()
         private val headings: List<String>
             get() = extractHeadings(documentText)
 
@@ -305,6 +349,16 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
             selectionStart = 0
             selectionEnd = 0
             currentHeading = "Overview"
+        }
+
+        fun loadReportedDocumentList() {
+            currentFile = null
+            showingDocumentList = true
+            openedDocumentTitle = null
+            documentListEntries = listOf(
+                DocumentListEntry("Summary of Docs", "summary-row", "summary-label", "summary-more", Rect(0, 400, 600, 900), Rect(20, 438, 540, 884)),
+                DocumentListEntry("Distractor Meeting Notes", "meeting-row", "meeting-label", "meeting-more", Rect(0, 910, 600, 980), Rect(20, 920, 540, 970))
+            )
         }
 
         override suspend fun isAccessibilityEnabled(): Boolean = true
@@ -330,6 +384,15 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         override suspend fun tap(x: Int, y: Int): ActionResult = ActionResult.fail("Coordinate tap unsupported", "UNSUPPORTED")
 
         override suspend fun tapNode(nodeId: String): ActionResult {
+            if (showingDocumentList) {
+                documentListEntries.firstOrNull { it.rowNodeId == nodeId }?.let { entry ->
+                    openedDocumentTitle = entry.title
+                    showingDocumentList = false
+                    documentText = "${entry.title}\n"
+                    currentHeading = entry.title
+                    return ActionResult.ok("Opened ${entry.title}")
+                }
+            }
             headingForNodeId(nodeId)?.let { return moveToHeading(it) }
             return ActionResult.fail("Unknown node: $nodeId", "NODE_NOT_FOUND")
         }
@@ -340,6 +403,10 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         override suspend fun longPress(x: Int, y: Int, durationMs: Int): ActionResult = ActionResult.fail("Unsupported", "UNSUPPORTED")
 
         override suspend fun tapText(text: String, role: String?, containerNodeId: String?): ActionResult {
+            if (showingDocumentList) {
+                val entry = documentListEntries.firstOrNull { it.title.equals(text, ignoreCase = true) }
+                return entry?.let { tapNode(it.rowNodeId) } ?: ActionResult.fail("Text not tappable: $text", "TEXT_NOT_FOUND")
+            }
             val heading = headings.firstOrNull { it.equals(text, ignoreCase = true) }
             return heading?.let { moveToHeading(it) } ?: ActionResult.fail("Text not tappable: $text", "TEXT_NOT_FOUND")
         }
@@ -369,6 +436,10 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         override suspend fun refresh(targetNodeId: String?): ActionResult = ActionResult.ok("Refreshed")
 
         override suspend fun findTextOnScreen(text: String, tapOnMatch: Boolean): ActionResult {
+            if (showingDocumentList) {
+                val found = documentListEntries.any { it.title.contains(text, ignoreCase = true) }
+                return if (found) ActionResult.ok("Found text") else ActionResult.fail("Text not found", "TEXT_NOT_FOUND")
+            }
             val found = documentText.contains(text, ignoreCase = true) || headings.any { it.contains(text, ignoreCase = true) }
             return if (found) ActionResult.ok("Found text") else ActionResult.fail("Text not found", "TEXT_NOT_FOUND")
         }
@@ -439,6 +510,7 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         }
 
         private fun buildNodes(): List<UiNode> {
+            if (showingDocumentList) return buildDocumentListNodes()
             val nodes = mutableListOf<UiNode>()
             val title = documentText.lineSequence().firstOrNull().orEmpty()
             nodes += UiNode(
@@ -496,6 +568,69 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
             return nodes
         }
 
+        private fun buildDocumentListNodes(): List<UiNode> {
+            val nodes = mutableListOf<UiNode>()
+            nodes += UiNode(
+                nodeId = "recent-documents",
+                text = "Recent documents",
+                contentDescription = null,
+                className = "android.widget.TextView",
+                packageName = DOCS_PACKAGE,
+                bounds = Rect(0, 250, 600, 340),
+                clickable = false,
+                editable = false,
+                focused = false,
+                enabled = true,
+                selected = false
+            )
+            documentListEntries.forEach { entry ->
+                nodes += UiNode(
+                    nodeId = entry.rowNodeId,
+                    text = if (entry.title.contains("Meeting")) entry.title else null,
+                    contentDescription = null,
+                    className = "android.widget.FrameLayout",
+                    packageName = DOCS_PACKAGE,
+                    bounds = entry.rowBounds,
+                    clickable = true,
+                    editable = false,
+                    focused = false,
+                    enabled = true,
+                    selected = false,
+                    focusable = true,
+                    availableActions = listOf(UiNodeAction(name = "ACTION_CLICK", droidLmAction = "TAP_NODE"))
+                )
+                nodes += UiNode(
+                    nodeId = entry.labelNodeId,
+                    text = null,
+                    contentDescription = entry.title,
+                    className = "android.view.View",
+                    packageName = DOCS_PACKAGE,
+                    bounds = entry.labelBounds,
+                    clickable = false,
+                    editable = false,
+                    focused = false,
+                    enabled = true,
+                    selected = false,
+                    parentId = entry.rowNodeId
+                )
+                nodes += UiNode(
+                    nodeId = entry.moreNodeId,
+                    text = null,
+                    contentDescription = "More actions for ${entry.title}",
+                    className = "android.view.View",
+                    packageName = DOCS_PACKAGE,
+                    bounds = Rect(entry.labelBounds.right - 120, entry.labelBounds.top + 40, entry.labelBounds.right - 60, entry.labelBounds.top + 100),
+                    clickable = false,
+                    editable = false,
+                    focused = false,
+                    enabled = true,
+                    selected = false,
+                    parentId = entry.rowNodeId
+                )
+            }
+            return nodes
+        }
+
         private fun buildEditableTarget(): EditableTarget = EditableTarget(
             nodeId = EDITOR_NODE_ID,
             packageName = DOCS_PACKAGE,
@@ -541,6 +676,15 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
 
         fun snapshotText(): String = documentText
 
+        private data class DocumentListEntry(
+            val title: String,
+            val rowNodeId: String,
+            val labelNodeId: String,
+            val moreNodeId: String,
+            val rowBounds: Rect,
+            val labelBounds: Rect
+        )
+
         companion object {
             private const val EDITOR_NODE_ID = "document_editor"
         }
@@ -550,6 +694,7 @@ class DroidLmDocsAgentLoopReleaseE2ETest {
         private const val DOCS_PACKAGE = "com.google.android.apps.docs.editors.docs"
         private const val AGENT_LOOP_TIMEOUT_MS = 45_000L
         private const val SHORT_PROMPT = "Make this doc review-ready for tomorrow and leave me back at Overview."
+        private const val REPORTED_ISSUE_PROMPT = "Open Summary of Docs"
         private const val EXPECTED_AGENT_TURNS = 7
         private val SEED_DOCUMENT = """
             Q2 Launch Readout

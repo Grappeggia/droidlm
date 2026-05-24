@@ -36,17 +36,20 @@ class DroidLmVoskOfflineE2ETest {
         )
     }
 
-    @Ignore("Temporarily disabled due to flaky support-log transcript drift in release matrix")
+    @Ignore("Local-only private PCM fixtures are intentionally excluded from source control")
     @Test
-    fun sharedSupportLogPcmReproducesShortTranscripts() = runBlocking {
-        val cases = listOf(
-            "private-vosk-fixture-a.pcm" to "the",
-            "private-vosk-fixture-b.pcm" to "opus",
-            "private-vosk-fixture.pcm" to "open"
-        )
+    fun localPrivatePcmFixturesReproduceShortTranscripts() = runBlocking {
+        val cases = InstrumentationRegistry.getArguments()
+            .getString("privateVoskPcmFixtures")
+            .orEmpty()
+            .split(';')
+            .mapNotNull { raw ->
+                val parts = raw.split('=', limit = 2)
+                if (parts.size == 2 && parts[0].isNotBlank()) parts[0] to parts[1] else null
+            }
         assumeTrue(
-            "Private support-log PCM fixtures are not packaged in androidTest assets.",
-            cases.all { (assetName, _) -> androidTestAssetExists(assetName) }
+            "Private PCM fixtures must be supplied with -e privateVoskPcmFixtures assetName=expectedTranscript;...",
+            cases.isNotEmpty() && cases.all { (assetName, _) -> androidTestAssetExists(assetName) }
         )
 
         cases.forEach { (assetName, expectedTranscript) ->
@@ -54,11 +57,11 @@ class DroidLmVoskOfflineE2ETest {
                 pcm = instrumentation.context.assets.open(assetName).use { it.readBytes() },
                 sampleRate = 16_000f,
                 languageTag = "en-US",
-                diagnosticSessionId = "vosk-support-log-$expectedTranscript"
+                diagnosticSessionId = "vosk-private-fixture"
             )
 
             assertEquals(
-                "Expected shared support-log PCM $assetName to reproduce the short transcript",
+                "Expected private PCM fixture to reproduce the short transcript",
                 expectedTranscript,
                 transcript.lowercase().trim()
             )

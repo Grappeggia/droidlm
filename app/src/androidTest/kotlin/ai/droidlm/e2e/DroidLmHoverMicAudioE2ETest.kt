@@ -228,12 +228,12 @@ class DroidLmHoverMicAudioE2ETest {
     }
 
     @Test
-    fun hoverRecordSupportLogAudioReproducesAmbiguousOpenRegression() {
+    fun hoverRecordSanitizedShortAudioReproducesAmbiguousOpenRegression() {
         runBlocking {
             val markerPath = args.getString("micAudioMarkerPath")
                 ?: throw AssertionError("micAudioMarkerPath instrumentation arg is required")
             app.settingsRepository.updateDebugLoggingEnabled(true)
-            assertTrue("Expected debug logging to enable for support-log regression capture", waitForDebugLoggingEnabled(5_000))
+            assertTrue("Expected debug logging to enable for sanitized short-audio regression capture", waitForDebugLoggingEnabled(5_000))
             app.speechDiagnosticsLogger.clear()
             SystemClock.sleep(250)
             app.actionLogRepository.clear()
@@ -249,12 +249,12 @@ class DroidLmHoverMicAudioE2ETest {
 
             recordButton.click()
             assertTrue(
-                "Expected support-log regression run to activate speech recognition quickly; state=${app.speechRecognitionController.state.value}",
+                "Expected sanitized short-audio regression run to activate speech recognition quickly; state=${app.speechRecognitionController.state.value}",
                 waitForActive(750)
             )
             assertRecordButtonStaysActive(device, 2_000)
             assertTrue(
-                "Expected support-log regression run to reach listening state before injecting audio; state=${app.speechRecognitionController.state.value}",
+                "Expected sanitized short-audio regression run to reach listening state before injecting audio; state=${app.speechRecognitionController.state.value}",
                 waitForListening(3_000)
             )
             executeShell("mkdir -p ${markerPath.substringBeforeLast('/')}")
@@ -268,14 +268,14 @@ class DroidLmHoverMicAudioE2ETest {
             stopButton.click()
 
             assertTrue(
-                "Expected May 10 support-log audio to settle into a failed short-transcript outcome after the stop tap; speech=${app.speechRecognitionController.state.value}; execution=${app.executor.uiState.value}; logs=${app.actionLogRepository.logs.value}",
+                "Expected sanitized short audio to settle into a failed short-transcript outcome after the stop tap; speech=${app.speechRecognitionController.state.value}; execution=${app.executor.uiState.value}; logs=${app.actionLogRepository.logs.value}",
                 waitForSpeechSessionToFinish(30_000)
             )
 
             val events = readDiagnosticEvents()
             val speechSessions = completedSpeechSessions(events)
             assertTrue(
-                "Expected support-log regression run to record at least one completed speech session. Events=$events",
+                "Expected sanitized short-audio regression run to record at least one completed speech session. Events=$events",
                 speechSessions.isNotEmpty()
             )
 
@@ -284,7 +284,7 @@ class DroidLmHoverMicAudioE2ETest {
                 hasSessionEvent(session, "prefer_offline_vosk_direct") || hasSessionEvent(session, "vosk_fallback_started")
             }
             assertTrue(
-                "Expected support-log regression sessions to route through offline-preferred Vosk path. Sessions=$sessionSummaries",
+                "Expected sanitized short-audio regression sessions to route through offline-preferred Vosk path. Sessions=$sessionSummaries",
                 offlineFallbackSessions.isNotEmpty()
             )
 
@@ -293,7 +293,7 @@ class DroidLmHoverMicAudioE2ETest {
                 transcript.isBlank() || (transcript.length <= 5 && !transcript.contains("google") && !transcript.contains("docs") && !transcript.contains("sheets"))
             }
             assertTrue(
-                "Expected support-log regression speech sessions to remain blank/short and not resolve full app names. Sessions=$sessionSummaries",
+                "Expected sanitized short-audio regression speech sessions to remain blank/short and not resolve full app names. Sessions=$sessionSummaries",
                 shortOrBlankTranscriptSessions.size == speechSessions.size
             )
 
@@ -309,7 +309,7 @@ class DroidLmHoverMicAudioE2ETest {
                     }
                 )
                 assertTrue(
-                    "Expected offline fallback failures in support-log replay to surface push-to-talk failure telemetry. Sessions=${voskFailureSessions.joinToString { compactEvents(it) }}",
+                    "Expected offline fallback failures in sanitized short-audio replay to surface push-to-talk failure telemetry. Sessions=${voskFailureSessions.joinToString { compactEvents(it) }}",
                     voskFailureSessions.all { session -> hasSessionEvent(session, "push_to_talk_failed") || hasSessionEvent(session, "push_to_talk_execution_failed") }
                 )
             }
@@ -400,7 +400,7 @@ class DroidLmHoverMicAudioE2ETest {
 
     private fun readDiagnosticEvents(): List<JSONObject> {
         val exported = runBlocking { app.speechDiagnosticsLogger.exportSnapshot() }
-            ?: throw AssertionError("Expected support-log regression run to produce an exported diagnostics snapshot")
+            ?: throw AssertionError("Expected sanitized short-audio regression run to produce an exported diagnostics snapshot")
         return exported.readLines()
             .filter { it.isNotBlank() }
             .map(::JSONObject)

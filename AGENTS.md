@@ -11,6 +11,14 @@
 - Start each debug-log review with `issue-description.txt`, `diagnostics-health.json`, `timeline-index.json`, `speech/*.jsonl`, and `llm/*.json`; avoid opening raw audio unless the user explicitly asks for audio analysis.
 - Debug logs can contain raw microphone audio, spoken text, screen context, and LLM traces. Summarize findings without exposing secrets, API keys, raw audio, or unnecessary user content.
 
+## Debug Log and E2E Sanitization
+
+- When turning a user report, debug log, transcript, screen context, or support-log bundle into code, tests, fixtures, release notes, or commits, sanitize it automatically before writing files.
+- Do not commit raw microphone audio, speech transcripts, debug-log bundles, LLM traces, screenshots, user document titles, account identifiers, personal names, email addresses, auth tokens, cloud object URIs, local absolute paths, or customer/user content copied from reports.
+- Replace report-derived labels with synthetic placeholders that preserve the bug shape, for example `Summary of Docs`, `Distractor Meeting Notes`, `Release lead`, `Mobile lead`, and `e2e@example.test`.
+- Keep private audio or debug fixtures outside git. Load them only from local ignored paths or explicit environment variables such as `DROIDLM_PRIVATE_SUPPORT_LOG_PCM`; provide a sanitized synthetic fallback when tests need to run in CI or release verification.
+- Before committing E2E tests or fixtures, search changed files for private markers including real names, emails, API keys, bearer tokens, `gs://` debug-log URIs, raw support-log filenames, and `app/src/androidTest/assets/*.pcm`.
+
 ## Code Best Practices
 
 - Keep the settings experience simple, intuitive, and uncluttered.

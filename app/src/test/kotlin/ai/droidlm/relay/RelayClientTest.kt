@@ -35,7 +35,7 @@ class RelayClientTest {
 
     @Test fun debugLogUploadPostsMultipartToDirectEndpoint() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/bundle.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/bundle.zip","sizeBytes":3,"contentType":"application/zip"}"""))
+            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/test.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/test.zip","sizeBytes":3,"contentType":"application/zip"}"""))
             server.start()
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {
@@ -43,7 +43,7 @@ class RelayClientTest {
                 val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
                     .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
-                assertEquals("debug-logs/synthetic/bundle.zip", result.value.objectName)
+                assertEquals("debug-logs/synthetic/test.zip", result.value.objectName)
                 val request = server.takeRequest()
                 assertEquals("/", request.path)
                 assertEquals("Bearer test-token", request.getHeader("Authorization"))
@@ -59,7 +59,7 @@ class RelayClientTest {
 
     @Test fun debugLogUploadCanPostToDirectFunctionUrl() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/bundle.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/bundle.zip","sizeBytes":3,"contentType":"application/zip"}"""))
+            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/direct.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/direct.zip","sizeBytes":3,"contentType":"application/zip"}"""))
             server.start()
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {

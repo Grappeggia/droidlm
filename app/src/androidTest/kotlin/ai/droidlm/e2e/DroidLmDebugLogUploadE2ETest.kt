@@ -70,7 +70,7 @@ class DroidLmDebugLogUploadE2ETest {
                     .setResponseCode(200)
                     .setHeader("Content-Type", "application/json")
                     .setBody(
-                        """{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/bundle.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/bundle.zip","sizeBytes":1234,"contentType":"application/zip"}"""
+                        """{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/e2e.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/e2e.zip","sizeBytes":1234,"contentType":"application/zip"}"""
                     )
             )
             mockServer.start()

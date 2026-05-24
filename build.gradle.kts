@@ -430,6 +430,24 @@ fun org.gradle.api.Project.convertPcm16MonoToWav(inputFile: java.io.File, output
     }
 }
 
+fun org.gradle.api.Project.generateSanitizedShortAudioWav(outputFile: java.io.File) {
+    outputFile.parentFile.mkdirs()
+    exec {
+        commandLine(
+            "ffmpeg",
+            "-y",
+            "-f", "lavfi",
+            "-i", "anullsrc=r=16000:cl=mono",
+            "-t", "5",
+            "-ac", "1",
+            "-ar", "16000",
+            "-sample_fmt", "s16",
+            outputFile.absolutePath
+        )
+    }
+}
+
+
 fun org.gradle.api.Project.convertAudioToWav(inputFile: java.io.File, outputFile: java.io.File) {
     outputFile.parentFile.mkdirs()
     exec {
@@ -572,14 +590,17 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
 }
 
 fun org.gradle.api.Project.runSupportLogMicRegressionE2e(adb: String) {
-    val supportLogPcm = file("app/src/androidTest/assets/private-vosk-fixture.pcm")
-    require(supportLogPcm.isFile) {
-        "Missing May 10 support-log PCM fixture: ${supportLogPcm.relativeTo(projectDir)}"
-    }
+    val privateSupportLogPcm = System.getenv("DROIDLM_PRIVATE_SUPPORT_LOG_PCM")
+        ?.takeIf { it.isNotBlank() }
+        ?.let(::file)
     val supportLogWav = file("build/e2e-audio/sanitized-short-audio-regression.wav")
     if (micInjectionMode() == "pulse") ensureVirtualMicForE2e()
     ensureEmulatorHostAudioForE2e(adb)
-    convertPcm16MonoToWav(supportLogPcm, supportLogWav, gainDb = 30)
+    if (privateSupportLogPcm?.isFile == true) {
+        convertPcm16MonoToWav(privateSupportLogPcm, supportLogWav, gainDb = 30)
+    } else {
+        generateSanitizedShortAudioWav(supportLogWav)
+    }
     checkEmulatorGrpcStatus(supportLogWav)
     adbOutput(adb, "uninstall", droidLmDebugPackageName)
     adbOutput(adb, "uninstall", droidLmDebugTestPackageName)
@@ -596,7 +617,7 @@ fun org.gradle.api.Project.runSupportLogMicRegressionE2e(adb: String) {
                 "forceVoskOfflineSpeechRecognition" to "true"
             )
         ),
-        methodName = "hoverRecordSupportLogAudioReproducesAmbiguousOpenRegression",
+        methodName = "hoverRecordSanitizedShortAudioReproducesAmbiguousOpenRegression",
         audioFile = supportLogWav,
         speechDelayMs = 250L
     )
@@ -1100,7 +1121,7 @@ tasks.register("connectedHoverMicCaptureRegressionE2e") {
 
 tasks.register("connectedSupportLogMicRegressionE2e") {
     group = "verification"
-    description = "Replays the May 10 support-log audio through emulator mic injection and asserts the ambiguous-open regression path."
+    description = "Replays sanitized short audio, or DROIDLM_PRIVATE_SUPPORT_LOG_PCM when set, through emulator mic injection and asserts the ambiguous-open regression path."
     dependsOn(":app:assembleDebug", ":app:assembleDebugAndroidTest")
 
     doLast {

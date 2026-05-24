@@ -7,15 +7,15 @@ import org.junit.Test
 
 class AuthStateTest {
     @Test fun displayLabelPrefersDisplayName() {
-        val user = AuthUser(uid = "uid-1", displayName = "Mobile lead", email = "example.user@example.test")
+        val user = AuthUser(uid = "uid-1", displayName = "Example User", email = "example.user@example.test")
 
-        assertEquals("Mobile lead", user.displayLabel)
+        assertEquals("Example User", user.displayLabel)
     }
 
     @Test fun displayLabelFallsBackToEmailPrefix() {
         val user = AuthUser(uid = "uid-1", displayName = " ", email = "example.user@example.test")
 
-        assertEquals("marcos", user.displayLabel)
+        assertEquals("example.user", user.displayLabel)
     }
 
     @Test fun displayLabelUsesDefaultWhenNameAndEmailAreMissing() {

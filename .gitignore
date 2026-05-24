@@ -20,5 +20,9 @@ test-artifacts/
 __pycache__/
 support-logs/
 app/src/androidTest/assets/droidlm-audio-*-vosk.pcm
+app/src/androidTest/assets/*.pcm
+app/src/androidTest/assets/*support-log*
+app/src/androidTest/assets/private-*
+.private-e2e/
 
 app/google-services.json
