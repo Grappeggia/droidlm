@@ -155,7 +155,7 @@ android {
         buildConfigField("String", "CLOUD_SCREENSHOT_ANALYSIS_URL", "\"${buildConfigString(cloudScreenshotAnalysisUrl.get().trim())}\"")
         buildConfigField("String", "ALLOWLIST_CHECK_URL", "\"${buildConfigString(allowlistCheckUrl.get().trim())}\"")
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
         externalNativeBuild {
             cmake {

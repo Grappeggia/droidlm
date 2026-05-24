@@ -13,6 +13,13 @@ endif()
 
 if(DEFINED ANDROID_ABI)
     message(STATUS "Building on-device planner for ABI ${ANDROID_ABI}")
+    if(ANDROID_ABI STREQUAL "x86_64")
+        set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+    else()
+        set(GGML_OPENMP ON CACHE BOOL "" FORCE)
+    endif()
+else()
+    set(GGML_OPENMP ON CACHE BOOL "" FORCE)
 endif()
 
 set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
@@ -23,8 +30,6 @@ set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
 set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
-set(GGML_OPENMP ON CACHE BOOL "" FORCE)
-
 add_subdirectory(${LLAMA_SRC_DIR} build-llama)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
