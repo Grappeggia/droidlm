@@ -1,5 +1,7 @@
 package ai.droidlm.context
 
+import android.graphics.Rect
+
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import ai.droidlm.portal.UiNode
@@ -143,6 +145,46 @@ class GoogleDocsContextProviderTest {
         assertEquals("Summary of Docs", visibleDocuments.getJSONObject(0).getString("title"))
     }
 
+    @Test fun exposesStructuredDocumentCollectionWithRowGrounding() = runTest {
+        val state = PortalState(
+            packageName = GoogleDocsContextProvider.DOCS_PACKAGE,
+            activityName = "DocsActivity",
+            screenWidth = 600,
+            screenHeight = 1000,
+            nodes = listOf(
+                node(text = "Recent documents"),
+                node(nodeId = "summary-row", clickable = true, bounds = Rect(0, 400, 600, 900)),
+                node(
+                    nodeId = "summary-label",
+                    contentDescription = "Summary of Docs",
+                    bounds = Rect(20, 438, 540, 884),
+                    parentId = "summary-row"
+                ),
+                node(
+                    nodeId = "summary-more",
+                    contentDescription = "More actions for Summary of Docs",
+                    bounds = Rect(420, 478, 480, 538)
+                ),
+                node(nodeId = "meeting-row", text = "Distractor Meeting Notes", clickable = true, bounds = Rect(0, 910, 600, 980))
+            )
+        )
+
+        val json = GoogleDocsContextProvider().collect(
+            DeviceContextRequest("open summary of docs", state, null, emptyList())
+        )
+        val collection = json.getJSONArray("structuredCollections").getJSONObject(0)
+        val items = collection.getJSONArray("items")
+        val summary = (0 until items.length())
+            .map { items.getJSONObject(it) }
+            .first { it.getString("primaryLabel") == "Summary of Docs" }
+
+        assertEquals("document_list", collection.getString("type"))
+        assertEquals("OPEN_ROW", summary.getString("actionability"))
+        assertEquals("summary-row", summary.getString("tapTargetNodeId"))
+        assertTrue(summary.getJSONArray("accessoryActions").toString().contains("more_actions"))
+        assertTrue(summary.getDouble("goalOverlapScore") > 0.9)
+    }
+
     private fun node(
         nodeId: String? = null,
         text: String? = null,
@@ -153,14 +195,16 @@ class GoogleDocsContextProviderTest {
         textSelectionStart: Int? = null,
         textSelectionEnd: Int? = null,
         clickable: Boolean = false,
-        effectiveActions: List<UiNodeAction> = emptyList()
+        effectiveActions: List<UiNodeAction> = emptyList(),
+        bounds: Rect? = null,
+        parentId: String? = null
     ) = UiNode(
         nodeId = nodeId,
         text = text,
         contentDescription = contentDescription,
         className = null,
         packageName = GoogleDocsContextProvider.DOCS_PACKAGE,
-        bounds = null,
+        bounds = bounds,
         clickable = clickable,
         editable = editable,
         focused = focused,
@@ -169,6 +213,7 @@ class GoogleDocsContextProviderTest {
         textSelectionStart = textSelectionStart,
         textSelectionEnd = textSelectionEnd,
         effectiveActions = effectiveActions,
-        hintText = hintText
+        hintText = hintText,
+        parentId = parentId
     )
 }

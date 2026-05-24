@@ -18,7 +18,8 @@ class GoogleDocsContextProvider : DeviceContextProvider {
         val uiMode = detectUiMode(state, focusedEditable)
         val contentExtraction = AccessibilityContentExtractor.extract(state, AccessibilityContentLimits.LONG_CONTEXT_MAX_CHARS)
         val visibleText = contentExtraction.fullText
-        val visibleDocuments = visibleDocuments(state.nodes, uiMode)
+        val visibleDocumentItems = visibleDocumentItems(state.nodes, uiMode, state)
+        val visibleDocuments = JSONArray(visibleDocumentItems.map { StructuredCollectionContextBuilder.legacyVisibleEntity(it, "title") })
         val selectedDocument = selectedDocument(state.nodes, visibleDocuments)
         val title = inferDocumentTitle(state.nodes)
         val docActions = availableActions(uiMode, focusedEditable, visibleDocuments.length() > 0)
@@ -36,6 +37,13 @@ class GoogleDocsContextProvider : DeviceContextProvider {
             focusedText = editableText,
             currentBlock = selection.optString("currentParagraph"),
             availableActions = docActions
+        )
+        val structuredCollections = StructuredCollectionContextBuilder.build(
+            source = "google_docs",
+            collectionType = "document_list",
+            items = visibleDocumentItems,
+            goal = request.goal,
+            selectedLabel = selectedDocument.optString("title").takeIf { it.isNotBlank() }
         )
         val editor = JSONObject()
             .put("uiMode", uiMode)
@@ -71,6 +79,7 @@ class GoogleDocsContextProvider : DeviceContextProvider {
                     .put("availableActions", JSONArray(docActions))
             )
             .put("artifactContext", artifactContext)
+            .put("structuredCollections", structuredCollections)
             .put("editor", editor)
             .put("selectionContext", selection)
             .put(
@@ -146,29 +155,42 @@ class GoogleDocsContextProvider : DeviceContextProvider {
             .firstOrNull()
     }
 
-    private fun visibleDocuments(nodes: List<UiNode>, uiMode: String): JSONArray {
-        if (uiMode == "DOCUMENT_EDIT" || uiMode == "FORMAT_TOOLBAR" || uiMode == "COMMENT_PANEL") return JSONArray()
-        val rows = nodes.asSequence()
+    private fun visibleDocumentItems(
+        nodes: List<UiNode>,
+        uiMode: String,
+        state: PortalState
+    ): List<StructuredCollectionContextBuilder.Item> {
+        if (uiMode == "DOCUMENT_EDIT" || uiMode == "FORMAT_TOOLBAR" || uiMode == "COMMENT_PANEL") return emptyList()
+        return nodes.asSequence()
             .filter { it.visible && (it.clickable || it.effectiveActions.isNotEmpty() || !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank()) }
-            .mapNotNull { documentCandidate(it) }
-            .distinctBy { it.optString("title") }
+            .mapIndexedNotNull { index, node -> documentItem(node, state, index) }
+            .distinctBy { it.primaryLabel }
             .take(50)
             .toList()
-        return JSONArray(rows)
     }
 
-    private fun documentCandidate(node: UiNode): JSONObject? {
+    private fun documentItem(
+        node: UiNode,
+        state: PortalState,
+        index: Int
+    ): StructuredCollectionContextBuilder.Item? {
         val raw = listOfNotNull(node.text, node.contentDescription).joinToString(" ").trim()
         val title = normalizeDocumentListTitle(raw)
         if (title.isBlank() || title.length < 2 || title.length > 180) return null
         if (title.lowercase() in documentListGenericLabels()) return null
-        val targetNodeId = node.tapTargetNodeId()
-        return JSONObject()
-            .put("title", title)
-            .put("nodeId", targetNodeId ?: JSONObject.NULL)
-            .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
-            .put("tappable", targetNodeId != null)
-            .put("confidence", if (targetNodeId != null) 0.7 else 0.3)
+        val confidence = when {
+            node.tapTargetNodeId() != null -> 0.72
+            node.bounds != null -> 0.48
+            else -> 0.3
+        }
+        return StructuredCollectionContextBuilder.itemFromNode(
+            label = title,
+            entityType = "document",
+            node = node,
+            state = state,
+            index = index,
+            confidence = confidence
+        )
     }
 
     private fun normalizeDocumentListTitle(raw: String): String = raw
@@ -178,7 +200,14 @@ class GoogleDocsContextProvider : DeviceContextProvider {
 
     private fun selectedDocument(nodes: List<UiNode>, visibleDocuments: JSONArray): JSONObject {
         val selected = nodes.firstOrNull { it.selected || it.focused }
-        if (selected != null) return documentCandidate(selected) ?: JSONObject()
+        if (selected != null) {
+            val selectedItem = documentItem(
+                node = selected,
+                state = PortalState(selected.packageName, null, null, null, nodes),
+                index = 0
+            )
+            if (selectedItem != null) return StructuredCollectionContextBuilder.legacyVisibleEntity(selectedItem, "title")
+        }
         return if (visibleDocuments.length() == 1) visibleDocuments.optJSONObject(0) ?: JSONObject() else JSONObject()
     }
 

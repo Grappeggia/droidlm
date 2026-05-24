@@ -20,7 +20,8 @@ class GoogleDriveContextProvider : DeviceContextProvider {
         val uiMode = detectUiMode(state)
         val contentExtraction = AccessibilityContentExtractor.extract(state, AccessibilityContentLimits.LONG_CONTEXT_MAX_CHARS)
         val visibleText = contentExtraction.fullText
-        val visibleFiles = visibleFiles(state.nodes)
+        val visibleFileItems = visibleFileItems(state.nodes, state)
+        val visibleFiles = JSONArray(visibleFileItems.map { StructuredCollectionContextBuilder.legacyVisibleEntity(it, "title") })
         val selectedFile = selectedFile(state.nodes, visibleFiles)
         val currentLocation = currentLocation(state.nodes)
         val searchContext = searchContext(state.nodes, uiMode)
@@ -35,6 +36,13 @@ class GoogleDriveContextProvider : DeviceContextProvider {
             focusedText = searchContext.optString("query"),
             currentBlock = selectedFile.optString("title"),
             availableActions = actions
+        )
+        val structuredCollections = StructuredCollectionContextBuilder.build(
+            source = "google_drive",
+            collectionType = "file_list",
+            items = visibleFileItems,
+            goal = request.goal,
+            selectedLabel = selectedFile.optString("title").takeIf { it.isNotBlank() }
         )
         val safety = safetyContext(
             text = visibleText,
@@ -59,6 +67,7 @@ class GoogleDriveContextProvider : DeviceContextProvider {
                     .put("availableActions", JSONArray(actions))
             )
             .put("artifactContext", artifactContext)
+            .put("structuredCollections", structuredCollections)
             .put("availableDriveActions", JSONArray(actions))
             .put("safety", safety)
     }
@@ -84,17 +93,21 @@ class GoogleDriveContextProvider : DeviceContextProvider {
             .put("confidence", if (location != null) 0.6 else 0.0)
     }
 
-    private fun visibleFiles(nodes: List<UiNode>): JSONArray {
-        val rows = nodes.asSequence()
-            .filter { it.visible && (it.clickable || !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank()) }
-            .mapNotNull { node -> fileCandidate(node) }
-            .distinctBy { it.optString("title") }
-            .take(50)
-            .toList()
-        return JSONArray(rows)
-    }
+    private fun visibleFileItems(
+        nodes: List<UiNode>,
+        state: PortalState
+    ): List<StructuredCollectionContextBuilder.Item> = nodes.asSequence()
+        .filter { it.visible && (it.clickable || it.effectiveActions.isNotEmpty() || !it.text.isNullOrBlank() || !it.contentDescription.isNullOrBlank()) }
+        .mapIndexedNotNull { index, node -> fileItem(node, state, index) }
+        .distinctBy { it.primaryLabel }
+        .take(50)
+        .toList()
 
-    private fun fileCandidate(node: UiNode): JSONObject? {
+    private fun fileItem(
+        node: UiNode,
+        state: PortalState,
+        index: Int
+    ): StructuredCollectionContextBuilder.Item? {
         val raw = listOfNotNull(node.text, node.contentDescription).joinToString(" ").trim()
         if (raw.isBlank() || raw.length < 2 || raw.length > 180) return null
         val lower = raw.lowercase()
@@ -107,19 +120,32 @@ class GoogleDriveContextProvider : DeviceContextProvider {
             lower.endsWith(".jpg") || lower.endsWith(".png") -> "image"
             else -> JSONObject.NULL
         }
-        val targetNodeId = node.tapTargetNodeId()
-        return JSONObject()
-            .put("title", raw)
-            .put("type", type)
-            .put("nodeId", targetNodeId ?: JSONObject.NULL)
-            .put("labelNodeId", node.nodeId ?: JSONObject.NULL)
-            .put("tappable", targetNodeId != null)
-            .put("confidence", if (targetNodeId != null) 0.72 else 0.3)
+        val confidence = when {
+            node.tapTargetNodeId() != null -> 0.72
+            node.bounds != null -> 0.48
+            else -> 0.3
+        }
+        return StructuredCollectionContextBuilder.itemFromNode(
+            label = raw,
+            entityType = "file",
+            node = node,
+            state = state,
+            index = index,
+            type = type,
+            confidence = confidence
+        )
     }
 
     private fun selectedFile(nodes: List<UiNode>, visibleFiles: JSONArray): JSONObject {
         val selected = nodes.firstOrNull { it.selected || it.focused }
-        if (selected != null) return fileCandidate(selected) ?: JSONObject()
+        if (selected != null) {
+            val selectedItem = fileItem(
+                node = selected,
+                state = PortalState(selected.packageName, null, null, null, nodes),
+                index = 0
+            )
+            if (selectedItem != null) return StructuredCollectionContextBuilder.legacyVisibleEntity(selectedItem, "title")
+        }
         return if (visibleFiles.length() == 1) visibleFiles.optJSONObject(0) ?: JSONObject() else JSONObject()
     }
 
