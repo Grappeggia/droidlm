@@ -1,0 +1,409 @@
+package ai.droidlm.ondevice
+
+import ai.droidlm.intent.DroidLmActionContract
+import ai.droidlm.logs.ActionLogRepository
+import ai.droidlm.logs.ActionLogType
+import ai.droidlm.openai.PromptContextBudgeter
+import ai.droidlm.relay.PlanPreview
+import ai.droidlm.relay.RelayCallResult
+import ai.droidlm.relay.RelayClient
+import ai.droidlm.relay.RelayPlanRequest
+import android.app.ActivityManager
+import android.content.Context
+import android.os.Build
+import android.os.StatFs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.IOException
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+
+class OnDevicePlanner(
+    private val context: Context,
+    private val logs: ActionLogRepository,
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.MINUTES)
+        .writeTimeout(5, TimeUnit.MINUTES)
+        .build()
+) {
+    data class Status(
+        val phase: Phase,
+        val message: String,
+        val downloadedBytes: Long? = null,
+        val totalBytes: Long? = null,
+        val progressFraction: Float? = null
+    ) {
+        enum class Phase {
+            UNSUPPORTED,
+            NOT_DOWNLOADED,
+            DOWNLOADING,
+            DOWNLOADED,
+            LOADING,
+            READY,
+            ERROR
+        }
+
+        val ready: Boolean get() = phase == Phase.READY
+    }
+
+    private val engine by lazy { LlamaOnDeviceEngine(context) }
+    private val relayParser = RelayClient()
+    private val plannerMutex = Mutex()
+    private val plannerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val plannerRoot = File(context.filesDir, "ondevice-planner/qwen3-1.7b")
+    private val modelFile = File(plannerRoot, MODEL_FILE_NAME)
+    private val markerFile = File(plannerRoot, READY_MARKER_NAME)
+    private var modelLoaded = false
+
+    private val _status = MutableStateFlow(initialStatus())
+    val status: StateFlow<Status> = _status.asStateFlow()
+
+    fun refresh() {
+        _status.value = initialStatus()
+    }
+
+    fun prepareIfPossible() {
+        plannerScope.launch {
+            runCatching { ensureReady() }
+                .onFailure { error ->
+                    val current = status.value
+                    if (current.phase != Status.Phase.NOT_DOWNLOADED && current.phase != Status.Phase.UNSUPPORTED) {
+                        _status.value = Status(Status.Phase.ERROR, error.message ?: "Could not prepare the local planner")
+                    }
+                }
+        }
+    }
+
+    fun releaseModel() {
+        plannerScope.launch {
+            plannerMutex.withLock {
+                if (modelLoaded) {
+                    engine.unloadModel()
+                    modelLoaded = false
+                }
+                _status.value = initialStatus()
+            }
+        }
+    }
+
+    suspend fun downloadModel() {
+        plannerMutex.withLock {
+            val unsupported = unsupportedStatus()
+            if (unsupported != null) {
+                _status.value = unsupported
+                throw IOException(unsupported.message)
+            }
+            requireSufficientStorage()
+            plannerRoot.mkdirs()
+            val tempFile = File(plannerRoot, "$MODEL_FILE_NAME.download")
+            tempFile.delete()
+            val request = Request.Builder().url(MODEL_URL).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Could not download the local Qwen3 model: HTTP ${response.code}")
+                val body = response.body ?: throw IOException("Could not download the local Qwen3 model: empty response body")
+                val totalBytes = body.contentLength().takeIf { it > 0 } ?: MODEL_BYTES
+                _status.value = Status(Status.Phase.DOWNLOADING, "Downloading the local Qwen3 model", 0L, totalBytes, 0f)
+                val digest = MessageDigest.getInstance("SHA-256")
+                var downloaded = 0L
+                body.byteStream().use { input ->
+                    tempFile.outputStream().use { output ->
+                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
+                            downloaded += read.toLong()
+                            _status.value = Status(
+                                phase = Status.Phase.DOWNLOADING,
+                                message = formatProgressMessage(downloaded, totalBytes),
+                                downloadedBytes = downloaded,
+                                totalBytes = totalBytes,
+                                progressFraction = if (totalBytes > 0) downloaded.toFloat() / totalBytes.toFloat() else null
+                            )
+                        }
+                    }
+                }
+                val actualSha = digest.digest().joinToString(separator = "") { byte -> "%02x".format(Locale.US, byte) }
+                if (!actualSha.equals(MODEL_SHA256, ignoreCase = true)) {
+                    tempFile.delete()
+                    _status.value = Status(Status.Phase.ERROR, "Downloaded Qwen3 model checksum mismatch")
+                    throw IOException("Downloaded Qwen3 model checksum mismatch")
+                }
+            }
+            if (modelFile.exists()) modelFile.delete()
+            require(tempFile.renameTo(modelFile)) { "Could not move the downloaded Qwen3 model into place" }
+            markerFile.writeText(MODEL_SHA256)
+            modelLoaded = false
+            _status.value = Status(Status.Phase.DOWNLOADED, "Qwen3 downloaded. Preparing the local planner...")
+        }
+        ensureReady()
+    }
+
+    suspend fun planPreview(request: RelayPlanRequest): RelayCallResult<PlanPreview> {
+        return runCatching {
+            ensureReady()
+            val rawResponse = engine.generateJson(
+                systemPrompt = SYSTEM_PROMPT,
+                userPrompt = buildUserPrompt(request),
+                jsonSchema = PLAN_PREVIEW_JSON_SCHEMA.toString(),
+                maxTokens = MAX_COMPLETION_TOKENS,
+                temperature = TEMPERATURE,
+                topK = TOP_K,
+                topP = TOP_P,
+                minP = MIN_P,
+                presencePenalty = PRESENCE_PENALTY
+            )
+            relayParser.parsePlanPreviewJson(rawResponse).also { plan ->
+                require(plan.steps.isNotEmpty()) { "On-device planner returned no steps" }
+            }
+        }.fold(
+            onSuccess = { plan ->
+                logs.log(ActionLogType.PLANNER_RESULT, "On-device plan ready: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}; steps=${plan.steps.size}")
+                RelayCallResult.Success(plan)
+            },
+            onFailure = { error ->
+                _status.value = when (status.value.phase) {
+                    Status.Phase.NOT_DOWNLOADED,
+                    Status.Phase.UNSUPPORTED,
+                    Status.Phase.DOWNLOADING,
+                    Status.Phase.LOADING -> status.value
+                    else -> Status(Status.Phase.ERROR, error.message ?: "On-device planning failed")
+                }
+                RelayCallResult.Failure(error.message ?: "On-device planning failed", errorCodeFor(error), error)
+            }
+        )
+    }
+
+    fun setupMessage(): String {
+        val current = status.value
+        return when (current.phase) {
+            Status.Phase.UNSUPPORTED -> current.message
+            Status.Phase.NOT_DOWNLOADED -> "Privacy mode needs the on-device Qwen3 planner downloaded first."
+            Status.Phase.DOWNLOADING -> "Privacy mode is downloading the on-device Qwen3 planner. Keep DroidLM open until it finishes."
+            Status.Phase.DOWNLOADED,
+            Status.Phase.LOADING -> "Privacy mode is preparing the on-device Qwen3 planner. Try again in a moment."
+            Status.Phase.READY -> "The on-device Qwen3 planner is ready."
+            Status.Phase.ERROR -> current.message
+        }
+    }
+
+    private suspend fun ensureReady() {
+        plannerMutex.withLock {
+            val unsupported = unsupportedStatus()
+            if (unsupported != null) {
+                _status.value = unsupported
+                throw IOException(unsupported.message)
+            }
+            if (!modelFile.isFile || !markerFile.isFile || markerFile.readText().trim() != MODEL_SHA256) {
+                modelLoaded = false
+                _status.value = Status(Status.Phase.NOT_DOWNLOADED, "Download the on-device Qwen3 planner to use privacy mode")
+                throw IOException("The on-device Qwen3 planner is not downloaded yet")
+            }
+            if (modelLoaded) {
+                _status.value = Status(Status.Phase.READY, "On-device Qwen3 planner ready")
+                return
+            }
+            _status.value = Status(Status.Phase.LOADING, "Preparing the on-device Qwen3 planner")
+            engine.ensureModelLoaded(modelFile.absolutePath, LOCAL_CONTEXT_SIZE)
+            modelLoaded = true
+            _status.value = Status(Status.Phase.READY, "On-device Qwen3 planner ready")
+            logs.log(ActionLogType.ACTION_RESULT, "On-device Qwen3 planner loaded", "contextSize=$LOCAL_CONTEXT_SIZE")
+        }
+    }
+
+    private fun buildUserPrompt(request: RelayPlanRequest): String {
+        val promptContext = PromptContextBudgeter.build(
+            goal = request.goal,
+            activeApp = request.activeApp,
+            deviceContext = request.deviceContext,
+            uiState = request.uiState,
+            packages = request.packages,
+            history = request.history,
+            targetContextTokens = LOCAL_PROMPT_CONTEXT_TOKENS
+        )
+        return buildString {
+            appendLine("Goal:")
+            appendLine(request.goal)
+            appendLine()
+            appendLine("Return only JSON that matches the schema exactly.")
+            appendLine("Keep the plan short, concrete, and safe.")
+            appendLine("Prefer direct visible or node-backed actions over guessed coordinates.")
+            appendLine("Use installed package names only when opening or switching apps.")
+            appendLine("If the task appears risky, destructive, or privacy-sensitive, set requiresConfirmation to true and use a HIGH risk level.")
+            appendLine("Supported actions: ${DroidLmActionContract.supportedActionsPrompt}")
+            appendLine()
+            appendLine("Prompt context JSON:")
+            append(promptContext.json.toString())
+        }
+    }
+
+    private fun initialStatus(): Status {
+        val unsupported = unsupportedStatus()
+        if (unsupported != null) return unsupported
+        if (modelFile.isFile && markerFile.isFile && markerFile.readText().trim() == MODEL_SHA256) {
+            return Status(Status.Phase.DOWNLOADED, "Qwen3 downloaded. Enable privacy mode to prepare it.")
+        }
+        return Status(Status.Phase.NOT_DOWNLOADED, "Download the on-device Qwen3 planner to use privacy mode")
+    }
+
+    private fun unsupportedStatus(): Status? {
+        if (!Build.SUPPORTED_ABIS.contains("arm64-v8a")) {
+            return Status(Status.Phase.UNSUPPORTED, "Privacy mode currently supports flagship arm64 Android phones only.")
+        }
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val totalMem = ActivityManager.MemoryInfo().also { info -> activityManager?.getMemoryInfo(info) }.totalMem
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return Status(Status.Phase.UNSUPPORTED, "Privacy mode currently requires Android 13 or newer on flagship phones.")
+        }
+        if (totalMem < MIN_TOTAL_RAM_BYTES) {
+            return Status(Status.Phase.UNSUPPORTED, "Privacy mode currently requires about 10 GB of RAM or more.")
+        }
+        return null
+    }
+
+    private fun requireSufficientStorage() {
+        val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
+        if (availableBytes < MIN_FREE_STORAGE_BYTES) {
+            throw IOException("Privacy mode needs about 4.5 GB of free storage to download and prepare Qwen3.")
+        }
+    }
+
+    private fun formatProgressMessage(downloadedBytes: Long, totalBytes: Long): String {
+        if (totalBytes <= 0L) return "Downloading the local Qwen3 model"
+        val percent = ((downloadedBytes.toDouble() / totalBytes.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+        return "Downloading the local Qwen3 model ($percent%)"
+    }
+
+    private fun errorCodeFor(error: Throwable): String = when (error.message.orEmpty()) {
+        "The on-device Qwen3 planner is not downloaded yet" -> ERROR_MODEL_MISSING
+        else -> when (status.value.phase) {
+            Status.Phase.UNSUPPORTED -> ERROR_MODEL_UNSUPPORTED
+            Status.Phase.NOT_DOWNLOADED, Status.Phase.DOWNLOADING -> ERROR_MODEL_MISSING
+            else -> ERROR_MODEL_FAILURE
+        }
+    }
+
+    companion object {
+        const val ERROR_MODEL_MISSING = "ON_DEVICE_MODEL_MISSING"
+        const val ERROR_MODEL_UNSUPPORTED = "ON_DEVICE_MODEL_UNSUPPORTED"
+        const val ERROR_MODEL_FAILURE = "ON_DEVICE_MODEL_FAILURE"
+
+        private const val MODEL_FILE_NAME = "Qwen3-1.7B-Q8_0.gguf"
+        private const val READY_MARKER_NAME = ".qwen3-ready"
+        private const val MODEL_URL = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=1"
+        private const val MODEL_SHA256 = "0765e15700b0f9aebe441b64af38978f083447471b9854e10a18c644740e1a6d"
+        private const val MODEL_BYTES = 1_834_426_016L
+        private const val DOWNLOAD_BUFFER_BYTES = 256 * 1024
+        private const val MIN_TOTAL_RAM_BYTES = 10L * 1024L * 1024L * 1024L
+        private const val MIN_FREE_STORAGE_BYTES = 4_500_000_000L
+        private const val LOCAL_CONTEXT_SIZE = 4_096
+        private const val LOCAL_PROMPT_CONTEXT_TOKENS = 3_000
+        private const val MAX_COMPLETION_TOKENS = 768
+        private const val TEMPERATURE = 0.7f
+        private const val TOP_K = 20
+        private const val TOP_P = 0.8f
+        private const val MIN_P = 0f
+        private const val PRESENCE_PENALTY = 1.5f
+
+        private val PLAN_PREVIEW_JSON_SCHEMA = JSONObject()
+            .put("type", "object")
+            .put("properties", JSONObject()
+                .put("model", boundedString(1, 64))
+                .put("summary", boundedString(1, 280))
+                .put("riskLevel", enumValues("LOW", "MEDIUM", "HIGH"))
+                .put("requiresConfirmation", JSONObject().put("type", "boolean"))
+                .put("steps", JSONObject()
+                    .put("type", "array")
+                    .put("minItems", 1)
+                    .put("maxItems", 4)
+                    .put("items", JSONObject()
+                        .put("type", "object")
+                        .put("properties", JSONObject()
+                            .put("index", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 4))
+                            .put("action", enumValues(*DroidLmActionContract.supportedActions.toTypedArray()))
+                            .put("confidence", enumValues("HIGH", "MEDIUM", "LOW"))
+                            .put("reason", boundedString(1, 280))
+                            .put("requiresConfirmation", JSONObject().put("type", "boolean"))
+                            .put("expectedResult", boundedString(1, 280))
+                            .put("packageName", boundedString(1, 180))
+                            .put("appName", boundedString(1, 180))
+                            .put("x", integerRange(0, 10_000))
+                            .put("y", integerRange(0, 10_000))
+                            .put("startX", integerRange(0, 10_000))
+                            .put("startY", integerRange(0, 10_000))
+                            .put("endX", integerRange(0, 10_000))
+                            .put("endY", integerRange(0, 10_000))
+                            .put("durationMs", integerRange(0, 60_000))
+                            .put("nodeId", boundedString(1, 240))
+                            .put("direction", boundedString(1, 32))
+                            .put("amount", boundedString(1, 32))
+                            .put("untilText", boundedString(1, 240))
+                            .put("text", boundedString(1, 280))
+                            .put("label", boundedString(1, 280))
+                            .put("role", boundedString(1, 80))
+                            .put("containerNodeId", boundedString(1, 240))
+                            .put("buttonText", boundedString(1, 160))
+                            .put("menu", boundedString(1, 80))
+                            .put("imeAction", boundedString(1, 80))
+                            .put("kind", boundedString(1, 80))
+                            .put("value", JSONObject().put("type", "boolean"))
+                            .put("expanded", JSONObject().put("type", "boolean"))
+                            .put("url", boundedString(1, 512))
+                            .put("mimeType", boundedString(1, 120))
+                            .put("anchorText", boundedString(1, 280))
+                            .put("targetText", boundedString(1, 280))
+                            .put("replacementText", boundedString(1, 280))
+                            .put("insertText", boundedString(1, 280))
+                            .put("sectionLabel", boundedString(1, 180))
+                            .put("message", boundedString(1, 280))
+                        )
+                        .put("required", JSONArray(listOf("index", "action", "confidence", "reason", "requiresConfirmation", "expectedResult")))
+                        .put("additionalProperties", false)
+                    )
+                )
+            )
+            .put("required", JSONArray(listOf("model", "summary", "riskLevel", "requiresConfirmation", "steps")))
+            .put("additionalProperties", false)
+
+        private const val SYSTEM_PROMPT = """
+You are DroidLM's on-device Android automation planner.
+Return only JSON that matches the requested schema exactly.
+Never use markdown, code fences, or explanatory prose.
+Prefer the smallest safe plan that can succeed from the visible device state.
+Never invent package names, node ids, coordinates, or visible labels.
+Use OPEN_APP or SWITCH_APP only with installed package names present in the prompt context.
+Prefer node-backed or visible text actions over guessed coordinates.
+If the task is destructive, privacy-sensitive, payment-related, sharing-related, or otherwise risky, set requiresConfirmation to true and choose HIGH risk.
+Keep plans concise and practical for the current screen.
+"""
+
+        private fun boundedString(minLength: Int, maxLength: Int): JSONObject = JSONObject()
+            .put("type", "string")
+            .put("minLength", minLength)
+            .put("maxLength", maxLength)
+
+        private fun enumValues(vararg values: String): JSONObject = JSONObject()
+            .put("type", "string")
+            .put("enum", JSONArray(values.toList()))
+
+        private fun integerRange(minimum: Int, maximum: Int): JSONObject = JSONObject()
+            .put("type", "integer")
+            .put("minimum", minimum)
+            .put("maximum", maximum)
+    }
+}

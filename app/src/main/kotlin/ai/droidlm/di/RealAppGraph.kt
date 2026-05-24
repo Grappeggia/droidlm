@@ -16,6 +16,7 @@ import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.fileops.WorkspaceFileOperationController
 import ai.droidlm.logs.ActionLogRepository
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.ocr.CloudScreenshotAnalysisEndpoint
 import ai.droidlm.ocr.MlKitOcrEngine
 import ai.droidlm.ocr.OcrEngine
@@ -94,6 +95,7 @@ class RealAppGraph(
     )
     override val allowlistRepository = AllowlistRepository(authRepository, relayClient, actionLogRepository)
     override val openAiClient = OpenAiClient(debugLogStore = debugLogStore, networkDiagnostics = NetworkDiagnostics(application))
+    override val onDevicePlanner = OnDevicePlanner(application, actionLogRepository)
     override val portalController: PortalController = PortalRuntimeOverrides.controller
         ?: AccessibilityPortalController(application, actionLogRepository, accessibilityRuntime)
     override val appInventoryRepository = AppInventoryRepository(application)
@@ -124,6 +126,7 @@ class RealAppGraph(
     override val executor = DroidLmExecutor(
         settingsRepository = settingsRepository,
         openAiClient = openAiClient,
+        onDevicePlanner = onDevicePlanner,
         portalController = portalController,
         textEditingController = textEditingController,
         workspaceFileOperationController = workspaceFileOperationController,
@@ -178,6 +181,7 @@ class RealAppGraph(
         speechDiagnosticsLogger = speechDiagnosticsLogger,
         debugLogStore = debugLogStore,
         relayClient = relayClient,
+        onDevicePlanner = onDevicePlanner,
         portalController = portalController,
         ocrEngine = ocrEngine,
         executor = executor,

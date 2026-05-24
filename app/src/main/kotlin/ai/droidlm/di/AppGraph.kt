@@ -10,6 +10,7 @@ import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.ocr.OcrEngine
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.overlay.OverlayServiceDeps
 import ai.droidlm.permissions.RecordingPermissionDeps
@@ -45,6 +46,7 @@ interface AppGraph {
     val promptHistoryRepository: PromptHistoryRepository
     val relayClient: RelayClient
     val openAiClient: OpenAiClient
+    val onDevicePlanner: OnDevicePlanner
     val portalController: PortalController
     val appInventoryRepository: AppInventoryRepository
     val deviceContextAggregator: DeviceContextAggregator

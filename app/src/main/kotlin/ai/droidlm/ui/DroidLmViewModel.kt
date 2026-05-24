@@ -9,6 +9,7 @@ import ai.droidlm.update.DebugUpdatePhase
 import ai.droidlm.update.DebugUpdateUiState
 import ai.droidlm.update.PreparedDebugBuild
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.overlay.FloatingControlOverlayService
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.runtime.OverlayNoticeKind
@@ -29,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -48,6 +50,7 @@ class DroidLmViewModel(
     val pendingPlan = deps.executor.pendingPlan
     val plannerKeySetupRequest = deps.executor.plannerKeySetupRequest
     val overlayState = deps.overlayRuntime.isRunning
+    val onDevicePlannerStatus = deps.onDevicePlanner.status
 
     private val _overlayPermissionGranted = MutableStateFlow(Settings.canDrawOverlays(app))
     val overlayPermissionGranted: StateFlow<Boolean> = _overlayPermissionGranted.asStateFlow()
@@ -262,13 +265,45 @@ class DroidLmViewModel(
     fun rejectPending() = deps.executor.respondToConfirmation(false)
 
     fun updateOpenAiModel(value: String) = viewModelScope.launch { deps.settingsRepository.updateOpenAiModel(value) }
+    fun updatePrivacyMode(value: Boolean) = viewModelScope.launch {
+        deps.settingsRepository.updatePrivacyModeEnabled(value)
+        if (value) {
+            deps.settingsRepository.updateCloudScreenshotAnalysisEnabled(false)
+            deps.onDevicePlanner.prepareIfPossible()
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Privacy mode enabled", "Cloud screenshot analysis disabled")
+        } else {
+            deps.onDevicePlanner.releaseModel()
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Privacy mode disabled")
+        }
+    }
     fun updateWakeWordProvider(provider: WakeWordProvider) = viewModelScope.launch { deps.settingsRepository.updateWakeWordProvider(provider) }
     fun updateTranscriptionProvider(provider: TranscriptionProvider) = viewModelScope.launch { deps.settingsRepository.updateTranscriptionProvider(provider) }
     fun updatePreferOfflineSpeech(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updatePreferOfflineSpeechRecognition(value) }
     fun updateShowPartialSpeech(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateShowPartialSpeechRecognition(value) }
     fun updateRiskConfirmation(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateRequireRiskConfirmation(value) }
     fun updateOnDeviceOcr(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateOnDeviceOcrEnabled(value) }
-    fun updateCloudVision(value: Boolean) = viewModelScope.launch { deps.settingsRepository.updateCloudScreenshotAnalysisEnabled(value) }
+    fun updateCloudVision(value: Boolean) = viewModelScope.launch {
+        val currentSettings = deps.settingsRepository.settings.first()
+        if (currentSettings.privacyModeEnabled && value) {
+            deps.settingsRepository.updateCloudScreenshotAnalysisEnabled(false)
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Privacy mode blocks cloud screenshot analysis")
+        } else {
+            deps.settingsRepository.updateCloudScreenshotAnalysisEnabled(value)
+        }
+    }
+    fun downloadPrivacyModel() = viewModelScope.launch {
+        runCatching {
+            deps.onDevicePlanner.downloadModel()
+        }.onSuccess {
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Downloaded the on-device Qwen3 planner")
+            deps.executor.retryPlannerKeySetupRequest()
+        }.onFailure { error ->
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not download the on-device Qwen3 planner: ${error.message}")
+        }
+    }
+    fun preparePrivacyModel() {
+        deps.onDevicePlanner.prepareIfPossible()
+    }
     fun updateDebugLogging(value: Boolean) = viewModelScope.launch {
         deps.settingsRepository.updateDebugLoggingEnabled(value)
         deps.speechDiagnosticsLogger.setEnabled(value)

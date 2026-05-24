@@ -21,6 +21,7 @@ import ai.droidlm.intent.SpeechTextNormalizer
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.ocr.CloudScreenshotAnalyzer
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
@@ -69,13 +70,20 @@ data class PendingPlan(
 )
 
 data class PlannerKeySetupRequest(
+    val kind: PlannerSetupKind,
     val message: String,
     val retryTranscript: String
 )
 
+enum class PlannerSetupKind {
+    OPENAI_API_KEY,
+    ON_DEVICE_MODEL
+}
+
 class DroidLmExecutor(
     private val settingsRepository: SettingsRepository,
     private val openAiClient: OpenAiClient,
+    private val onDevicePlanner: OnDevicePlanner,
     private val portalController: PortalController,
     private val textEditingController: TextEditingController,
     private val workspaceFileOperationController: WorkspaceFileOperationController,
@@ -183,6 +191,7 @@ class DroidLmExecutor(
     private val planningCoordinator = ExecutionPlanningCoordinator(
         settingsRepository = settingsRepository,
         openAiClient = openAiClient,
+        onDevicePlanner = onDevicePlanner,
         portalController = portalController,
         appInventoryRepository = appInventoryRepository,
         deviceContextAggregator = deviceContextAggregator,

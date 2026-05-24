@@ -37,6 +37,16 @@ class SettingsRepositoryTest {
         assertTrue(repository.settings.first().debugLoggingEnabled)
     }
 
+    @Test fun privacyModeCanBeToggled() = runTest {
+        val repository = SettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+
+        repository.updatePrivacyModeEnabled(false)
+        assertFalse(repository.settings.first().privacyModeEnabled)
+
+        repository.updatePrivacyModeEnabled(true)
+        assertTrue(repository.settings.first().privacyModeEnabled)
+    }
+
     @Test fun settingsDoNotExposeDebugLogUploadUrls() {
         val fieldNames = DroidLmSettings::class.java.declaredFields.map { it.name }.toSet()
 

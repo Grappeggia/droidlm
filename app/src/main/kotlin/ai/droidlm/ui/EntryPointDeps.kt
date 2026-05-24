@@ -6,6 +6,7 @@ import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.logs.ActionLogRepository
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.PortalController
 import ai.droidlm.relay.RelayClient
@@ -28,6 +29,7 @@ data class DroidLmViewModelDeps(
     val speechDiagnosticsLogger: SpeechDiagnosticsLogger,
     val debugLogStore: DebugLogStore,
     val relayClient: RelayClient,
+    val onDevicePlanner: OnDevicePlanner,
     val portalController: PortalController,
     val ocrEngine: OcrEngine,
     val executor: DroidLmExecutor,

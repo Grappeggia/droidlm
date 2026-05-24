@@ -321,7 +321,7 @@ internal class ExecutionActionRunner(
     private suspend fun runAnalyzeScreenshot(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
         val analyzer = cloudScreenshotAnalyzer
-        if (!settings.cloudScreenshotAnalysisEnabled || analyzer == null || !analyzer.isConfigured()) {
+        if (settings.privacyModeEnabled || !settings.cloudScreenshotAnalysisEnabled || analyzer == null || !analyzer.isConfigured()) {
             return runOcrScreen(diagnosticSessionId)
         }
 

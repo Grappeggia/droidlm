@@ -65,6 +65,7 @@ internal class ExecutionAgentLoopRunner(
         val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
         if (apiKey.isBlank()) {
             plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                kind = PlannerSetupKind.OPENAI_API_KEY,
                 message = "Agent mode requires an OpenAI API key saved on this device.",
                 retryTranscript = goal
             )

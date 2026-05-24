@@ -5,8 +5,10 @@ import ai.droidlm.auth.AllowlistState
 import ai.droidlm.di.appGraph
 import ai.droidlm.execution.PendingPlan
 import ai.droidlm.execution.PlannerKeySetupRequest
+import ai.droidlm.execution.PlannerSetupKind
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.logs.ActionLogEntry
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.settings.DroidLmSettings
 import ai.droidlm.update.DebugUpdateUiState
 import ai.droidlm.update.compactDebugVersionName
@@ -149,6 +151,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
     val overlayGranted by viewModel.overlayPermissionGranted.collectAsState()
     val pendingPlan by viewModel.pendingPlan.collectAsState()
     val plannerKeySetup by viewModel.plannerKeySetupRequest.collectAsState()
+    val onDevicePlannerStatus by viewModel.onDevicePlannerStatus.collectAsState()
     val needsOnboarding = settings.onboardingCompletedVersion < DroidLmViewModel.ONBOARDING_VERSION || !authState.signedIn || !allowlistState.allowed
 
     var showSettings by remember { mutableStateOf(false) }
@@ -249,6 +252,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         allowlistState = allowlistState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
+                        onDevicePlannerStatus = onDevicePlannerStatus,
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
@@ -280,6 +284,7 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
                         allowlistState = allowlistState,
                         viewModel = viewModel,
                         plannerKeySetup = plannerKeySetup,
+                        onDevicePlannerStatus = onDevicePlannerStatus,
                         accessibilityEnabled = accessibilityEnabled,
                         micGranted = micGranted,
                         notificationGranted = notificationGranted,
@@ -302,13 +307,23 @@ private fun DroidLmScreen(viewModel: DroidLmViewModel) {
             } else {
                 plannerKeySetup?.let { setup ->
                     item {
-                        PlannerSettingsCard(
-                            settings = settings,
-                            plannerKeySetup = setup,
-                            onSave = viewModel::saveOpenAiApiKey,
-                            onClear = viewModel::clearOpenAiApiKey,
-                            onCancel = viewModel::dismissPlannerKeySetup
-                        )
+                        if (setup.kind == PlannerSetupKind.ON_DEVICE_MODEL) {
+                            PrivacyPlannerSettingsCard(
+                                plannerKeySetup = setup,
+                                plannerStatus = onDevicePlannerStatus,
+                                onDownload = viewModel::downloadPrivacyModel,
+                                onPrepare = viewModel::preparePrivacyModel,
+                                onDismiss = viewModel::dismissPlannerKeySetup
+                            )
+                        } else {
+                            PlannerSettingsCard(
+                                settings = settings,
+                                plannerKeySetup = setup,
+                                onSave = viewModel::saveOpenAiApiKey,
+                                onClear = viewModel::clearOpenAiApiKey,
+                                onCancel = viewModel::dismissPlannerKeySetup
+                            )
+                        }
                     }
                 }
                 pendingPlan?.let { plan ->
@@ -402,6 +417,7 @@ private fun OnboardingPage(
     allowlistState: AllowlistState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
+    onDevicePlannerStatus: OnDevicePlanner.Status,
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
@@ -419,13 +435,13 @@ private fun OnboardingPage(
     onDone: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    var showOpenAiKeyDialog by remember { mutableStateOf(false) }
+    var showPlannerSetupDialog by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         DroidCard {
             Text("Let's set up DroidLM", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
             Text(
-                "Complete the essentials once. DroidLM handles speech recognition automatically; OpenAI is only for planning after speech is recognized.",
+                "Complete the essentials once. DroidLM handles speech recognition automatically; advanced planning can use either OpenAI or the local privacy-mode planner.",
                 color = DroidLmColors.TextMuted
             )
         }
@@ -448,7 +464,7 @@ private fun OnboardingPage(
             onOpenAccessibility = onOpenAccessibility,
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
-            onOpenAiKey = { showOpenAiKeyDialog = true }
+            onOpenAiKey = if (settings.privacyModeEnabled) null else ({ showPlannerSetupDialog = true })
         )
 
         DroidCard {
@@ -464,15 +480,25 @@ private fun OnboardingPage(
         }
     }
 
-    if (showOpenAiKeyDialog) {
-        OpenAiKeyDialog(
-            settings = settings,
-            plannerKeySetup = plannerKeySetup,
-            onSave = onSaveOpenAiKey,
-            onClear = onClearOpenAiKey,
-            onCancel = onDismissPlannerKeySetup,
-            onDismiss = { showOpenAiKeyDialog = false }
-        )
+    if (showPlannerSetupDialog) {
+        if (settings.privacyModeEnabled) {
+            PrivacyModelDialog(
+                plannerKeySetup = plannerKeySetup,
+                plannerStatus = onDevicePlannerStatus,
+                onDownload = viewModel::downloadPrivacyModel,
+                onPrepare = viewModel::preparePrivacyModel,
+                onDismiss = { showPlannerSetupDialog = false }
+            )
+        } else {
+            OpenAiKeyDialog(
+                settings = settings,
+                plannerKeySetup = plannerKeySetup,
+                onSave = onSaveOpenAiKey,
+                onClear = onClearOpenAiKey,
+                onCancel = onDismissPlannerKeySetup,
+                onDismiss = { showPlannerSetupDialog = false }
+            )
+        }
     }
 }
 
@@ -484,6 +510,7 @@ private fun SettingsPage(
     allowlistState: AllowlistState,
     viewModel: DroidLmViewModel,
     plannerKeySetup: PlannerKeySetupRequest?,
+    onDevicePlannerStatus: OnDevicePlanner.Status,
     accessibilityEnabled: Boolean,
     micGranted: Boolean,
     notificationGranted: Boolean,
@@ -500,7 +527,7 @@ private fun SettingsPage(
     onRefreshAccess: () -> Unit,
     onSignOut: () -> Unit,
 ) {
-    var showOpenAiKeyDialog by remember { mutableStateOf(false) }
+    var showPlannerSetupDialog by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 24.sp)
@@ -524,22 +551,32 @@ private fun SettingsPage(
             onOpenAccessibility = onOpenAccessibility,
             onRequestMicPermission = onRequestMicPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
-            onOpenAiKey = { showOpenAiKeyDialog = true }
+            onOpenAiKey = if (settings.privacyModeEnabled) null else ({ showPlannerSetupDialog = true })
         )
         SettingsSectionDivider()
-        AssistantSettingsSection(settings, viewModel)
+        AssistantSettingsSection(settings, onDevicePlannerStatus, viewModel)
         VersionFooter()
     }
 
-    if (showOpenAiKeyDialog) {
-        OpenAiKeyDialog(
-            settings = settings,
-            plannerKeySetup = plannerKeySetup,
-            onSave = onSaveOpenAiKey,
-            onClear = onClearOpenAiKey,
-            onCancel = onDismissPlannerKeySetup,
-            onDismiss = { showOpenAiKeyDialog = false }
-        )
+    if (showPlannerSetupDialog) {
+        if (settings.privacyModeEnabled) {
+            PrivacyModelDialog(
+                plannerKeySetup = plannerKeySetup,
+                plannerStatus = onDevicePlannerStatus,
+                onDownload = viewModel::downloadPrivacyModel,
+                onPrepare = viewModel::preparePrivacyModel,
+                onDismiss = { showPlannerSetupDialog = false }
+            )
+        } else {
+            OpenAiKeyDialog(
+                settings = settings,
+                plannerKeySetup = plannerKeySetup,
+                onSave = onSaveOpenAiKey,
+                onClear = onClearOpenAiKey,
+                onCancel = onDismissPlannerKeySetup,
+                onDismiss = { showPlannerSetupDialog = false }
+            )
+        }
     }
 }
 
@@ -928,6 +965,76 @@ private fun PlannerSettingsCard(
 }
 
 @Composable
+private fun PrivacyModelDialog(
+    plannerKeySetup: PlannerKeySetupRequest?,
+    plannerStatus: OnDevicePlanner.Status,
+    onDownload: () -> Unit,
+    onPrepare: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("On-device planner") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Status: ${plannerStatusLabel(plannerStatus)}")
+                plannerKeySetup?.message?.takeIf { it.isNotBlank() }?.let { Text(it, color = DroidLmColors.TextMuted) }
+                Text(
+                    "Privacy mode uses a local Qwen3 1.7B model on supported flagship phones. Download size is about 1.8 GB.",
+                    color = DroidLmColors.TextMuted
+                )
+            }
+        },
+        confirmButton = {
+            when {
+                plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Download Qwen3") }
+                plannerStatusCanPrepare(plannerStatus) -> Button(onClick = onPrepare) { Text("Prepare") }
+                else -> Button(onClick = onDismiss) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+private fun PrivacyPlannerSettingsCard(
+    plannerKeySetup: PlannerKeySetupRequest?,
+    plannerStatus: OnDevicePlanner.Status,
+    onDownload: () -> Unit,
+    onPrepare: () -> Unit,
+    onDismiss: () -> Unit
+) = DroidCard(container = DroidLmColors.WarningSurface) {
+    Text("On-device planner", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+    Text("Status: ${plannerStatusLabel(plannerStatus)}")
+    plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
+    Text(
+        "Privacy mode uses a local Qwen3 1.7B planner on supported flagship phones.",
+        color = DroidLmColors.TextMuted
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        when {
+            plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Download Qwen3") }
+            plannerStatusCanPrepare(plannerStatus) -> Button(onClick = onPrepare) { Text("Prepare") }
+        }
+        OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
+    }
+}
+
+private fun plannerStatusLabel(status: OnDevicePlanner.Status): String = status.message
+
+private fun plannerStatusShowsDownload(status: OnDevicePlanner.Status): Boolean = when (status.phase) {
+    OnDevicePlanner.Status.Phase.NOT_DOWNLOADED,
+    OnDevicePlanner.Status.Phase.ERROR -> true
+    else -> false
+}
+
+private fun plannerStatusCanPrepare(status: OnDevicePlanner.Status): Boolean =
+    status.phase == OnDevicePlanner.Status.Phase.DOWNLOADED
+
+
+@Composable
 private fun PlanPreviewCard(
     pendingPlan: PendingPlan,
     onAcceptOnce: () -> Unit,
@@ -935,7 +1042,7 @@ private fun PlanPreviewCard(
     onReject: () -> Unit
 ) = DroidCard(container = DroidLmColors.SuccessSurface) {
     val plan = pendingPlan.plan
-    Text("GPT plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+    Text("Plan preview", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Transcript: ${pendingPlan.transcript}")
     Text("Risk: ${plan.riskLevel}")
     Text(plan.summary, fontWeight = FontWeight.SemiBold)
@@ -964,6 +1071,7 @@ private fun ExecutionCard(transcript: String, action: String, status: String, re
 @Composable
 private fun AssistantSettingsSection(
     settings: DroidLmSettings,
+    onDevicePlannerStatus: OnDevicePlanner.Status,
     viewModel: DroidLmViewModel
 ) {
     val saveDebugLogsLauncher = rememberLauncherForActivityResult(
@@ -983,6 +1091,22 @@ private fun AssistantSettingsSection(
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Assistant settings", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
+
+        Text("Privacy", fontWeight = FontWeight.SemiBold)
+        ToggleRow("Privacy mode", settings.privacyModeEnabled, viewModel::updatePrivacyMode)
+        Text(
+            "When enabled, DroidLM keeps advanced planning fully on-device with a local Qwen3 1.7B model on supported flagship phones.",
+            color = DroidLmColors.TextMuted
+        )
+        Text("Local planner: ${plannerStatusLabel(onDevicePlannerStatus)}", color = DroidLmColors.TextMuted)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (plannerStatusShowsDownload(onDevicePlannerStatus)) {
+                OutlinedButton(onClick = viewModel::downloadPrivacyModel) { Text("Download Qwen3") }
+            }
+            if (plannerStatusCanPrepare(onDevicePlannerStatus)) {
+                OutlinedButton(onClick = viewModel::preparePrivacyModel) { Text("Prepare") }
+            }
+        }
 
         Text("Diagnostics", fontWeight = FontWeight.SemiBold)
         ToggleRow("Debug logging", settings.debugLoggingEnabled, viewModel::updateDebugLogging)

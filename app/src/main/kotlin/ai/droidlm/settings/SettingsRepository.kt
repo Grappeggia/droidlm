@@ -21,6 +21,7 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val openAiApiKeyConfigured = booleanPreferencesKey("openai_api_key_configured")
         val openAiModel = stringPreferencesKey("openai_model")
+        val privacyModeEnabled = booleanPreferencesKey("privacy_mode_enabled")
         val wakePhrase = stringPreferencesKey("wake_phrase")
         val transcriptionProvider = stringPreferencesKey("transcription_provider")
         val preferOfflineSpeechRecognition = booleanPreferencesKey("prefer_offline_speech_recognition")
@@ -60,6 +61,7 @@ class SettingsRepository(private val context: Context) {
         DroidLmSettings(
             openAiApiKeyConfigured = hasOpenAiApiKey(),
             openAiModel = preferences[Keys.openAiModel] ?: "gpt-5.4-nano",
+            privacyModeEnabled = preferences[Keys.privacyModeEnabled] ?: false,
             wakePhrase = preferences[Keys.wakePhrase] ?: "DroidLM",
             transcriptionProvider = androidSpeechTranscriptionProvider(preferences[Keys.transcriptionProvider]),
             preferOfflineSpeechRecognition = preferences[Keys.preferOfflineSpeechRecognition] ?: true,
@@ -99,6 +101,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun updateOpenAiModel(value: String) = editString(Keys.openAiModel, value.trim().ifBlank { "gpt-5.4-nano" })
+    suspend fun updatePrivacyModeEnabled(value: Boolean) = editBoolean(Keys.privacyModeEnabled, value)
     suspend fun updateWakePhrase(value: String) = editString(Keys.wakePhrase, value.ifBlank { "DroidLM" })
     suspend fun updateTranscriptionProvider(value: TranscriptionProvider) = editString(Keys.transcriptionProvider, value.name)
     suspend fun updatePreferOfflineSpeechRecognition(value: Boolean) = editBoolean(Keys.preferOfflineSpeechRecognition, value)

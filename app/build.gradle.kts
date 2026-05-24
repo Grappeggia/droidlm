@@ -63,6 +63,14 @@ val sherpaParakeetSha256 = "99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e
 val sherpaDownloadDir = layout.buildDirectory.dir("downloads/sherpa")
 val sherpaGeneratedAssetsDir = layout.buildDirectory.dir("generated/sherpaAssets")
 val sherpaParakeetArchive = sherpaDownloadDir.map { it.file(sherpaParakeetArchiveName) }
+val llamaSourceCommit = "549b9d84330c327e6791fa812a7d60c0cf63572e"
+val llamaSourceArchiveName = "llama.cpp-$llamaSourceCommit.tar.gz"
+val llamaSourceUrl = "https://github.com/ggml-org/llama.cpp/archive/$llamaSourceCommit.tar.gz"
+val llamaSourceSha256 = "35cb424e97ddce6699f14e9c6312fa26eaaa490f9622e3ae0169d0acd5634008"
+val llamaDownloadDir = layout.buildDirectory.dir("downloads/llama")
+val llamaGeneratedSourceDir = layout.buildDirectory.dir("generated/llamaSource")
+val llamaSourceArchive = llamaDownloadDir.map { it.file(llamaSourceArchiveName) }
+val llamaSourceDir = llamaGeneratedSourceDir.map { it.dir("llama.cpp-$llamaSourceCommit") }
 
 val downloadSherpaParakeetModel by tasks.registering {
     outputs.file(sherpaParakeetArchive)
@@ -91,6 +99,33 @@ val unpackSherpaParakeetModel by tasks.registering(Sync::class) {
     into(sherpaGeneratedAssetsDir.map { it.dir("sherpa") })
 }
 
+val downloadLlamaSource by tasks.registering {
+    outputs.file(llamaSourceArchive)
+    doLast {
+        val archive = llamaSourceArchive.get().asFile
+        if (archive.isFile && sha256(archive).equals(llamaSourceSha256, ignoreCase = true)) return@doLast
+        archive.parentFile.mkdirs()
+        val temp = File(archive.parentFile, "${archive.name}.tmp")
+        temp.delete()
+        URI(llamaSourceUrl).toURL().openStream().use { input ->
+            temp.outputStream().use { output -> input.copyTo(output) }
+        }
+        val actualSha256 = sha256(temp)
+        require(actualSha256.equals(llamaSourceSha256, ignoreCase = true)) {
+            temp.delete()
+            "Downloaded llama.cpp source checksum mismatch"
+        }
+        archive.delete()
+        require(temp.renameTo(archive)) { "Could not move downloaded llama.cpp archive" }
+    }
+}
+
+val unpackLlamaSource by tasks.registering(Sync::class) {
+    dependsOn(downloadLlamaSource)
+    from(tarTree(resources.gzip(llamaSourceArchive)))
+    into(llamaGeneratedSourceDir)
+}
+
 fun buildConfigString(value: String): String = value
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
@@ -105,6 +140,7 @@ val hasReleaseSigning = listOf(
 android {
     namespace = "ai.droidlm"
     compileSdk = 36
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "com.studionext54.droidlm"
@@ -118,6 +154,14 @@ android {
         buildConfigField("String", "DEBUG_LOG_UPLOAD_URL", "\"${buildConfigString(debugLogUploadUrl.get().trim())}\"")
         buildConfigField("String", "CLOUD_SCREENSHOT_ANALYSIS_URL", "\"${buildConfigString(cloudScreenshotAnalysisUrl.get().trim())}\"")
         buildConfigField("String", "ALLOWLIST_CHECK_URL", "\"${buildConfigString(allowlistCheckUrl.get().trim())}\"")
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DLLAMA_SRC_DIR=${llamaSourceDir.get().asFile.absolutePath}"
+            }
+        }
     }
 
     sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)
@@ -160,6 +204,11 @@ android {
         compose = true
         buildConfig = true
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
@@ -181,6 +230,7 @@ androidComponents {
 
 tasks.named("preBuild") {
     dependsOn(unpackSherpaParakeetModel)
+    dependsOn(unpackLlamaSource)
 }
 
 dependencies {

@@ -8,6 +8,7 @@ import ai.droidlm.intent.SpeechTextNormalizer
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
 import ai.droidlm.logs.ActionLogType
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.first
 internal class ExecutionPlanningCoordinator(
     private val settingsRepository: SettingsRepository,
     private val openAiClient: OpenAiClient,
+    private val onDevicePlanner: OnDevicePlanner,
     private val portalController: PortalController,
     private val appInventoryRepository: AppInventoryRepository,
     private val deviceContextAggregator: DeviceContextAggregator,
@@ -60,10 +62,13 @@ internal class ExecutionPlanningCoordinator(
         if (recordPrompt) {
             logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
         }
-        logs.log(ActionLogType.PLANNER_STARTED, "GPT planning started", "promptLength=${stripped.length}")
+        logs.log(ActionLogType.PLANNER_STARTED, "Planning started", "promptLength=${stripped.length}")
         val settingsStartedAt = System.currentTimeMillis()
         val settings = settingsRepository.settings.first()
         val settingsLoadMs = System.currentTimeMillis() - settingsStartedAt
+        if (settings.privacyModeEnabled) {
+            return planTranscriptOnDevice(stripped, diagnosticSessionId, settings.autoAcceptSafePlans, settingsLoadMs, planningStartedAt)
+        }
         val artifactAgentLoopReason = if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
             null
         } else {
@@ -100,6 +105,7 @@ internal class ExecutionPlanningCoordinator(
         )
         if (apiKey.isBlank()) {
             plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                kind = PlannerSetupKind.OPENAI_API_KEY,
                 message = "This command needs a plan. Add an OpenAI API key in DroidLM to review and approve it on this device.",
                 retryTranscript = stripped
             )
@@ -230,6 +236,109 @@ internal class ExecutionPlanningCoordinator(
         }
     }
 
+    private suspend fun planTranscriptOnDevice(
+        transcript: String,
+        diagnosticSessionId: String?,
+        autoAcceptSafePlans: Boolean,
+        settingsLoadMs: Long,
+        planningStartedAt: Long
+    ): ActionResult {
+        diagnostics.record(
+            diagnosticSessionId,
+            "planner_started",
+            mapOf(
+                "promptLength" to transcript.length,
+                "endpointMode" to "on_device_qwen3",
+                "settingsLoadMs" to settingsLoadMs
+            )
+        )
+        logs.log(ActionLogType.PLANNER_STARTED, "On-device planning started", "promptLength=${transcript.length}")
+
+        val portalStateStartedAt = System.currentTimeMillis()
+        val stateResult = runCatching { portalController.getState() }
+        val portalStateDurationMs = System.currentTimeMillis() - portalStateStartedAt
+        val state = stateResult.getOrNull()
+
+        val deviceContextStartedAt = System.currentTimeMillis()
+        val deviceContextResult = runCatching { deviceContextAggregator.collect(transcript, state, diagnosticSessionId = diagnosticSessionId) }
+        val deviceContextDurationMs = System.currentTimeMillis() - deviceContextStartedAt
+        val deviceContext = deviceContextResult.getOrNull()
+
+        val packageResolutionStartedAt = System.currentTimeMillis()
+        val packages = deviceContext?.packages ?: runCatching { appInventoryRepository.getInstalledApps() }.getOrDefault(emptyList())
+        val activeApp = deviceContext?.activeApp ?: runCatching { appInventoryRepository.activeAppFor(state) }.getOrNull()
+        val packageResolutionDurationMs = System.currentTimeMillis() - packageResolutionStartedAt
+
+        val request = RelayPlanRequest(transcript, state, packages, emptyList(), maxSteps = 4, activeApp = activeApp, deviceContext = deviceContext)
+        val planningStarted = System.currentTimeMillis()
+        val result = onDevicePlanner.planPreview(request)
+        val localDurationMs = System.currentTimeMillis() - planningStarted
+
+        return when (result) {
+            is RelayCallResult.Failure -> {
+                val totalDurationMs = System.currentTimeMillis() - planningStartedAt
+                if (result.errorCode == OnDevicePlanner.ERROR_MODEL_MISSING || result.errorCode == OnDevicePlanner.ERROR_MODEL_UNSUPPORTED) {
+                    plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                        kind = PlannerSetupKind.ON_DEVICE_MODEL,
+                        message = onDevicePlanner.setupMessage(),
+                        retryTranscript = transcript
+                    )
+                }
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "planner_pipeline_finished",
+                    mapOf(
+                        "success" to false,
+                        "errorCode" to result.errorCode,
+                        "endpointMode" to "on_device_qwen3",
+                        "totalDurationMs" to totalDurationMs,
+                        "settingsLoadMs" to settingsLoadMs,
+                        "portalStateDurationMs" to portalStateDurationMs,
+                        "deviceContextDurationMs" to deviceContextDurationMs,
+                        "packageResolutionDurationMs" to packageResolutionDurationMs,
+                        "localPlannerDurationMs" to localDurationMs
+                    )
+                )
+                logs.log(ActionLogType.ERROR, "On-device planning failed: ${result.message}", result.errorCode)
+                finish(ActionResult.fail(result.message, result.errorCode))
+            }
+            is RelayCallResult.Success -> {
+                val totalDurationMs = System.currentTimeMillis() - planningStartedAt
+                val plan = result.value
+                val pending = PendingPlan(transcript, plan, diagnosticSessionId)
+                pendingPlan.value = pending
+                uiState.value = uiState.value.copy(
+                    parsedAction = "Plan: ${plan.steps.size} steps via ${plan.model}",
+                    status = "Plan ready",
+                    lastResult = plan.summary
+                )
+                diagnostics.record(
+                    diagnosticSessionId,
+                    "planner_pipeline_finished",
+                    mapOf(
+                        "success" to true,
+                        "endpointMode" to "on_device_qwen3",
+                        "totalDurationMs" to totalDurationMs,
+                        "settingsLoadMs" to settingsLoadMs,
+                        "portalStateDurationMs" to portalStateDurationMs,
+                        "deviceContextDurationMs" to deviceContextDurationMs,
+                        "packageResolutionDurationMs" to packageResolutionDurationMs,
+                        "localPlannerDurationMs" to localDurationMs,
+                        "stepCount" to plan.steps.size,
+                        "requiresConfirmation" to plan.requiresConfirmation
+                    )
+                )
+                logs.log(ActionLogType.PLANNER_RESULT, "On-device plan ready: ${plan.summary}", "model=${plan.model}; risk=${plan.riskLevel}; steps=${plan.steps.size}")
+                if (autoAcceptSafePlans && plan.isSafe) {
+                    logs.log(ActionLogType.CONFIRMATION_ACCEPTED, "Auto-accepted safe on-device plan")
+                    executePlan(pending)
+                } else {
+                    ActionResult.ok("Plan ready for review")
+                }
+            }
+        }
+    }
+
     suspend fun acceptPendingPlan(alwaysAcceptSafePlans: Boolean): ActionResult {
         val pending = pendingPlan.value ?: return ActionResult.fail("No pending plan", "NO_PENDING_PLAN")
         debugEvent(pending.diagnosticSessionId, "pending_plan_accepted", mapOf("alwaysAcceptSafePlans" to alwaysAcceptSafePlans, "stepCount" to pending.plan.steps.size))
@@ -261,6 +370,9 @@ internal class ExecutionPlanningCoordinator(
 
     suspend fun handlePlanning(goal: String, diagnosticSessionId: String? = null): ActionResult {
         val settings = settingsRepository.settings.first()
+        if (settings.privacyModeEnabled) {
+            return planTranscript(goal, diagnosticSessionId, recordPrompt = false)
+        }
         if (settings.executionMode == ExecutionMode.AGENT_LOOP) {
             return runAgentLoop(goal, diagnosticSessionId)
         }
@@ -346,6 +458,7 @@ internal class ExecutionPlanningCoordinator(
             val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
             if (apiKey.isBlank()) {
                 plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                    kind = PlannerSetupKind.OPENAI_API_KEY,
                     message = "GPT planning requires an OpenAI API key saved on this device.",
                     retryTranscript = goal
                 )

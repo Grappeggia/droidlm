@@ -66,6 +66,8 @@ internal class PushToTalkSessionRunner(
 
     private fun pushToTalkFailureTitle(result: ActionResult): String = when (result.errorCode) {
         "OPENAI_API_KEY_MISSING" -> "Add OpenAI key for plans"
+        "ON_DEVICE_MODEL_MISSING" -> "Download local planner"
+        "ON_DEVICE_MODEL_UNSUPPORTED" -> "Need a supported flagship"
         "AMBIGUOUS_OPEN_APP" -> "Need a more specific app"
         else -> "Command failed"
     }
