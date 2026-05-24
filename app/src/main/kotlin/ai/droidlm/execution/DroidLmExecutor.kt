@@ -10,6 +10,7 @@ import ai.droidlm.appinventory.AppInventoryRepository
 import ai.droidlm.cloud.MobilerunCloudClient
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
+import ai.droidlm.context.ArtifactContextBuilder
 import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.intent.ActionUiFormatter
 import ai.droidlm.intent.DroidLmAction
@@ -25,6 +26,7 @@ import ai.droidlm.ocr.OcrEngine
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalController
+import ai.droidlm.portal.PortalState
 
 
 import ai.droidlm.relay.RelayCallResult
@@ -230,8 +232,9 @@ class DroidLmExecutor(
         _uiState.value = _uiState.value.copy(lastTranscript = stripped, status = "Parsing command")
         promptHistoryRepository.record(stripped, if (correction == null) "manual_command" else "manual_command_corrected")
         logs.log(ActionLogType.TRANSCRIPTION_RESULT, stripped)
-        val action = parser.parse(stripped, packages)
-        debugEvent(diagnosticSessionId, "manual_parse_result", mapOf("action" to action.displayName(), "packageCount" to packages.size))
+        val parsedAction = parser.parse(stripped, packages)
+        val action = artifactOpenTargetOverride(stripped, initialState, parsedAction, diagnosticSessionId) ?: parsedAction
+        debugEvent(diagnosticSessionId, "manual_parse_result", mapOf("action" to action.displayName(), "originalAction" to parsedAction.displayName(), "packageCount" to packages.size))
         debugEvent(diagnosticSessionId, "transcript_quality", transcriptQualityFields(stripped))
         openAppResolutionFields(stripped, packages, action)?.let { fields ->
             debugEvent(diagnosticSessionId, "open_app_resolution", fields)
@@ -447,6 +450,65 @@ class DroidLmExecutor(
 
 
 
+
+    private suspend fun artifactOpenTargetOverride(
+        transcript: String,
+        state: PortalState?,
+        parsedAction: DroidLmAction,
+        diagnosticSessionId: String?
+    ): DroidLmAction.NavigateToArtifactTarget? {
+        if (parsedAction !is DroidLmAction.OpenApp && parsedAction !is DroidLmAction.OpenAppStoreListing) return null
+        val currentState = state ?: return null
+        if (!ArtifactContextBuilder.supportsArtifactPackage(currentState.packageName)) return null
+        val query = ArtifactContextBuilder.extractNavigationRequest(transcript) ?: return null
+        if (query.isKnownAppOnlyOpenQuery()) return null
+        val deviceContext = runCatching {
+            deviceContextAggregator.collect(transcript, currentState, diagnosticSessionId = diagnosticSessionId)
+        }.onFailure { error ->
+            debugEvent(
+                diagnosticSessionId,
+                "artifact_open_target_context_failed",
+                mapOf("errorClass" to error::class.java.name, "message" to error.message)
+            )
+        }.getOrNull() ?: return null
+        val target = ArtifactContextBuilder.matchingTarget(deviceContext.extras.optJSONObject("artifactContext"), query) ?: return null
+        val label = target.optString("label").takeIf { it.isNotBlank() } ?: query
+        val nodeId = target.optString("nodeId").takeIf { it.isNotBlank() && it != "null" }
+        val kind = target.optString("kind").takeIf { it.isNotBlank() && it != "null" }
+        debugEvent(
+            diagnosticSessionId,
+            "artifact_open_target_override",
+            mapOf(
+                "queryLength" to query.length,
+                "labelLength" to label.length,
+                "hasNodeId" to (nodeId != null),
+                "kind" to kind,
+                "originalAction" to parsedAction.displayName()
+            )
+        )
+        return DroidLmAction.NavigateToArtifactTarget(
+            label = label,
+            nodeId = nodeId,
+            kind = kind,
+            reason = "User asked to open a visible artifact target in the current app"
+        )
+    }
+
+    private fun String.isKnownAppOnlyOpenQuery(): Boolean {
+        val normalized = lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        return normalized in setOf(
+            "docs",
+            "google docs",
+            "drive",
+            "google drive",
+            "sheets",
+            "google sheets",
+            "gmail",
+            "chrome",
+            "google chrome",
+            "settings"
+        )
+    }
 
     private fun ensureNotCancelled(): ActionResult? =
         if (cancelled) ActionResult.fail("Task was cancelled", "CANCELLED") else null

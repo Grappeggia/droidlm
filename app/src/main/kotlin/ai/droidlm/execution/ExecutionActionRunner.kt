@@ -309,7 +309,7 @@ internal class ExecutionActionRunner(
 
     private suspend fun activateArtifactTarget(action: DroidLmAction.NavigateToArtifactTarget, state: PortalState): ActionResult {
         return when (action.kind?.lowercase()) {
-            "file", "folder", "control", "cell" -> {
+            "file", "folder", "control", "cell", "document", "visible_document", "collection_item" -> {
                 val nodeId = action.nodeId?.takeIf { targetId -> state.nodes.any { node -> node.nodeId == targetId } }
                 nodeId?.let { portalController.tapNode(it) } ?: portalController.tapText(action.label)
             }

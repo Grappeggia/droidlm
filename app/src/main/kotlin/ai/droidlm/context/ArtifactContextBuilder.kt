@@ -100,14 +100,16 @@ internal object ArtifactContextBuilder {
         return cleanupNavigationQuery(rawQuery).takeIf { it.length >= 2 }
     }
 
-    fun hasMatchingTarget(artifactContext: JSONObject?, query: String?): Boolean {
-        val targets = artifactContext?.optJSONArray("navigationTargets") ?: return false
+    fun hasMatchingTarget(artifactContext: JSONObject?, query: String?): Boolean = matchingTarget(artifactContext, query) != null
+
+    fun matchingTarget(artifactContext: JSONObject?, query: String?): JSONObject? {
+        val targets = artifactContext?.optJSONArray("navigationTargets") ?: return null
         val normalizedQuery = normalizeTargetText(query)
-        if (normalizedQuery.isBlank()) return false
-        return (0 until targets.length()).any { index ->
-            val label = targets.optJSONObject(index)?.optString("label").orEmpty()
-            targetLabelMatches(label, normalizedQuery)
-        }
+        if (normalizedQuery.isBlank()) return null
+        return (0 until targets.length())
+            .asSequence()
+            .mapNotNull { index -> targets.optJSONObject(index) }
+            .firstOrNull { target -> targetLabelMatches(target.optString("label").orEmpty(), normalizedQuery) }
     }
 
     private fun appendTargets(targets: MutableMap<String, JSONObject>, array: JSONArray) {
@@ -281,6 +283,8 @@ internal object ArtifactContextBuilder {
     private const val MAX_CURRENT_BLOCK = 8_000
     private val CELL_REF_REGEX = Regex("[A-Z]{1,3}[0-9]{1,6}")
     private val NAVIGATION_REQUEST_PATTERNS = listOf(
+        Regex("^open(?: up)?(?: the)?\\s+(?:document|file|folder|sheet|tab|heading|section)\\s+(.+)$", RegexOption.IGNORE_CASE),
+        Regex("^open(?: up)?(?: the|my)?\\s+(.+)$", RegexOption.IGNORE_CASE),
         Regex("^navig(?:ate)?(?: me)?\\s+to\\s+(.+)$", RegexOption.IGNORE_CASE),
         Regex("^navigate(?: me)? to (.+)$", RegexOption.IGNORE_CASE),
         Regex("^go to (.+)$", RegexOption.IGNORE_CASE),

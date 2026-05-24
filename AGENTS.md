@@ -33,6 +33,8 @@
 
 ## Build Verification
 
+- When the user says to `ship`, run the full shipping workflow: rebase/sync the current branch, check for other in-progress release or emulator jobs on this machine and wait or report if one is active, build, test, iterate until green, commit, push, and cut the requested release.
+- For machine-level release monitoring, check for running `scripts/release-debug.sh`, `scripts/release-prod.sh`, `scripts/android-emulator-matrix.sh`, Gradle, and emulator/qemu processes before starting a release; avoid overlapping release jobs.
 - Build APKs locally before publishing.
 - For debug/prerelease builds, run `./gradlew testDebugUnitTest assembleDebug` at minimum. Release candidates must also pass `scripts/android-emulator-matrix.sh release full`.
 - For prod/release builds, run `./gradlew testDebugUnitTest testReleaseUnitTest assembleRelease` at minimum. Stable releases must also pass `scripts/android-emulator-matrix.sh release full`.
