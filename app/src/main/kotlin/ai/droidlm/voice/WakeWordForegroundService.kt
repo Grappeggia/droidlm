@@ -140,7 +140,7 @@ class WakeWordForegroundService : Service() {
 
     private fun startForegroundSafely(content: String, diagnosticSessionId: String? = null) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(ai.droidlm.R.drawable.ic_droidlm)
+            .setSmallIcon(ai.droidlm.R.drawable.ic_stat_droidlm)
             .setContentTitle("DroidLM")
             .setContentText(content)
             .setOngoing(true)
