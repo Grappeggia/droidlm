@@ -3,8 +3,15 @@ package ai.droidlm.openai
 import ai.droidlm.agent.AgentBudgets
 import ai.droidlm.agent.AgentDecisionStatus
 import ai.droidlm.agent.AgentTurnRequest
+import ai.droidlm.portal.AppPackage
+import ai.droidlm.portal.PortalState
+import ai.droidlm.portal.UiNode
+import ai.droidlm.portal.UiNodeAction
+import ai.droidlm.relay.ActiveApp
+import ai.droidlm.relay.DeviceContext
 import ai.droidlm.relay.RelayCallResult
 import ai.droidlm.relay.RelayPlanRequest
+import android.graphics.Rect
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -173,6 +180,29 @@ class OpenAiClientTest {
         }
     }
 
+    @Test fun longDocsPromptUsesBudgetedContext() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(chatCompletion(planPreviewJson()))
+            server.start()
+
+            val result = OpenAiClient(endpointProvider = { server.url("/v1/chat/completions").toString() })
+                .planPreview("sk-test", "gpt-5.4-nano", longDocsRequest())
+
+            assertTrue(result is RelayCallResult.Success)
+            val prompt = JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("messages").getJSONObject(1).getString("content")
+            assertTrue(prompt.contains("Prompt context:"))
+            assertTrue(prompt.contains("promptBudget"))
+            assertTrue(prompt.contains("visibleActionable"))
+            assertTrue(prompt.contains("navigationStructure"))
+            assertTrue(prompt.contains("summaryRemainder"))
+            assertTrue(prompt.contains("artifactContext"))
+            assertTrue(prompt.contains("structuredCollections"))
+            assertTrue(prompt.contains("SEARCH_ACCESSIBILITY_CONTENT"))
+            assertFalse(prompt.contains("synthetic-openai-hidden-tail-1700"))
+            assertTrue(prompt.length < 500_000)
+        }
+    }
+
     private fun minimalRequest(): RelayPlanRequest = RelayPlanRequest(
         goal = "open drive",
         uiState = null,
@@ -180,6 +210,73 @@ class OpenAiClientTest {
         history = emptyList(),
         maxSteps = 1
     )
+
+    private fun longDocsRequest(): RelayPlanRequest {
+        val body = (1..2_000).joinToString("\n") { index ->
+            if (index == 12) "Financial Highlights" else "synthetic-openai-hidden-tail-$index filler"
+        }
+        val activeApp = ActiveApp("com.google.android.apps.docs.editors.docs", "DocsActivity", "Docs")
+        val packages = listOf(AppPackage("com.google.android.apps.docs.editors.docs", "Docs", launchable = true, enabled = true))
+        val state = PortalState(
+            packageName = activeApp.packageName,
+            activityName = activeApp.activityName,
+            screenWidth = 1080,
+            screenHeight = 2400,
+            nodes = listOf(
+                UiNode(
+                    nodeId = "doc-row",
+                    text = "Budget Summary",
+                    contentDescription = null,
+                    className = "android.widget.TextView",
+                    packageName = activeApp.packageName,
+                    bounds = Rect(20, 200, 1000, 280),
+                    clickable = true,
+                    editable = false,
+                    focused = false,
+                    enabled = true,
+                    selected = false,
+                    availableActions = listOf(UiNodeAction("CLICK", androidActionId = 16, droidLmAction = "TAP_NODE"))
+                ),
+                UiNode(
+                    nodeId = "doc-editable",
+                    text = body,
+                    contentDescription = null,
+                    className = "android.widget.EditText",
+                    packageName = activeApp.packageName,
+                    bounds = Rect(0, 420, 1080, 2200),
+                    clickable = true,
+                    editable = true,
+                    focused = true,
+                    enabled = true,
+                    selected = false
+                )
+            )
+        )
+        val lines = JSONArray()
+        body.lineSequence().take(300).forEachIndexed { index, line ->
+            lines.put(JSONObject().put("index", index + 1).put("text", line).put("nodeId", "doc-editable").put("visible", index < 4))
+        }
+        val artifactContext = JSONObject()
+            .put("navigationTargets", JSONArray().put(JSONObject().put("label", "Financial Highlights").put("kind", "heading").put("nodeId", "doc-editable").put("visible", true)))
+            .put("contentWindow", JSONObject().put("fullText", body).put("focusedText", body))
+            .put("availableTools", JSONArray().put("NAVIGATE_TO_ARTIFACT_TARGET").put("SEARCH_ACCESSIBILITY_CONTENT"))
+        val extras = JSONObject()
+            .put("docsContext", JSONObject().put("uiMode", "DOCUMENT_EDIT"))
+            .put("documentTextWindow", JSONObject().put("focusedEditableText", body).put("currentParagraph", "Financial Highlights"))
+            .put("artifactContext", artifactContext)
+            .put("structuredCollections", JSONArray().put(JSONObject().put("collectionType", "document_list").put("items", JSONArray().put(JSONObject().put("primaryLabel", "Budget Summary").put("tapTargetNodeId", "doc-row")))))
+            .put("accessibilityContentContext", JSONObject().put("contentWindow", JSONObject().put("fullText", body).put("lines", lines)).put("provenance", JSONObject().put("rawCharCount", body.length).put("truncated", true)))
+            .put("screenObservation", JSONObject().put("semanticCandidates", JSONArray().put(JSONObject().put("nodeRef", "doc-row").put("label", "Budget Summary").put("role", "LIST_ITEM").put("visible", true).put("actions", JSONArray().put("CLICK")))).put("artifactContext", artifactContext))
+        return RelayPlanRequest(
+            goal = "find Financial Highlights",
+            uiState = state,
+            packages = packages,
+            history = emptyList(),
+            maxSteps = 3,
+            activeApp = activeApp,
+            deviceContext = DeviceContext(activeApp = activeApp, packages = packages, extras = extras)
+        )
+    }
 
     private fun chatCompletion(content: String): MockResponse = MockResponse()
         .setResponseCode(200)

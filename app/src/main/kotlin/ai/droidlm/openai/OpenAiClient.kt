@@ -62,7 +62,9 @@ class OpenAiClient(
     suspend fun planPreview(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlanPreview> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
-        val payload = buildChatPayload(resolvedModel, planPreviewPrompt(requestBody), maxTokens = 1800)
+        val prompt = boundedPlanPreviewPrompt(requestBody)
+        if (promptTooLarge(prompt)) return promptTooLargeFailure()
+        val payload = buildChatPayload(resolvedModel, prompt, maxTokens = 1800)
         val endpoint = endpointProvider()
         val request = buildChatRequest(apiKey, payload, endpoint)
         return executeTracedChat("plan-preview", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
@@ -81,7 +83,9 @@ class OpenAiClient(
     suspend fun planActionWithMetadata(apiKey: String, model: String, requestBody: RelayPlanRequest): RelayCallResult<PlannedAction> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
-        val payload = buildChatPayload(resolvedModel, planActionPrompt(requestBody), maxTokens = 900)
+        val prompt = boundedPlanActionPrompt(requestBody)
+        if (promptTooLarge(prompt)) return promptTooLargeFailure()
+        val payload = buildChatPayload(resolvedModel, prompt, maxTokens = 900)
         val endpoint = endpointProvider()
         val request = buildChatRequest(apiKey, payload, endpoint)
         return executeTracedChat("plan-action", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
@@ -93,7 +97,9 @@ class OpenAiClient(
     suspend fun nextAgentTurn(apiKey: String, model: String, requestBody: AgentTurnRequest): RelayCallResult<AgentDecision> {
         if (apiKey.isBlank()) return RelayCallResult.Failure("OpenAI API key is not configured on this device", "OPENAI_API_KEY_MISSING")
         val resolvedModel = model.ifBlank { DEFAULT_MODEL }
-        val payload = buildChatPayload(resolvedModel, agentTurnPrompt(requestBody), maxTokens = 1200)
+        val prompt = boundedAgentTurnPrompt(requestBody)
+        if (promptTooLarge(prompt)) return promptTooLargeFailure()
+        val payload = buildChatPayload(resolvedModel, prompt, maxTokens = 1200)
         val endpoint = endpointProvider()
         val request = buildChatRequest(apiKey, payload, endpoint)
         return executeTracedChat("agent-turn", apiKey, resolvedModel, payload, request, endpoint) { assistantContent ->
@@ -130,7 +136,33 @@ class OpenAiClient(
             .build()
     }
 
-    private fun planPreviewPrompt(request: RelayPlanRequest): String = """
+    private fun boundedPlanPreviewPrompt(request: RelayPlanRequest): String = boundedPrompt { budgetTokens ->
+        planPreviewPrompt(request, budgetTokens)
+    }
+
+    private fun boundedPlanActionPrompt(request: RelayPlanRequest): String = boundedPrompt { budgetTokens ->
+        planActionPrompt(request, budgetTokens)
+    }
+
+    private fun boundedAgentTurnPrompt(request: AgentTurnRequest): String = boundedPrompt { budgetTokens ->
+        agentTurnPrompt(request, budgetTokens)
+    }
+
+    private fun boundedPrompt(builder: (Int) -> String): String {
+        val prompt = builder(PromptContextBudgeter.DEFAULT_CONTEXT_TOKEN_BUDGET)
+        return if (promptTooLarge(prompt)) builder(PromptContextBudgeter.STRICT_CONTEXT_TOKEN_BUDGET) else prompt
+    }
+
+    private fun promptTooLarge(prompt: String): Boolean = estimateTokens(SYSTEM_PROMPT.length + prompt.length) > HARD_PROMPT_TOKEN_CEILING
+
+    private fun promptTooLargeFailure(): RelayCallResult.Failure = RelayCallResult.Failure(
+        "Prompt context is too large after compaction. Try a narrower request or search within the current document first.",
+        "PROMPT_TOO_LARGE"
+    )
+
+    private fun planPreviewPrompt(request: RelayPlanRequest, contextBudgetTokens: Int): String {
+        val promptContext = planPromptContext(request, contextBudgetTokens)
+        return """
         Create a short Android automation plan for this user goal.
         Return only JSON with this exact shape:
         {
@@ -174,14 +206,13 @@ class OpenAiClient(
 
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
-        Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
-        UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${promptPackagesJson(request.packages)}
-        History: ${JSONArray(request.history)}
+        Prompt context: $promptContext
     """.trimIndent()
+    }
 
-    private fun planActionPrompt(request: RelayPlanRequest): String = """
+    private fun planActionPrompt(request: RelayPlanRequest, contextBudgetTokens: Int): String {
+        val promptContext = planPromptContext(request, contextBudgetTokens)
+        return """
         Choose exactly one next Android automation action for this user goal.
         Return only one JSON action object. Do not wrap it in markdown.
         Include "confidence":"HIGH|MEDIUM|LOW" and "expectedResult":"observable result after this action" on every returned action.
@@ -217,14 +248,13 @@ class OpenAiClient(
 
         Goal: ${request.goal}
         Max steps: ${request.maxSteps}
-        Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
-        UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${promptPackagesJson(request.packages)}
-        History: ${JSONArray(request.history)}
+        Prompt context: $promptContext
     """.trimIndent()
+    }
 
-    private fun agentTurnPrompt(request: AgentTurnRequest): String = """
+    private fun agentTurnPrompt(request: AgentTurnRequest, contextBudgetTokens: Int): String {
+        val promptContext = agentPromptContext(request, contextBudgetTokens)
+        return """
         You are DroidLM's constrained Android agent runtime.
         Return only JSON with this exact shape:
         {
@@ -262,14 +292,31 @@ class OpenAiClient(
         Turn: ${request.turnIndex}/${request.budgets.maxTurns}
         Budgets: ${request.budgets.toJson()}
         Remaining tool calls: ${request.remainingToolCalls}
-        Active app: ${request.activeApp?.toJson() ?: JSONObject()}
-        Device context: ${request.deviceContext?.toPromptJson() ?: JSONObject()}
-        UI state: ${request.uiState?.toJson() ?: JSONObject()}
-        Installed packages: ${promptPackagesJson(request.packages)}
-        History: ${JSONArray(request.history)}
-        Last tool results: ${JSONArray(request.lastResults.map { it.toJson() })}
-        Do not repeat: ${JSONArray(request.doNotRepeat.map { it.toJson() })}
+        Prompt context: $promptContext
     """.trimIndent()
+    }
+
+    private fun planPromptContext(request: RelayPlanRequest, contextBudgetTokens: Int): JSONObject = PromptContextBudgeter.build(
+        goal = request.goal,
+        activeApp = request.activeApp,
+        deviceContext = request.deviceContext,
+        uiState = request.uiState,
+        packages = request.packages,
+        history = request.history,
+        targetContextTokens = contextBudgetTokens
+    ).json
+
+    private fun agentPromptContext(request: AgentTurnRequest, contextBudgetTokens: Int): JSONObject = PromptContextBudgeter.build(
+        goal = request.goal,
+        activeApp = request.activeApp,
+        deviceContext = request.deviceContext,
+        uiState = request.uiState,
+        packages = request.packages,
+        history = request.history,
+        lastResults = JSONArray(request.lastResults.map { it.toJson() }),
+        doNotRepeat = JSONArray(request.doNotRepeat.map { it.toJson() }),
+        targetContextTokens = contextBudgetTokens
+    ).json
 
 
     private suspend fun <T> executeTracedChat(
@@ -469,16 +516,33 @@ class OpenAiClient(
                 "contentTokenEstimate" to estimateTokens(content.length)
             )
         }
+        val sectionChars = promptSectionChars(messages)
         return mapOf(
             "requestBytes" to requestText.toByteArray(Charsets.UTF_8).size,
             "messageCount" to messages.length(),
             "promptChars" to promptChars,
             "promptTokenEstimate" to estimateTokens(promptChars),
+            "promptSectionChars" to sectionChars,
             "maxCompletionTokens" to requestJson.opt("max_completion_tokens"),
             "maxTokens" to requestJson.opt("max_tokens"),
             "responseFormat" to requestJson.optJSONObject("response_format")?.optString("type"),
             "messages" to messageSummaries
         )
+    }
+
+    private fun promptSectionChars(messages: JSONArray): Map<String, Int> {
+        val sections = linkedMapOf<String, Int>()
+        for (index in 0 until messages.length()) {
+            val content = messages.optJSONObject(index)?.optString("content").orEmpty()
+            content.lineSequence().forEach { line ->
+                val separatorIndex = line.indexOf(':')
+                if (separatorIndex in 1..40) {
+                    val key = line.take(separatorIndex).trim().replace(Regex("[^A-Za-z0-9]+"), "_").trim('_')
+                    if (key.isNotBlank()) sections[key] = (sections[key] ?: 0) + line.drop(separatorIndex + 1).length
+                }
+            }
+        }
+        return sections
     }
 
     private fun responseMetadata(rawResponse: String?, assistantContent: String?, parsedContent: JSONObject?): Map<String, Any?> = mapOf(
@@ -959,6 +1023,7 @@ class OpenAiClient(
     companion object {
         const val DEFAULT_MODEL = "gpt-5.4-nano"
         private const val DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+        private const val HARD_PROMPT_TOKEN_CEILING = 170_000
         private const val SYSTEM_PROMPT = "You are DroidLM's Android automation planner. Return strict JSON only. Never include secrets. Prefer safe, minimal, reversible actions. " +
             "Decision contract: do not choose mutating actions unless the target is present, the action searches/navigates, or the action recovers from a documented failure. " +
             "Predict expectedResult after mutating actions, use node tools before coordinates, use artifact tools before UI tools for Docs/Sheets, return DONE immediately when complete, and ask confirmation for risk, ambiguity, credentials, payment, private sharing, deletion, install, or permission changes."
