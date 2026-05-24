@@ -1,6 +1,7 @@
 package ai.droidlm.e2e
 
 import ai.droidlm.DroidLMApp
+import ai.droidlm.di.appGraph
 import ai.droidlm.execution.DroidLmExecutor
 import ai.droidlm.intent.DialogButtonRole
 import ai.droidlm.intent.DroidLmAction
@@ -172,6 +173,7 @@ class DroidLmActionKnownIssuesE2ETest {
         return DroidLmExecutor(
             settingsRepository = app.settingsRepository,
             openAiClient = app.openAiClient,
+            onDevicePlanner = app.appGraph().onDevicePlanner,
             portalController = portal,
             textEditingController = textEditingController,
             workspaceFileOperationController = app.workspaceFileOperationController,
