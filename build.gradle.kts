@@ -541,66 +541,85 @@ fun org.gradle.api.Project.runMicInjectedInstrumentedTest(
 ) {
     val artifactDir = file("test-artifacts/e2e-videos/${suite.artifactSubdirectory}").apply { mkdirs() }
     val deviceVideoDir = "/sdcard/Documents/DroidLMTestRuns/videos"
-    val markerPath = "/sdcard/Documents/DroidLMTestRuns/mic-audio-ready-${System.currentTimeMillis()}.marker"
     adbOutput(adb, "shell", "mkdir", "-p", deviceVideoDir)
-    adbOutput(adb, "shell", "rm", "-f", markerPath)
     val recordVideo = shouldRecordE2eVideos()
 
     val selector = "${suite.className}#$methodName"
-    val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}.mp4"
-    val hostVideo = artifactDir.resolve(videoFileName)
-    val deviceVideoPath = "$deviceVideoDir/$videoFileName"
-    val recorder = if (recordVideo) {
-        println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
-        runCatching { startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) } }
-            .onFailure { reportE2eVideoCaptureFailure(selector, "start", it, failures = null) }
-            .getOrNull()
-    } else {
-        println("Running $selector with mic injection without video recording")
-        null
-    }
-
-    val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
-    suite.instrumentationArgs.forEach { (key, value) -> args += listOf("-e", key, value) }
-    args += listOf("-e", "micAudioMarkerPath", markerPath)
-    args += listOf("-e", "class", selector)
-    args += "$droidLmDebugTestPackageName/androidx.test.runner.AndroidJUnitRunner"
-
-    val instrumentation = ProcessBuilder(adb, *args.toTypedArray()).redirectErrorStream(true).start()
-    val output = java.io.ByteArrayOutputStream()
-    val reader = Thread {
-        instrumentation.inputStream.use { input -> input.copyTo(output) }
-    }.apply { start() }
-
-    var played = false
+    val maxAttempts = e2eRetryCount() + 1
     val instrumentationTimeoutMs = System.getenv("DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS")?.toLongOrNull() ?: 60_000L
-    val deadline = System.currentTimeMillis() + instrumentationTimeoutMs
-    while (instrumentation.isAlive && System.currentTimeMillis() < deadline) {
-        val marker = adbOutput(adb, "shell", "if", "[", "-f", markerPath, "];", "then", "echo", "ready;", "fi")
-        if (!played && marker.contains("ready")) {
-            Thread.sleep(speechDelayMs)
-            injectAudioIntoEmulatorMic(audioFile)
-            played = true
+    var lastFailure: String? = null
+
+    for (attempt in 1..maxAttempts) {
+        val attemptSuffix = if (maxAttempts > 1) "-attempt$attempt" else ""
+        val markerPath = "/sdcard/Documents/DroidLMTestRuns/mic-audio-ready-${System.currentTimeMillis()}$attemptSuffix.marker"
+        adbOutput(adb, "shell", "rm", "-f", markerPath)
+        val videoFileName = "${System.currentTimeMillis()}-${sanitizeArtifactName(methodName)}$attemptSuffix.mp4"
+        val hostVideo = artifactDir.resolve(videoFileName)
+        val deviceVideoPath = "$deviceVideoDir/$videoFileName"
+        val recorder = if (recordVideo) {
+            println("Recording $selector with mic injection to ${hostVideo.relativeTo(projectDir)}")
+            runCatching { startScreenRecording(adb, deviceVideoPath).also { Thread.sleep(1000) } }
+                .onFailure { reportE2eVideoCaptureFailure(selector, "start", it, failures = null) }
+                .getOrNull()
+        } else {
+            println("Running $selector with mic injection without video recording")
+            null
         }
-        Thread.sleep(100)
-    }
-    if (instrumentation.isAlive) instrumentation.destroyForcibly()
-    reader.join(5000)
-    val text = output.toString()
-    print(text)
 
-    if (recordVideo && recorder != null) {
-        runCatching { stopScreenRecording(adb, recorder) }
-            .onFailure { reportE2eVideoCaptureFailure(selector, "stop", it, failures = null) }
-        runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
-            .onFailure { reportE2eVideoCaptureFailure(selector, "capture", it, failures = null) }
-    }
-    adbOutput(adb, "shell", "rm", "-f", markerPath)
+        val args = mutableListOf("shell", "am", "instrument", "-w", "-r")
+        suite.instrumentationArgs.forEach { (key, value) -> args += listOf("-e", key, value) }
+        args += listOf("-e", "micAudioMarkerPath", markerPath)
+        args += listOf("-e", "class", selector)
+        args += "$droidLmDebugTestPackageName/androidx.test.runner.AndroidJUnitRunner"
 
-    if (!played) error("Mic audio was never injected because marker was not created by $selector")
-    if (instrumentation.exitValue() != 0 || text.contains("FAILURES!!!")) {
-        error("Android mic-injection E2E failure: $selector")
+        val instrumentation = ProcessBuilder(adb, *args.toTypedArray()).redirectErrorStream(true).start()
+        val output = java.io.ByteArrayOutputStream()
+        val reader = Thread {
+            instrumentation.inputStream.use { input -> input.copyTo(output) }
+        }.apply { start() }
+
+        var played = false
+        val deadline = System.currentTimeMillis() + instrumentationTimeoutMs
+        while (instrumentation.isAlive && System.currentTimeMillis() < deadline) {
+            val marker = adbOutput(adb, "shell", "if", "[", "-f", markerPath, "];", "then", "echo", "ready;", "fi")
+            if (!played && marker.contains("ready")) {
+                Thread.sleep(speechDelayMs)
+                injectAudioIntoEmulatorMic(audioFile)
+                played = true
+            }
+            Thread.sleep(100)
+        }
+        if (instrumentation.isAlive) instrumentation.destroyForcibly()
+        reader.join(5000)
+        val text = output.toString()
+        print(text)
+
+        if (recordVideo && recorder != null) {
+            runCatching { stopScreenRecording(adb, recorder) }
+                .onFailure { reportE2eVideoCaptureFailure(selector, "stop", it, failures = null) }
+            runCatching { pullRecordedVideo(adb, deviceVideoPath, hostVideo) }
+                .onFailure { reportE2eVideoCaptureFailure(selector, "capture", it, failures = null) }
+        }
+        adbOutput(adb, "shell", "rm", "-f", markerPath)
+
+        val failed = !played || instrumentation.exitValue() != 0 || text.contains("FAILURES!!!")
+        if (!failed) return
+
+        lastFailure = if (!played) {
+            "Mic audio was never injected because marker was not created by $selector"
+        } else {
+            "Android mic-injection E2E failure: $selector"
+        }
+        val transientFailure = !played || isTransientAndroidE2eFailure(text) || (instrumentation.exitValue() != 0 && !text.contains("FAILURES!!!"))
+        if (attempt < maxAttempts && transientFailure) {
+            println("Retrying $selector after transient mic-injection failure (attempt $attempt/$maxAttempts)")
+            Thread.sleep(2_000)
+            continue
+        }
+        error(lastFailure)
     }
+
+    error(lastFailure ?: "Android mic-injection E2E failure: $selector")
 }
 
 fun org.gradle.api.Project.runSupportLogMicRegressionE2e(adb: String) {
