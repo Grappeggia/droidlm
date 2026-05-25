@@ -980,7 +980,7 @@ private fun PrivacyModelDialog(
                 Text("Status: ${plannerStatusLabel(plannerStatus)}")
                 plannerKeySetup?.message?.takeIf { it.isNotBlank() }?.let { Text(it, color = DroidLmColors.TextMuted) }
                 Text(
-                    "This build includes a bundled Qwen3 1.7B package. Installing it into app storage uses about 1.8 GB.",
+                    "This build includes a bundled Qwen3 1.7B package. Installing it into app storage uses about 1.3 GB.",
                     color = DroidLmColors.TextMuted
                 )
             }

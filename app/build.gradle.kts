@@ -71,10 +71,10 @@ val llamaDownloadDir = layout.buildDirectory.dir("downloads/llama")
 val llamaGeneratedSourceDir = layout.buildDirectory.dir("generated/llamaSource")
 val llamaSourceArchive = llamaDownloadDir.map { it.file(llamaSourceArchiveName) }
 val llamaSourceDir = llamaGeneratedSourceDir.map { it.dir("llama.cpp-$llamaSourceCommit") }
-val qwenBundledModelFileName = "Qwen3-1.7B-Q8_0.gguf"
+val qwenBundledModelFileName = "Qwen3-1.7B-Q4_K_M.gguf"
 val qwenBundledModelArchiveName = "$qwenBundledModelFileName.xz"
-val qwenBundledModelUrl = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/$qwenBundledModelFileName?download=1"
-val qwenBundledModelSha256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
+val qwenBundledModelUrl = "https://huggingface.co/lmstudio-community/Qwen3-1.7B-GGUF/resolve/main/$qwenBundledModelFileName?download=1"
+val qwenBundledModelSha256 = "e0801cbda7e2f3fd00bea4d73b53b422b14b13aa130e778f6414b6b641920b7e"
 val qwenDownloadDir = layout.buildDirectory.dir("downloads/qwen")
 val qwenGeneratedAssetsDir = layout.buildDirectory.dir("generated/qwenAssets")
 val qwenBundledModel = qwenDownloadDir.map { it.file(qwenBundledModelFileName) }

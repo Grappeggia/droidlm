@@ -514,14 +514,14 @@ class OnDevicePlanner(
     private fun requireDownloadStorage() {
         val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
         if (availableBytes < MIN_FREE_STORAGE_BYTES_FOR_DOWNLOAD) {
-            throw IOException("Privacy mode needs about 4.5 GB of free storage to download and prepare Qwen3.")
+            throw IOException("Privacy mode needs about 3.0 GB of free storage to download and prepare Qwen3.")
         }
     }
 
     private fun requireBundledInstallStorage() {
         val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
         if (availableBytes < MIN_FREE_STORAGE_BYTES_FOR_BUNDLED_INSTALL) {
-            throw IOException("Privacy mode needs about 2.5 GB of free storage to install bundled Qwen3 into app storage.")
+            throw IOException("Privacy mode needs about 2.0 GB of free storage to install bundled Qwen3 into app storage.")
         }
     }
 
@@ -551,15 +551,15 @@ class OnDevicePlanner(
         const val ERROR_MODEL_UNSUPPORTED = "ON_DEVICE_MODEL_UNSUPPORTED"
         const val ERROR_MODEL_FAILURE = "ON_DEVICE_MODEL_FAILURE"
 
-        private const val MODEL_FILE_NAME = "Qwen3-1.7B-Q8_0.gguf"
+        private const val MODEL_FILE_NAME = "Qwen3-1.7B-Q4_K_M.gguf"
         private const val READY_MARKER_NAME = ".qwen3-ready"
-        private const val MODEL_URL = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=1"
-        private const val MODEL_SHA256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
-        private const val MODEL_BYTES = 1_834_426_016L
+        private const val MODEL_URL = "https://huggingface.co/lmstudio-community/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf?download=1"
+        private const val MODEL_SHA256 = "e0801cbda7e2f3fd00bea4d73b53b422b14b13aa130e778f6414b6b641920b7e"
+        private const val MODEL_BYTES = 1_282_439_328L
         private const val DOWNLOAD_BUFFER_BYTES = 256 * 1024
         private const val MIN_TOTAL_RAM_BYTES = 10L * 1024L * 1024L * 1024L
-        private const val MIN_FREE_STORAGE_BYTES_FOR_DOWNLOAD = 4_500_000_000L
-        private const val MIN_FREE_STORAGE_BYTES_FOR_BUNDLED_INSTALL = 2_500_000_000L
+        private const val MIN_FREE_STORAGE_BYTES_FOR_DOWNLOAD = 3_000_000_000L
+        private const val MIN_FREE_STORAGE_BYTES_FOR_BUNDLED_INSTALL = 2_000_000_000L
         private const val LOCAL_CONTEXT_SIZE = 4_096
         private const val LOCAL_PROMPT_CONTEXT_TOKENS = 3_000
         private const val MAX_COMPLETION_TOKENS = 768
@@ -635,7 +635,7 @@ Avoid repeating a failed or no-delta action unless the observation changed or th
 Keep the next step concise, grounded, and practical for the current screen.
 """
 
-        private const val BUNDLED_MODEL_ASSET_PATH = "ondevice/qwen/Qwen3-1.7B-Q8_0.gguf.xz"
+        private const val BUNDLED_MODEL_ASSET_PATH = "ondevice/qwen/Qwen3-1.7B-Q4_K_M.gguf.xz"
 
         private fun boundedString(minLength: Int, maxLength: Int): JSONObject = JSONObject()
             .put("type", "string")
