@@ -40,7 +40,7 @@ class SherpaOfflineSpeechRecognizer(
     private val context: Context,
     private val logs: ActionLogRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
-    private val model: ModelSpec = ModelSpec.parakeetAsset(),
+    private val model: ModelSpec = ModelSpec.parakeetDownload(),
     private val httpClient: OkHttpClient = sharedHttpClient
 ) : OfflineSpeechRecognizer {
     override val providerLabel: String = "Sherpa offline English speech"
@@ -375,6 +375,16 @@ class SherpaOfflineSpeechRecognizer(
         }
 
         companion object {
+            fun parakeetDownload(): ModelSpec = ModelSpec(
+                name = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming",
+                storage = ModelStorage.Download(
+                    archiveName = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2",
+                    url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2",
+                    sha256 = "99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e1f839a76e150"
+                ),
+                kind = Kind.PARAKEET_TRANSDUCER
+            )
+
             fun parakeetAsset(): ModelSpec = ModelSpec(
                 name = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming",
                 storage = ModelStorage.Asset("sherpa/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming"),

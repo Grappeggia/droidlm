@@ -29,8 +29,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -57,6 +60,7 @@ class OnDevicePlanner(
             UNSUPPORTED,
             NOT_DOWNLOADED,
             DOWNLOADING,
+            INSTALLING,
             DOWNLOADED,
             LOADING,
             READY,
@@ -114,7 +118,11 @@ class OnDevicePlanner(
                 _status.value = unsupported
                 throw IOException(unsupported.message)
             }
-            requireSufficientStorage()
+            if (bundledAssetExists()) {
+                installBundledModelLocked()
+                return@withLock
+            }
+            requireDownloadStorage()
             plannerRoot.mkdirs()
             val tempFile = File(plannerRoot, "$MODEL_FILE_NAME.download")
             tempFile.delete()
@@ -267,8 +275,13 @@ class OnDevicePlanner(
         val current = status.value
         return when (current.phase) {
             Status.Phase.UNSUPPORTED -> current.message
-            Status.Phase.NOT_DOWNLOADED -> "Privacy mode needs the on-device Qwen3 planner downloaded first."
+            Status.Phase.NOT_DOWNLOADED -> if (bundledAssetExists()) {
+                "Privacy mode includes a bundled Qwen3 planner that must be installed into app storage first."
+            } else {
+                "Privacy mode needs the on-device Qwen3 planner downloaded first."
+            }
             Status.Phase.DOWNLOADING -> "Privacy mode is downloading the on-device Qwen3 planner. Keep DroidLM open until it finishes."
+            Status.Phase.INSTALLING -> "Privacy mode is installing the bundled on-device Qwen3 planner. Keep DroidLM open until it finishes."
             Status.Phase.DOWNLOADED,
             Status.Phase.LOADING -> "Privacy mode is preparing the on-device Qwen3 planner. Try again in a moment."
             Status.Phase.READY -> "The on-device Qwen3 planner is ready."
@@ -295,8 +308,10 @@ class OnDevicePlanner(
             }
             if (!modelFile.isFile || !markerFile.isFile || markerFile.readText().trim() != MODEL_SHA256) {
                 modelLoaded = false
-                _status.value = Status(Status.Phase.NOT_DOWNLOADED, "Download the on-device Qwen3 planner to use privacy mode")
-                throw IOException("The on-device Qwen3 planner is not downloaded yet")
+                if (!installBundledModelIfAvailableLocked()) {
+                    _status.value = Status(Status.Phase.NOT_DOWNLOADED, missingModelMessage())
+                    throw IOException("The on-device Qwen3 planner is not downloaded yet")
+                }
             }
             if (modelLoaded) {
                 _status.value = Status(Status.Phase.READY, "On-device Qwen3 planner ready")
@@ -308,6 +323,69 @@ class OnDevicePlanner(
             _status.value = Status(Status.Phase.READY, "On-device Qwen3 planner ready")
             logs.log(ActionLogType.ACTION_RESULT, "On-device Qwen3 planner loaded", "contextSize=$LOCAL_CONTEXT_SIZE")
         }
+    }
+
+    private fun installBundledModelIfAvailableLocked(): Boolean {
+        if (!bundledAssetExists()) return false
+        installBundledModelLocked()
+        return true
+    }
+
+    private fun installBundledModelLocked() {
+        requireBundledInstallStorage()
+        plannerRoot.mkdirs()
+        val tempFile = File(plannerRoot, "$MODEL_FILE_NAME.installing")
+        tempFile.delete()
+        val digest = MessageDigest.getInstance("SHA-256")
+        var installedBytes = 0L
+        _status.value = Status(Status.Phase.INSTALLING, "Installing bundled Qwen3 model", 0L, MODEL_BYTES, 0f)
+        try {
+            context.assets.open(BUNDLED_MODEL_ASSET_PATH).use { assetInput ->
+                XZCompressorInputStream(BufferedInputStream(assetInput)).use { input ->
+                    BufferedOutputStream(tempFile.outputStream()).use { output ->
+                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
+                            installedBytes += read.toLong()
+                            _status.value = Status(
+                                phase = Status.Phase.INSTALLING,
+                                message = formatInstallMessage(installedBytes, MODEL_BYTES),
+                                downloadedBytes = installedBytes,
+                                totalBytes = MODEL_BYTES,
+                                progressFraction = if (MODEL_BYTES > 0) installedBytes.toFloat() / MODEL_BYTES.toFloat() else null
+                            )
+                        }
+                    }
+                }
+            }
+            val actualSha = digest.digest().joinToString(separator = "") { byte -> "%02x".format(Locale.US, byte) }
+            if (!actualSha.equals(MODEL_SHA256, ignoreCase = true)) {
+                tempFile.delete()
+                _status.value = Status(Status.Phase.ERROR, "Bundled Qwen3 model checksum mismatch")
+                throw IOException("Bundled Qwen3 model checksum mismatch")
+            }
+            if (modelFile.exists()) modelFile.delete()
+            require(tempFile.renameTo(modelFile)) { "Could not move the bundled Qwen3 model into place" }
+            markerFile.writeText(MODEL_SHA256)
+            modelLoaded = false
+            _status.value = Status(Status.Phase.DOWNLOADED, "Bundled Qwen3 installed. Preparing the local planner...")
+        } finally {
+            tempFile.takeIf { it.exists() }?.delete()
+        }
+    }
+
+    private fun bundledAssetExists(): Boolean = runCatching {
+        context.assets.open(BUNDLED_MODEL_ASSET_PATH).close()
+        true
+    }.getOrDefault(false)
+
+    private fun missingModelMessage(): String = if (bundledAssetExists()) {
+        "Install bundled Qwen3 to use privacy mode"
+    } else {
+        "Download the on-device Qwen3 planner to use privacy mode"
     }
 
     private fun buildPromptContext(request: RelayPlanRequest): PromptContextBudgeter.BudgetedPromptContext =
@@ -413,9 +491,9 @@ class OnDevicePlanner(
         val unsupported = unsupportedStatus()
         if (unsupported != null) return unsupported
         if (modelFile.isFile && markerFile.isFile && markerFile.readText().trim() == MODEL_SHA256) {
-            return Status(Status.Phase.DOWNLOADED, "Qwen3 downloaded. Enable privacy mode to prepare it.")
+            return Status(Status.Phase.DOWNLOADED, "Qwen3 installed. Enable privacy mode to prepare it.")
         }
-        return Status(Status.Phase.NOT_DOWNLOADED, "Download the on-device Qwen3 planner to use privacy mode")
+        return Status(Status.Phase.NOT_DOWNLOADED, missingModelMessage())
     }
 
     private fun unsupportedStatus(): Status? {
@@ -433,10 +511,17 @@ class OnDevicePlanner(
         return null
     }
 
-    private fun requireSufficientStorage() {
+    private fun requireDownloadStorage() {
         val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
-        if (availableBytes < MIN_FREE_STORAGE_BYTES) {
+        if (availableBytes < MIN_FREE_STORAGE_BYTES_FOR_DOWNLOAD) {
             throw IOException("Privacy mode needs about 4.5 GB of free storage to download and prepare Qwen3.")
+        }
+    }
+
+    private fun requireBundledInstallStorage() {
+        val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
+        if (availableBytes < MIN_FREE_STORAGE_BYTES_FOR_BUNDLED_INSTALL) {
+            throw IOException("Privacy mode needs about 2.5 GB of free storage to install bundled Qwen3 into app storage.")
         }
     }
 
@@ -444,6 +529,12 @@ class OnDevicePlanner(
         if (totalBytes <= 0L) return "Downloading the local Qwen3 model"
         val percent = ((downloadedBytes.toDouble() / totalBytes.toDouble()) * 100.0).toInt().coerceIn(0, 100)
         return "Downloading the local Qwen3 model ($percent%)"
+    }
+
+    private fun formatInstallMessage(installedBytes: Long, totalBytes: Long): String {
+        if (totalBytes <= 0L) return "Installing bundled Qwen3 model"
+        val percent = ((installedBytes.toDouble() / totalBytes.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+        return "Installing bundled Qwen3 model ($percent%)"
     }
 
     private fun errorCodeFor(error: Throwable): String = when (error.message.orEmpty()) {
@@ -463,11 +554,12 @@ class OnDevicePlanner(
         private const val MODEL_FILE_NAME = "Qwen3-1.7B-Q8_0.gguf"
         private const val READY_MARKER_NAME = ".qwen3-ready"
         private const val MODEL_URL = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=1"
-        private const val MODEL_SHA256 = "0765e15700b0f9aebe441b64af38978f083447471b9854e10a18c644740e1a6d"
+        private const val MODEL_SHA256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
         private const val MODEL_BYTES = 1_834_426_016L
         private const val DOWNLOAD_BUFFER_BYTES = 256 * 1024
         private const val MIN_TOTAL_RAM_BYTES = 10L * 1024L * 1024L * 1024L
-        private const val MIN_FREE_STORAGE_BYTES = 4_500_000_000L
+        private const val MIN_FREE_STORAGE_BYTES_FOR_DOWNLOAD = 4_500_000_000L
+        private const val MIN_FREE_STORAGE_BYTES_FOR_BUNDLED_INSTALL = 2_500_000_000L
         private const val LOCAL_CONTEXT_SIZE = 4_096
         private const val LOCAL_PROMPT_CONTEXT_TOKENS = 3_000
         private const val MAX_COMPLETION_TOKENS = 768
@@ -542,6 +634,8 @@ If the task is destructive, privacy-sensitive, payment-related, sharing-related,
 Avoid repeating a failed or no-delta action unless the observation changed or the strategy materially changed.
 Keep the next step concise, grounded, and practical for the current screen.
 """
+
+        private const val BUNDLED_MODEL_ASSET_PATH = "ondevice/qwen/Qwen3-1.7B-Q8_0.gguf.xz"
 
         private fun boundedString(minLength: Int, maxLength: Int): JSONObject = JSONObject()
             .put("type", "string")

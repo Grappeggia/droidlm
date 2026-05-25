@@ -295,10 +295,10 @@ class DroidLmViewModel(
         runCatching {
             deps.onDevicePlanner.downloadModel()
         }.onSuccess {
-            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Downloaded the on-device Qwen3 planner")
+            deps.actionLogRepository.log(ActionLogType.ACTION_RESULT, "Prepared the on-device Qwen3 planner package")
             deps.executor.retryPlannerKeySetupRequest()
         }.onFailure { error ->
-            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not download the on-device Qwen3 planner: ${error.message}")
+            deps.actionLogRepository.log(ActionLogType.ERROR, "Could not prepare the on-device Qwen3 planner package: ${error.message}")
         }
     }
     fun preparePrivacyModel() {

@@ -71,6 +71,14 @@ val llamaDownloadDir = layout.buildDirectory.dir("downloads/llama")
 val llamaGeneratedSourceDir = layout.buildDirectory.dir("generated/llamaSource")
 val llamaSourceArchive = llamaDownloadDir.map { it.file(llamaSourceArchiveName) }
 val llamaSourceDir = llamaGeneratedSourceDir.map { it.dir("llama.cpp-$llamaSourceCommit") }
+val qwenBundledModelFileName = "Qwen3-1.7B-Q8_0.gguf"
+val qwenBundledModelArchiveName = "$qwenBundledModelFileName.xz"
+val qwenBundledModelUrl = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/$qwenBundledModelFileName?download=1"
+val qwenBundledModelSha256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
+val qwenDownloadDir = layout.buildDirectory.dir("downloads/qwen")
+val qwenGeneratedAssetsDir = layout.buildDirectory.dir("generated/qwenAssets")
+val qwenBundledModel = qwenDownloadDir.map { it.file(qwenBundledModelFileName) }
+val qwenBundledArchive = qwenDownloadDir.map { it.file(qwenBundledModelArchiveName) }
 
 val downloadSherpaParakeetModel by tasks.registering {
     outputs.file(sherpaParakeetArchive)
@@ -126,6 +134,62 @@ val unpackLlamaSource by tasks.registering(Sync::class) {
     into(llamaGeneratedSourceDir)
 }
 
+val downloadBundledQwenModel by tasks.registering {
+    outputs.file(qwenBundledModel)
+    doLast {
+        val model = qwenBundledModel.get().asFile
+        if (model.isFile && sha256(model).equals(qwenBundledModelSha256, ignoreCase = true)) return@doLast
+        model.parentFile.mkdirs()
+        val temp = File(model.parentFile, "${model.name}.tmp")
+        temp.delete()
+        val connection = URI(qwenBundledModelUrl).toURL().openConnection().apply {
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+            setRequestProperty("Accept", "application/octet-stream")
+        }
+        connection.getInputStream().use { input ->
+            temp.outputStream().use { output -> input.copyTo(output) }
+        }
+        val actualSha256 = sha256(temp)
+        require(actualSha256.equals(qwenBundledModelSha256, ignoreCase = true)) {
+            temp.delete()
+            "Downloaded bundled Qwen3 model checksum mismatch"
+        }
+        model.delete()
+        require(temp.renameTo(model)) { "Could not move downloaded bundled Qwen3 model" }
+    }
+}
+
+val packBundledQwenModel by tasks.registering {
+    dependsOn(downloadBundledQwenModel)
+    outputs.file(qwenBundledArchive)
+    doLast {
+        val source = qwenBundledModel.get().asFile
+        val archive = qwenBundledArchive.get().asFile
+        if (archive.isFile && archive.lastModified() >= source.lastModified()) return@doLast
+        archive.parentFile.mkdirs()
+        val temp = File(archive.parentFile, "${archive.name}.tmp")
+        temp.delete()
+        val python = System.getenv("PYTHON")?.takeIf { it.isNotBlank() } ?: "python3"
+        exec {
+            commandLine(
+                python,
+                "-c",
+                "import lzma, pathlib, sys; src = pathlib.Path(sys.argv[1]); dst = pathlib.Path(sys.argv[2]); dst.parent.mkdir(parents=True, exist_ok=True); f_in = src.open('rb'); f_out = lzma.open(dst, 'wb', preset=9);\nwith f_in, f_out:\n    while True:\n        chunk = f_in.read(1024 * 1024)\n        if not chunk:\n            break\n        f_out.write(chunk)",
+                source.absolutePath,
+                temp.absolutePath,
+            )
+        }
+        archive.delete()
+        require(temp.renameTo(archive)) { "Could not move bundled Qwen3 archive into place" }
+    }
+}
+
+val stageBundledQwenModel by tasks.registering(Sync::class) {
+    dependsOn(packBundledQwenModel)
+    from(qwenBundledArchive)
+    into(qwenGeneratedAssetsDir.map { it.dir("ondevice/qwen") })
+}
+
 fun buildConfigString(value: String): String = value
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
@@ -164,7 +228,7 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)
+    sourceSets["main"].assets.srcDir(qwenGeneratedAssetsDir)
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -229,8 +293,8 @@ androidComponents {
 }
 
 tasks.named("preBuild") {
-    dependsOn(unpackSherpaParakeetModel)
     dependsOn(unpackLlamaSource)
+    dependsOn(stageBundledQwenModel)
 }
 
 dependencies {
