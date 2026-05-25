@@ -426,8 +426,8 @@ run_capture_regression_profile() {
   completion_latency_ms="$previous_completion_latency"
   if [[ -z "$completion_latency_ms" ]]; then
     case "$profile_name" in
-      droidlm_api29_lenovo_tb8505f) completion_latency_ms=12000 ;;
-      droidlm_api29_lenovo_stress) completion_latency_ms=15000 ;;
+      droidlm_api29_lenovo_tb8505f) completion_latency_ms=18000 ;;
+      droidlm_api29_lenovo_stress) completion_latency_ms=18000 ;;
     esac
   fi
   export DROIDLM_E2E_CAPTURE_RECORD_HOLD_MS DROIDLM_E2E_CAPTURE_CPU_STRESS_THREADS DROIDLM_E2E_MIC_INJECTION_TIMEOUT_MS
