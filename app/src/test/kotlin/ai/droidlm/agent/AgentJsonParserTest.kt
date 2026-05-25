@@ -54,4 +54,36 @@ class AgentJsonParserTest {
         assertEquals(ActionConfidence.MEDIUM, decision.toolCalls.single().confidence)
         assertEquals("Save dialog closes", decision.toolCalls.single().expectedResult)
     }
+
+    @Test fun noOpFallsBackToReasonWhenMessageMissing() {
+        val decision = parser.parseDecision(
+            """
+            {
+              "action":"NO_OP",
+              "reason":"Need a clearer target",
+              "confidence":"LOW",
+              "expectedResult":"No action taken"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(AgentDecisionStatus.NO_OP, decision.status)
+        assertEquals("Need a clearer target", decision.message)
+    }
+
+    @Test fun askConfirmationFallsBackToReasonWhenPromptMissing() {
+        val decision = parser.parseDecision(
+            """
+            {
+              "action":"ASK_CONFIRMATION",
+              "reason":"Sharing this file is sensitive",
+              "confidence":"HIGH",
+              "expectedResult":"No action taken until the user confirms"
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(AgentDecisionStatus.ASK_USER, decision.status)
+        assertEquals("Sharing this file is sensitive", decision.message)
+    }
 }

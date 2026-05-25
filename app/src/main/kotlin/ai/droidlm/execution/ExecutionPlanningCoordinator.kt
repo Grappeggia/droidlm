@@ -374,12 +374,7 @@ internal class ExecutionPlanningCoordinator(
             return when (settings.executionMode) {
                 ExecutionMode.LOCAL_RULE_FIRST -> planTranscript(goal, diagnosticSessionId, recordPrompt = false)
                 ExecutionMode.LOCAL_LLM_LOOP -> runLocalLlmLoop(goal, settings.maxAutonomousSteps, diagnosticSessionId)
-                ExecutionMode.AGENT_LOOP -> finish(
-                    ActionResult.fail(
-                        "Privacy mode does not support agent loop yet. Use local action loop or reviewed planning.",
-                        "ON_DEVICE_AGENT_UNAVAILABLE"
-                    )
-                )
+                ExecutionMode.AGENT_LOOP -> runAgentLoop(goal, diagnosticSessionId)
                 ExecutionMode.MOBILERUN_CLOUD_TASK -> finish(
                     ActionResult.fail(
                         "Privacy mode disables Mobilerun cloud tasks. Use local action loop or reviewed planning.",

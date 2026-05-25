@@ -32,10 +32,23 @@ class AgentJsonParser {
             return AgentDecision(AgentDecisionStatus.DONE, obj.optString("reason", "Task complete"), emptyList())
         }
         if (action.equals("NO_OP", ignoreCase = true)) {
-            return AgentDecision(AgentDecisionStatus.NO_OP, obj.optString("message", "No action"), emptyList())
+            return AgentDecision(
+                AgentDecisionStatus.NO_OP,
+                obj.optString("message").takeIf { it.isNotBlank() }
+                    ?: obj.optString("reason").takeIf { it.isNotBlank() }
+                    ?: "No action",
+                emptyList()
+            )
         }
         if (action.equals("ASK_USER", ignoreCase = true) || action.equals("ASK_CONFIRMATION", ignoreCase = true)) {
-            return AgentDecision(AgentDecisionStatus.ASK_USER, obj.optString("message", obj.optString("confirmationPrompt", "Please confirm or clarify")), emptyList())
+            return AgentDecision(
+                AgentDecisionStatus.ASK_USER,
+                obj.optString("message").takeIf { it.isNotBlank() }
+                    ?: obj.optString("confirmationPrompt").takeIf { it.isNotBlank() }
+                    ?: obj.optString("reason").takeIf { it.isNotBlank() }
+                    ?: "Please confirm or clarify",
+                emptyList()
+            )
         }
         val args = JSONObject(obj.toString())
         return AgentDecision(

@@ -16,6 +16,7 @@ import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleWorkspaceContextUtils
 import ai.droidlm.intent.DroidLmAction
 import ai.droidlm.intent.displayName
+import ai.droidlm.ondevice.OnDevicePlanner
 import ai.droidlm.openai.OpenAiClient
 import ai.droidlm.portal.ActionResult
 import ai.droidlm.portal.PortalController
@@ -32,6 +33,7 @@ import org.json.JSONObject
 internal class ExecutionAgentLoopRunner(
     private val settingsRepository: SettingsRepository,
     private val openAiClient: OpenAiClient,
+    private val onDevicePlanner: OnDevicePlanner,
     private val portalController: PortalController,
     private val appInventoryRepository: AppInventoryRepository,
     private val deviceContextAggregator: DeviceContextAggregator,
@@ -50,6 +52,7 @@ internal class ExecutionAgentLoopRunner(
 ) {
     suspend fun run(goal: String, diagnosticSessionId: String?): ActionResult {
         val settings = settingsRepository.settings.first()
+        val privacyModeEnabled = settings.privacyModeEnabled
         val activeState = runCatching { portalController.getState() }.getOrNull()
         val workspaceArtifactActive = activeState?.packageName in setOf(
             GoogleWorkspaceContextUtils.DOCS_PACKAGE,
@@ -59,11 +62,11 @@ internal class ExecutionAgentLoopRunner(
         val budgets = AgentBudgets(
             maxTurns = if (workspaceArtifactActive) maxOf(settings.maxAgentTurns, 12) else settings.maxAgentTurns,
             maxToolCallsTotal = if (workspaceArtifactActive) maxOf(settings.maxAgentToolCalls, 16) else settings.maxAgentToolCalls,
-            maxToolCallsPerTurn = if (workspaceArtifactActive) 4 else AgentBudgets.DEFAULT_MAX_TOOL_CALLS_PER_TURN,
-            maxMutatingToolCallsPerTurn = if (workspaceArtifactActive) 3 else AgentBudgets.DEFAULT_MAX_MUTATING_TOOL_CALLS_PER_TURN
+            maxToolCallsPerTurn = if (privacyModeEnabled) 1 else if (workspaceArtifactActive) 4 else AgentBudgets.DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+            maxMutatingToolCallsPerTurn = if (privacyModeEnabled) 1 else if (workspaceArtifactActive) 3 else AgentBudgets.DEFAULT_MAX_MUTATING_TOOL_CALLS_PER_TURN
         ).normalized()
-        val apiKey = settingsRepository.getOpenAiApiKey().orEmpty()
-        if (apiKey.isBlank()) {
+        val apiKey = if (privacyModeEnabled) "" else settingsRepository.getOpenAiApiKey().orEmpty()
+        if (!privacyModeEnabled && apiKey.isBlank()) {
             plannerKeySetupRequest.value = PlannerKeySetupRequest(
                 kind = PlannerSetupKind.OPENAI_API_KEY,
                 message = "Agent mode requires an OpenAI API key saved on this device.",
@@ -84,6 +87,7 @@ internal class ExecutionAgentLoopRunner(
             diagnosticSessionId,
             "agent_loop_started",
             mapOf(
+                "endpointMode" to if (privacyModeEnabled) "on_device_qwen3_agent_loop" else "direct_openai_agent_loop",
                 "maxTurns" to budgets.maxTurns,
                 "maxToolCallsTotal" to budgets.maxToolCallsTotal,
                 "maxToolCallsPerTurn" to budgets.maxToolCallsPerTurn,
@@ -124,8 +128,17 @@ internal class ExecutionAgentLoopRunner(
                 lastResults = toolResults.takeLast(5),
                 doNotRepeat = doNotRepeat
             )
-            val decision = when (val agentResult = openAiClient.nextAgentTurn(apiKey, settings.openAiModel, request)) {
-                is RelayCallResult.Failure -> return finish(ActionResult.fail(userFacingPlannerMessage(agentResult), agentResult.errorCode))
+            val decision = when (val agentResult = if (privacyModeEnabled) onDevicePlanner.nextAgentTurn(request) else openAiClient.nextAgentTurn(apiKey, settings.openAiModel, request)) {
+                is RelayCallResult.Failure -> {
+                    if (privacyModeEnabled && (agentResult.errorCode == OnDevicePlanner.ERROR_MODEL_MISSING || agentResult.errorCode == OnDevicePlanner.ERROR_MODEL_UNSUPPORTED)) {
+                        plannerKeySetupRequest.value = PlannerKeySetupRequest(
+                            kind = PlannerSetupKind.ON_DEVICE_MODEL,
+                            message = onDevicePlanner.setupMessage(),
+                            retryTranscript = goal
+                        )
+                    }
+                    return finish(ActionResult.fail(if (privacyModeEnabled) agentResult.message else userFacingPlannerMessage(agentResult), agentResult.errorCode))
+                }
                 is RelayCallResult.Success -> agentResult.value
             }
             debugEvent(

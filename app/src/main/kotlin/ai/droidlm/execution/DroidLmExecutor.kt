@@ -170,6 +170,7 @@ class DroidLmExecutor(
     private val agentLoopRunner = ExecutionAgentLoopRunner(
         settingsRepository = settingsRepository,
         openAiClient = openAiClient,
+        onDevicePlanner = onDevicePlanner,
         portalController = portalController,
         appInventoryRepository = appInventoryRepository,
         deviceContextAggregator = deviceContextAggregator,

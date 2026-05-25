@@ -1,5 +1,9 @@
 package ai.droidlm.ondevice
 
+import ai.droidlm.agent.AgentDecision
+import ai.droidlm.agent.AgentJsonParser
+import ai.droidlm.agent.AgentToolRegistry
+import ai.droidlm.agent.AgentTurnRequest
 import ai.droidlm.intent.DroidLmActionContract
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
@@ -64,6 +68,7 @@ class OnDevicePlanner(
 
     private val engine by lazy { LlamaOnDeviceEngine(context) }
     private val relayParser = RelayClient()
+    private val agentJsonParser = AgentJsonParser()
     private val plannerMutex = Mutex()
     private val plannerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val plannerRoot = File(context.filesDir, "ondevice-planner/qwen3-1.7b")
@@ -180,13 +185,7 @@ class OnDevicePlanner(
                 RelayCallResult.Success(plan)
             },
             onFailure = { error ->
-                _status.value = when (status.value.phase) {
-                    Status.Phase.NOT_DOWNLOADED,
-                    Status.Phase.UNSUPPORTED,
-                    Status.Phase.DOWNLOADING,
-                    Status.Phase.LOADING -> status.value
-                    else -> Status(Status.Phase.ERROR, error.message ?: "On-device planning failed")
-                }
+                updateFailureStatus(error, "On-device planning failed")
                 RelayCallResult.Failure(error.message ?: "On-device planning failed", errorCodeFor(error), error)
             }
         )
@@ -222,14 +221,44 @@ class OnDevicePlanner(
                 RelayCallResult.Success(plannedAction)
             },
             onFailure = { error ->
-                _status.value = when (status.value.phase) {
-                    Status.Phase.NOT_DOWNLOADED,
-                    Status.Phase.UNSUPPORTED,
-                    Status.Phase.DOWNLOADING,
-                    Status.Phase.LOADING -> status.value
-                    else -> Status(Status.Phase.ERROR, error.message ?: "On-device action planning failed")
-                }
+                updateFailureStatus(error, "On-device action planning failed")
                 RelayCallResult.Failure(error.message ?: "On-device action planning failed", errorCodeFor(error), error)
+            }
+        )
+    }
+
+    suspend fun nextAgentTurn(request: AgentTurnRequest): RelayCallResult<AgentDecision> {
+        return runCatching {
+            ensureReady()
+            val promptContext = buildAgentPromptContext(request)
+            val rawResponse = engine.generateJson(
+                systemPrompt = AGENT_SYSTEM_PROMPT,
+                userPrompt = buildAgentTurnPrompt(request, promptContext),
+                jsonSchema = AGENT_DECISION_JSON_SCHEMA.toString(),
+                maxTokens = MAX_COMPLETION_TOKENS,
+                temperature = TEMPERATURE,
+                topK = TOP_K,
+                topP = TOP_P,
+                minP = MIN_P,
+                presencePenalty = PRESENCE_PENALTY
+            )
+            agentJsonParser.parseDecision(rawResponse).also { decision ->
+                if (decision.status.name == "CALL_TOOLS") {
+                    require(decision.toolCalls.isNotEmpty()) { "On-device agent requested no tools" }
+                }
+            }
+        }.fold(
+            onSuccess = { decision ->
+                logs.log(
+                    ActionLogType.PLANNER_RESULT,
+                    "On-device agent turn: ${decision.status.name}",
+                    "toolCalls=${decision.toolCalls.size}; message=${decision.message.take(120)}"
+                )
+                RelayCallResult.Success(decision)
+            },
+            onFailure = { error ->
+                updateFailureStatus(error, "On-device agent planning failed")
+                RelayCallResult.Failure(error.message ?: "On-device agent planning failed", errorCodeFor(error), error)
             }
         )
     }
@@ -244,6 +273,16 @@ class OnDevicePlanner(
             Status.Phase.LOADING -> "Privacy mode is preparing the on-device Qwen3 planner. Try again in a moment."
             Status.Phase.READY -> "The on-device Qwen3 planner is ready."
             Status.Phase.ERROR -> current.message
+        }
+    }
+
+    private fun updateFailureStatus(error: Throwable, fallbackMessage: String) {
+        _status.value = when (status.value.phase) {
+            Status.Phase.NOT_DOWNLOADED,
+            Status.Phase.UNSUPPORTED,
+            Status.Phase.DOWNLOADING,
+            Status.Phase.LOADING -> status.value
+            else -> Status(Status.Phase.ERROR, error.message ?: fallbackMessage)
         }
     }
 
@@ -279,6 +318,19 @@ class OnDevicePlanner(
             uiState = request.uiState,
             packages = request.packages,
             history = request.history,
+            targetContextTokens = LOCAL_PROMPT_CONTEXT_TOKENS
+        )
+
+    private fun buildAgentPromptContext(request: AgentTurnRequest): PromptContextBudgeter.BudgetedPromptContext =
+        PromptContextBudgeter.build(
+            goal = request.goal,
+            activeApp = request.activeApp,
+            deviceContext = request.deviceContext,
+            uiState = request.uiState,
+            packages = request.packages,
+            history = request.history,
+            lastResults = JSONArray(request.lastResults.map { it.toJson() }),
+            doNotRepeat = JSONArray(request.doNotRepeat.map { it.toJson() }),
             targetContextTokens = LOCAL_PROMPT_CONTEXT_TOKENS
         )
 
@@ -325,6 +377,32 @@ class OnDevicePlanner(
             appendLine()
             appendLine("Recent loop history JSON:")
             appendLine(recentHistory.toString())
+            appendLine()
+            appendLine("Prompt context JSON:")
+            append(promptContext.json.toString())
+        }
+    }
+
+    private fun buildAgentTurnPrompt(
+        request: AgentTurnRequest,
+        promptContext: PromptContextBudgeter.BudgetedPromptContext
+    ): String {
+        return buildString {
+            appendLine("Goal:")
+            appendLine(request.goal)
+            appendLine()
+            appendLine("Agent turn: ${request.turnIndex} of ${request.budgets.maxTurns}")
+            appendLine("Remaining tool calls: ${request.remainingToolCalls}")
+            appendLine("Return only JSON that matches the schema exactly.")
+            appendLine("Choose the single best next Android tool/action from the current visible state.")
+            appendLine("Use DONE only when the observed UI or recent tool results show the goal is complete.")
+            appendLine("Use NO_OP when no useful safe action is possible from the current state.")
+            appendLine("Use ASK_CONFIRMATION when the user must confirm or clarify before a risky next step.")
+            appendLine("Do not repeat a failed or no-delta action unless the observation changed or the strategy materially changed.")
+            appendLine("Prefer node-backed tools and visible labels over guessed coordinates.")
+            appendLine("Prefer one action per turn so DroidLM can observe fresh UI after execution.")
+            appendLine("Supported actions: ${DroidLmActionContract.supportedActionsPrompt}")
+            appendLine("Available tool specs JSON: ${toolSpecsJson()}")
             appendLine()
             appendLine("Prompt context JSON:")
             append(promptContext.json.toString())
@@ -427,6 +505,15 @@ class OnDevicePlanner(
             .put("required", JSONArray(listOf("action", "confidence", "reason", "expectedResult")))
             .put("additionalProperties", false)
 
+        private val AGENT_DECISION_JSON_SCHEMA = JSONObject()
+            .put("type", "object")
+            .put("properties", actionPropertiesSchema()
+                .put("id", boundedString(1, 80))
+                .put("confirmationPrompt", boundedString(1, 280))
+            )
+            .put("required", JSONArray(listOf("action", "confidence", "reason", "expectedResult")))
+            .put("additionalProperties", false)
+
         private const val SYSTEM_PROMPT = """
 You are DroidLM's on-device Android automation planner.
 Return only JSON that matches the requested schema exactly.
@@ -437,6 +524,23 @@ Use OPEN_APP or SWITCH_APP only with installed package names present in the prom
 Prefer node-backed or visible text actions over guessed coordinates.
 If the task is destructive, privacy-sensitive, payment-related, sharing-related, or otherwise risky, set requiresConfirmation to true and choose HIGH risk.
 Keep plans concise and practical for the current screen.
+"""
+
+        private const val AGENT_SYSTEM_PROMPT = """
+You are DroidLM's on-device Android agent runtime.
+Return only JSON that matches the requested schema exactly.
+Never use markdown, code fences, or explanatory prose.
+Choose a single best next tool/action from the visible Android state.
+Never invent package names, node ids, coordinates, visible labels, or success evidence.
+Prefer one action per turn so DroidLM can observe fresh UI before another decision.
+Use node-backed and visible-text actions before coordinate gestures.
+Use OPEN_APP or SWITCH_APP only with installed package names present in the prompt context.
+If the goal is already complete, return action DONE.
+If there is no useful safe action, return action NO_OP.
+If the user must confirm or clarify before a risky step, return action ASK_CONFIRMATION.
+If the task is destructive, privacy-sensitive, payment-related, sharing-related, installation-related, or otherwise risky, set requiresConfirmation to true and choose HIGH confidence only when the target is explicit and visible.
+Avoid repeating a failed or no-delta action unless the observation changed or the strategy materially changed.
+Keep the next step concise, grounded, and practical for the current screen.
 """
 
         private fun boundedString(minLength: Int, maxLength: Int): JSONObject = JSONObject()
@@ -452,6 +556,17 @@ Keep plans concise and practical for the current screen.
             .put("type", "integer")
             .put("minimum", minimum)
             .put("maximum", maximum)
+
+        private fun toolSpecsJson(): JSONArray = JSONArray(
+            AgentToolRegistry.defaultSpecs().map { spec ->
+                JSONObject()
+                    .put("name", spec.name)
+                    .put("risk", spec.risk.name)
+                    .put("mutating", spec.mutating)
+                    .put("requiresFreshObservationAfter", spec.requiresFreshObservationAfter)
+                    .put("maxCallsPerRun", spec.maxCallsPerRun)
+            }
+        )
 
         private fun actionPropertiesSchema(): JSONObject = JSONObject()
             .put("action", enumValues(*DroidLmActionContract.supportedActions.toTypedArray()))
