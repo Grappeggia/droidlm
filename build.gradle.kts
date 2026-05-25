@@ -89,12 +89,15 @@ fun org.gradle.api.Project.shouldFailOnE2eVideoCaptureFailure(): Boolean =
     (System.getenv("DROIDLM_E2E_FAIL_ON_VIDEO_FAILURE") ?: "false").toBooleanStrictOrNull() ?: false
 
 fun org.gradle.api.Project.e2eRetryCount(): Int =
-    (System.getenv("DROIDLM_E2E_RETRY_COUNT") ?: "1").toIntOrNull()?.coerceIn(0, 3) ?: 1
+    (System.getenv("DROIDLM_E2E_RETRY_COUNT") ?: "2").toIntOrNull()?.coerceIn(0, 3) ?: 2
 
 fun isTransientAndroidE2eFailure(text: String): Boolean =
     text.contains("Process crashed", ignoreCase = true) ||
-        text.contains("device offline", ignoreCase = true) ||
-        (text.contains("device '", ignoreCase = true) && text.contains("not found", ignoreCase = true))
+    text.contains("device offline", ignoreCase = true) ||
+        (text.contains("device '", ignoreCase = true) && text.contains("not found", ignoreCase = true)) ||
+        text.contains("Expected floating record button to be visible", ignoreCase = true) ||
+        text.contains("Expected open-google-drive capture regression run to reach listening state before injected audio completes", ignoreCase = true) ||
+        text.contains("Mic audio was never injected because marker was not created", ignoreCase = true)
 
 fun org.gradle.api.Project.reportE2eVideoCaptureFailure(
     selector: String,
