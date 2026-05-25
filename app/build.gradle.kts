@@ -228,6 +228,7 @@ android {
         }
     }
 
+    sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)
     sourceSets["main"].assets.srcDir(qwenGeneratedAssetsDir)
 
     signingConfigs {
@@ -293,6 +294,7 @@ androidComponents {
 }
 
 tasks.named("preBuild") {
+    dependsOn(unpackSherpaParakeetModel)
     dependsOn(unpackLlamaSource)
     dependsOn(stageBundledQwenModel)
 }

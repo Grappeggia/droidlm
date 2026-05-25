@@ -40,7 +40,7 @@ class SherpaOfflineSpeechRecognizer(
     private val context: Context,
     private val logs: ActionLogRepository,
     private val diagnostics: SpeechDiagnosticsLogger,
-    private val model: ModelSpec = ModelSpec.parakeetDownload(),
+    private val model: ModelSpec = ModelSpec.parakeetAsset(),
     private val httpClient: OkHttpClient = sharedHttpClient
 ) : OfflineSpeechRecognizer {
     override val providerLabel: String = "Sherpa offline English speech"
