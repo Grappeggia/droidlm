@@ -46,6 +46,17 @@ fun org.gradle.api.Project.adbOutput(adb: String, vararg arguments: String): Str
     return listOf(stdout, stderr).filter { it.isNotBlank() }.joinToString("\n")
 }
 
+fun org.gradle.api.Project.requireAdbSuccess(adb: String, vararg arguments: String): String {
+    val output = adbOutput(adb, *arguments)
+    val success = when (arguments.firstOrNull()) {
+        "install" -> output.lineSequence().any { it.trim() == "Success" }
+        "uninstall" -> output.contains("Success") || output.contains("Unknown package")
+        else -> !output.contains("Failure [") && !output.contains("Error:")
+    }
+    require(success) { "adb ${arguments.joinToString(" ")} failed: $output" }
+    return output
+}
+
 fun org.gradle.api.Project.isPackageInstalled(adb: String, packageName: String): Boolean =
     adbOutput(adb, "shell", "pm", "path", packageName).contains("package:")
 
@@ -932,8 +943,8 @@ tasks.register("connectedVoiceE2e") {
         val adbPath = project.androidAdbPath()
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
             adbPath,
             AndroidE2eSuite(
@@ -962,8 +973,8 @@ tasks.register("connectedVoskOfflineE2e") {
         val adbPath = project.androidAdbPath()
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
             adbPath,
             AndroidE2eSuite(
@@ -989,8 +1000,8 @@ tasks.register("connectedDebugLogUploadE2e") {
         uploadUrl?.takeIf { it.isNotBlank() }?.let { instrumentationArgs["debugLogUploadUrl"] = it }
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         runInstrumentedSuiteWithVideos(
             adbPath,
             AndroidE2eSuite(
@@ -1043,8 +1054,8 @@ tasks.register("connectedHoverMicAudioE2e") {
         project.checkEmulatorGrpcStatus(audioFile)
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         val instrumentationArgs = mutableMapOf("preferOfflineSpeechRecognition" to "true")
         project.localEnvValue("OPENAI_API_KEY")?.let { key ->
             instrumentationArgs["openAiApiKey"] = key
@@ -1084,8 +1095,8 @@ tasks.register("connectedHoverMicCaptureRegressionE2e") {
         project.checkEmulatorGrpcStatus(audioFile)
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         val instrumentationArgs = mutableMapOf(
             "preferOfflineSpeechRecognition" to "true",
             "forceVoskOfflineSpeechRecognition" to "true"
@@ -1145,8 +1156,8 @@ tasks.register("connectedEmulatorMicProbeE2e") {
         project.checkEmulatorGrpcStatus(audioFile)
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         project.runMicInjectedInstrumentedTest(
             adb = adbPath,
             suite = AndroidE2eSuite(
@@ -1176,8 +1187,8 @@ tasks.register("connectedOnDeviceAudioSourceE2e") {
         project.convertAudioToPcm(wavFile, pcmFile)
         project.adbOutput(adbPath, "uninstall", droidLmDebugPackageName)
         project.adbOutput(adbPath, "uninstall", droidLmDebugTestPackageName)
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
-        project.adbOutput(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/debug/app-debug.apk")
+        project.requireAdbSuccess(adbPath, "install", "-r", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
         project.adbOutput(adbPath, "push", pcmFile.absolutePath, tmpAudioPath)
         project.adbOutput(adbPath, "shell", "run-as", droidLmDebugPackageName, "mkdir", "-p", "files")
         project.adbOutput(adbPath, "shell", "run-as", droidLmDebugPackageName, "cp", tmpAudioPath, "files/droidlm-open-google-drive-16k-mono.pcm")
