@@ -184,7 +184,7 @@ updates = {
     "hw.audioInput": "yes",
     "hw.audioOutput": "yes",
     "showDeviceFrame": "no",
-    "disk.dataPartition.size": "8G",
+    "disk.dataPartition.size": "16G",
     "fastboot.forceColdBoot": "yes",
 }
 lines = config_file.read_text().splitlines()
@@ -257,7 +257,7 @@ boot_profile() {
     log "$name is already visible as $serial"
   else
     log "Booting $name as $serial; log: $log_file"
-    "$EMULATOR" -avd "$name" -port "$port" -grpc "$grpc_port" -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect >"$log_file" 2>&1 &
+    "$EMULATOR" -avd "$name" -port "$port" -grpc "$grpc_port" -partition-size 16384 -wipe-data -no-window -no-snapshot -no-boot-anim -gpu swiftshader_indirect >"$log_file" 2>&1 &
   fi
 
   "$ADB" -s "$serial" wait-for-device
