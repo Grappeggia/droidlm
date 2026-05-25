@@ -980,14 +980,14 @@ private fun PrivacyModelDialog(
                 Text("Status: ${plannerStatusLabel(plannerStatus)}")
                 plannerKeySetup?.message?.takeIf { it.isNotBlank() }?.let { Text(it, color = DroidLmColors.TextMuted) }
                 Text(
-                    "This build includes a bundled Qwen3 1.7B package. Installing it into app storage uses about 1.3 GB.",
+                    "Privacy mode uses a local Qwen3 1.7B model on supported flagship phones. Download size is about 1.8 GB.",
                     color = DroidLmColors.TextMuted
                 )
             }
         },
         confirmButton = {
             when {
-                plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Install bundled Qwen3") }
+                plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Download Qwen3") }
                 plannerStatusCanPrepare(plannerStatus) -> Button(onClick = onPrepare) { Text("Prepare") }
                 else -> Button(onClick = onDismiss) { Text("Close") }
             }
@@ -1010,12 +1010,12 @@ private fun PrivacyPlannerSettingsCard(
     Text("Status: ${plannerStatusLabel(plannerStatus)}")
     plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
     Text(
-        "Privacy mode uses a bundled local Qwen3 1.7B planner on supported flagship phones.",
+        "Privacy mode uses a local Qwen3 1.7B planner on supported flagship phones.",
         color = DroidLmColors.TextMuted
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         when {
-            plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Install bundled Qwen3") }
+            plannerStatusShowsDownload(plannerStatus) -> Button(onClick = onDownload) { Text("Download Qwen3") }
             plannerStatusCanPrepare(plannerStatus) -> Button(onClick = onPrepare) { Text("Prepare") }
         }
         OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
@@ -1095,13 +1095,13 @@ private fun AssistantSettingsSection(
         Text("Privacy", fontWeight = FontWeight.SemiBold)
         ToggleRow("Privacy mode", settings.privacyModeEnabled, viewModel::updatePrivacyMode)
         Text(
-            "When enabled, DroidLM keeps advanced planning fully on-device with the bundled Qwen3 1.7B model on supported flagship phones.",
+            "When enabled, DroidLM keeps advanced planning fully on-device with a local Qwen3 1.7B model on supported flagship phones.",
             color = DroidLmColors.TextMuted
         )
         Text("Local planner: ${plannerStatusLabel(onDevicePlannerStatus)}", color = DroidLmColors.TextMuted)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (plannerStatusShowsDownload(onDevicePlannerStatus)) {
-                OutlinedButton(onClick = viewModel::downloadPrivacyModel) { Text("Install bundled Qwen3") }
+                OutlinedButton(onClick = viewModel::downloadPrivacyModel) { Text("Download Qwen3") }
             }
             if (plannerStatusCanPrepare(onDevicePlannerStatus)) {
                 OutlinedButton(onClick = viewModel::preparePrivacyModel) { Text("Prepare") }
