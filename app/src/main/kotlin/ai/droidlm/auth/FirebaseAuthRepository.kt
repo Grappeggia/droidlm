@@ -197,7 +197,7 @@ class FirebaseAuthRepository(
                 configured = false,
                 ready = true,
                 loading = false,
-                message = "Firebase Auth is not configured. Add app/google-services.json to enable sign-in."
+                message = "Firebase Auth is not configured. Add a matching app/google-services.json to enable sign-in."
             )
         } else {
             AuthState(configured = true, ready = true, loading = false)

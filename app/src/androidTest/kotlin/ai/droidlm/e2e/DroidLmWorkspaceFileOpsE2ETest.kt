@@ -424,8 +424,6 @@ class DroidLmWorkspaceFileOpsE2ETest {
     private fun grantOverlayPermissionForEmulator() {
         executeShell("appops set ${targetContext.packageName} SYSTEM_ALERT_WINDOW allow")
         executeShell("cmd appops set ${targetContext.packageName} SYSTEM_ALERT_WINDOW allow")
-        executeShell("appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
-        executeShell("cmd appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
     }
 
     private fun enableAccessibilityServiceForEmulator() {

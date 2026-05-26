@@ -714,7 +714,7 @@ class RelayClient(
     private fun normalizeBaseUrl(baseUrl: String): String? {
         val trimmed = baseUrl.trim().trimEnd('/')
         if (trimmed.isBlank()) return null
-        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "http://$trimmed"
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
     }
 
     private fun RelayPlanRequest.toJson(): JSONObject = JSONObject()

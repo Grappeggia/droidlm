@@ -81,9 +81,17 @@ class DroidLmViewModel(
             pendingDebugBuild = null
             _debugUpdateState.value = DebugUpdateUiState(
                 phase = DebugUpdatePhase.CHECKING,
-                statusMessage = "Checking GitHub and downloading the latest debug build..."
+                statusMessage = "Checking GitHub for the latest debug build..."
             )
-            when (val result = deps.debugBuildUpdater.prepareLatestInstall()) {
+            when (val result = deps.debugBuildUpdater.prepareLatestInstall { progress ->
+                _debugUpdateState.value = DebugUpdateUiState(
+                    phase = DebugUpdatePhase.DOWNLOADING,
+                    statusMessage = "Downloading the latest debug build...",
+                    downloadedBytes = progress.downloadedBytes,
+                    totalBytes = progress.totalBytes,
+                    progressFraction = progress.progressFraction
+                )
+            }) {
                 is DebugBuildPreparationResult.ReadyToInstall -> continueDebugBuildInstall(result.build)
                 is DebugBuildPreparationResult.AlreadyLatest -> {
                     _debugUpdateState.value = DebugUpdateUiState(

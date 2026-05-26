@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "118751112955",
+    "project_id": "droidlm-1ef6c",
+    "storage_bucket": "droidlm-1ef6c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:118751112955:android:bb32051d7d92d55aac0a5e",
+        "android_client_info": {
+          "package_name": "com.droidlm.debug"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "118751112955-na75qjj7qfvr8l8s46crmi3d3drt097i.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.droidlm.debug",
+            "certificate_hash": "eed1a5333fa48a4eec2a3eaa8ac9465b6c780020"
+          }
+        },
+        {
+          "client_id": "118751112955-lqpl8llovtffk4u0604e79tee23m6k37.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBcwq4QsT-d7IeOC7tJr3-BubemekXgx0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "118751112955-lqpl8llovtffk4u0604e79tee23m6k37.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

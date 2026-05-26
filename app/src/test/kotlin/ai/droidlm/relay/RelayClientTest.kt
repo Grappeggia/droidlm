@@ -41,7 +41,7 @@ class RelayClientTest {
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
                 val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
-                    .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                    .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 assertEquals("debug-logs/synthetic/test.zip", result.value.objectName)
                 val request = server.takeRequest()
@@ -50,7 +50,7 @@ class RelayClientTest {
                 val body = request.body.readUtf8()
                 assertTrue(body.contains("name=\"logs\""))
                 assertTrue(body.contains("name=\"appPackage\""))
-                assertTrue(body.contains("com.studionext54.droidlm.debug"))
+                assertTrue(body.contains("com.droidlm.debug"))
             } finally {
                 bundle.delete()
             }
@@ -66,7 +66,7 @@ class RelayClientTest {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
                 val directUrl = server.url("/upload-debug-logs").toString()
                 val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
-                    .uploadDebugLogsToUrl(directUrl, bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                    .uploadDebugLogsToUrl(directUrl, bundle, "com.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 val request = server.takeRequest()
                 assertEquals("/upload-debug-logs", request.path)
@@ -88,7 +88,7 @@ class RelayClientTest {
                     firebaseIdTokenProvider = {
                         FirebaseBearerTokenResult.Unavailable("Sign in before uploading debug logs", "AUTH_TOKEN_MISSING")
                     }
-                ).uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.studionext54.droidlm.debug", "0.1-debug")
+                ).uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.droidlm.debug", "0.1-debug")
                 assertTrue(result is RelayCallResult.Failure)
                 result as RelayCallResult.Failure
                 assertEquals("AUTH_TOKEN_MISSING", result.errorCode)

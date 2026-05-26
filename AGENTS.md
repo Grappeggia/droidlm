@@ -48,8 +48,8 @@
 - Prod releases are stable releases and use tags in the form `v<version>`, for example `v0.1.12`.
 - Debug release APK assets must be named `DroidLM-<version>-debug.<iteration>-debug.apk`.
 - Prod release APK assets must be named `DroidLM-<version>-release.apk`.
-- Debug builds use the `debug` Android build type and install as `com.studionext54.droidlm.debug` with a `-debug` version name suffix.
-- Prod builds use the `release` Android build type and install as `com.studionext54.droidlm`.
+- Debug builds use the `debug` Android build type and install as `com.droidlm.debug` with a `-debug` version name suffix.
+- Prod builds use the `release` Android build type and install as `com.droidlm`.
 - Prefer `scripts/release-debug.sh <version> [iteration]` for debug prereleases.
 - Prefer `scripts/release-prod.sh <version>` for prod releases.
 - Prod release signing is configured only from environment variables: `DROIDLM_RELEASE_STORE_FILE`, `DROIDLM_RELEASE_STORE_PASSWORD`, `DROIDLM_RELEASE_KEY_ALIAS`, and `DROIDLM_RELEASE_KEY_PASSWORD`.

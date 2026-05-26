@@ -9,6 +9,7 @@ import ai.droidlm.logs.ActionLogType
 import ai.droidlm.runtime.AccessibilityRuntime
 import ai.droidlm.textedit.EditableTarget
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
@@ -37,9 +38,7 @@ class AccessibilityPortalController(
 
     @Suppress("DEPRECATION")
     override suspend fun listPackages(): List<AppPackage> = withContext(Dispatchers.Default) {
-        context.packageManager.getInstalledApplications(0)
-            .map { info -> info.toAppPackage() }
-            .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
+        queryLauncherPackages()
     }
 
     override suspend fun openApp(packageName: String): ActionResult = withContext(Dispatchers.Main) {
@@ -207,18 +206,30 @@ class AccessibilityPortalController(
         )
     }
 
-    private fun ApplicationInfo.toAppPackage(): AppPackage {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-        val launchActivity = launchIntent?.component?.flattenToShortString()
-            ?: launchIntent?.resolveActivity(context.packageManager)?.flattenToShortString()
-        return AppPackage(
-            packageName = packageName,
-            label = runCatching { context.packageManager.getApplicationLabel(this).toString() }.getOrNull(),
-            isSystemApp = (flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-            enabled = enabled,
-            launchable = launchIntent != null,
-            launchActivity = launchActivity
-        )
+    @Suppress("DEPRECATION")
+    private fun queryLauncherPackages(): List<AppPackage> {
+        val packageManager = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(launcherIntent, 0)
+            .asSequence()
+            .mapNotNull { resolve ->
+                val activityInfo = resolve.activityInfo ?: return@mapNotNull null
+                val appInfo = activityInfo.applicationInfo ?: return@mapNotNull null
+                val packageName = activityInfo.packageName ?: appInfo.packageName ?: return@mapNotNull null
+                val activityName = activityInfo.name ?: return@mapNotNull null
+                AppPackage(
+                    packageName = packageName,
+                    label = runCatching { packageManager.getApplicationLabel(appInfo).toString() }.getOrNull()
+                        ?: resolve.loadLabel(packageManager)?.toString(),
+                    isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                    enabled = appInfo.enabled && activityInfo.enabled,
+                    launchable = true,
+                    launchActivity = ComponentName(packageName, activityName).flattenToShortString()
+                )
+            }
+            .distinctBy { it.packageName }
+            .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
+            .toList()
     }
 
     private suspend fun withService(block: suspend (AccessibilityGateway) -> ActionResult): ActionResult =

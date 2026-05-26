@@ -4,6 +4,8 @@ import ai.droidlm.relay.ActiveApp
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 import android.content.Context
+import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -59,21 +61,27 @@ class AppInventoryRepository(
     @Suppress("DEPRECATION")
     private fun queryInstalledApps(): List<AppPackage> {
         val packageManager = context.packageManager
-        return packageManager.getInstalledApplications(0)
-            .map { info ->
-                val launchIntent = packageManager.getLaunchIntentForPackage(info.packageName)
-                val launchActivity = launchIntent?.component?.flattenToShortString()
-                    ?: launchIntent?.resolveActivity(packageManager)?.flattenToShortString()
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(launcherIntent, 0)
+            .asSequence()
+            .mapNotNull { resolve ->
+                val activityInfo = resolve.activityInfo ?: return@mapNotNull null
+                val appInfo = activityInfo.applicationInfo ?: return@mapNotNull null
+                val packageName = activityInfo.packageName ?: appInfo.packageName ?: return@mapNotNull null
+                val activityName = activityInfo.name ?: return@mapNotNull null
                 AppPackage(
-                    packageName = info.packageName,
-                    label = runCatching { packageManager.getApplicationLabel(info).toString() }.getOrNull(),
-                    isSystemApp = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-                    enabled = info.enabled,
-                    launchable = launchIntent != null,
-                    launchActivity = launchActivity
+                    packageName = packageName,
+                    label = runCatching { packageManager.getApplicationLabel(appInfo).toString() }.getOrNull()
+                        ?: resolve.loadLabel(packageManager)?.toString(),
+                    isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                    enabled = appInfo.enabled && activityInfo.enabled,
+                    launchable = true,
+                    launchActivity = ComponentName(packageName, activityName).flattenToShortString()
                 )
             }
+            .distinctBy { it.packageName }
             .sortedWith(compareBy<AppPackage> { it.label?.lowercase().orEmpty() }.thenBy { it.packageName })
+            .toList()
     }
 
     private fun parseApps(json: String): List<AppPackage> = runCatching {

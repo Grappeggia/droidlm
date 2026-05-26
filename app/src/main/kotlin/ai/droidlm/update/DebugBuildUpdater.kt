@@ -1,6 +1,8 @@
 package ai.droidlm.update
 
 import ai.droidlm.BuildConfig
+import ai.droidlm.download.DownloadProgress
+import ai.droidlm.download.copyStreamWithProgress
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -54,6 +56,7 @@ internal data class GitHubDebugRelease(
     val tagName: String,
     val assetName: String,
     val assetUrl: String,
+    val assetSizeBytes: Long?,
     val publishedAt: String?,
     val version: DebugTagVersion
 )
@@ -99,7 +102,7 @@ class DebugBuildUpdater(
     val isSupported: Boolean
         get() = BuildConfig.DEBUG
 
-    suspend fun prepareLatestInstall(): DebugBuildPreparationResult = withContext(Dispatchers.IO) {
+    internal suspend fun prepareLatestInstall(onDownloadProgress: ((DownloadProgress) -> Unit)? = null): DebugBuildPreparationResult = withContext(Dispatchers.IO) {
         if (!isSupported) {
             return@withContext DebugBuildPreparationResult.Failure(
                 message = "Debug build upgrades are only available in debug builds.",
@@ -116,7 +119,7 @@ class DebugBuildUpdater(
             )
         }
 
-        val apkFile = when (val download = downloadReleaseApk(release)) {
+        val apkFile = when (val download = downloadReleaseApk(release, onDownloadProgress)) {
             is DownloadResult.Success -> download.file
             is DownloadResult.Failure -> return@withContext DebugBuildPreparationResult.Failure(
                 message = download.message,
@@ -244,7 +247,10 @@ class DebugBuildUpdater(
         }
     }
 
-    private fun downloadReleaseApk(release: GitHubDebugRelease): DownloadResult {
+    private fun downloadReleaseApk(
+        release: GitHubDebugRelease,
+        onDownloadProgress: ((DownloadProgress) -> Unit)? = null
+    ): DownloadResult {
         val targetDirectory = File(context.cacheDir, CACHE_DIRECTORY_NAME).apply { mkdirs() }
         val targetFile = File(targetDirectory, release.assetName)
         val tempFile = File(targetDirectory, "${release.assetName}.part")
@@ -272,8 +278,16 @@ class DebugBuildUpdater(
                         message = "GitHub returned an empty debug APK response.",
                         errorCode = "EMPTY_DOWNLOAD"
                     )
+                    val totalBytes = body.contentLength().takeIf { it > 0L } ?: release.assetSizeBytes
                     tempFile.outputStream().use { output ->
-                        body.byteStream().use { input -> input.copyTo(output) }
+                        body.byteStream().use { input ->
+                            copyStreamWithProgress(
+                                input = input,
+                                output = output,
+                                totalBytes = totalBytes,
+                                onProgress = onDownloadProgress
+                            )
+                        }
                     }
                     if (!tempFile.renameTo(targetFile)) {
                         tempFile.copyTo(targetFile, overwrite = true)
@@ -398,6 +412,7 @@ private fun JSONObject.toDebugRelease(): GitHubDebugRelease? {
         tagName = tagName,
         assetName = asset.optString("name"),
         assetUrl = assetUrl,
+        assetSizeBytes = asset.optLong("size").takeIf { it > 0L },
         publishedAt = optString("published_at").takeIf { it.isNotBlank() },
         version = version
     )

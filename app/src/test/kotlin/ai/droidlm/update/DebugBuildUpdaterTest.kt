@@ -37,7 +37,7 @@ class DebugBuildUpdaterTest {
                 "prerelease": true,
                 "published_at": "2026-05-11T00:00:00Z",
                 "assets": [
-                  {"name": "DroidLM-0.1.27-debug.2-debug.apk", "browser_download_url": "https://example.com/v0.1.27-debug.2.apk"}
+                  {"name": "DroidLM-0.1.27-debug.2-debug.apk", "browser_download_url": "https://example.com/v0.1.27-debug.2.apk", "size": 111}
                 ]
               },
               {
@@ -45,7 +45,7 @@ class DebugBuildUpdaterTest {
                 "prerelease": true,
                 "published_at": "2026-05-12T00:00:00Z",
                 "assets": [
-                  {"name": "DroidLM-0.1.27-debug.10-debug.apk", "browser_download_url": "https://example.com/v0.1.27-debug.10.apk"}
+                  {"name": "DroidLM-0.1.27-debug.10-debug.apk", "browser_download_url": "https://example.com/v0.1.27-debug.10.apk", "size": 222}
                 ]
               },
               {
@@ -53,7 +53,7 @@ class DebugBuildUpdaterTest {
                 "prerelease": true,
                 "published_at": "2026-05-13T00:00:00Z",
                 "assets": [
-                  {"name": "DroidLM-0.1.27-11-debug.apk", "browser_download_url": "https://example.com/v0.1.27-11.apk"}
+                  {"name": "DroidLM-0.1.27-11-debug.apk", "browser_download_url": "https://example.com/v0.1.27-11.apk", "size": 333}
                 ]
               },
               {
@@ -61,7 +61,7 @@ class DebugBuildUpdaterTest {
                 "prerelease": false,
                 "published_at": "2026-05-12T00:00:00Z",
                 "assets": [
-                  {"name": "DroidLM-0.1.27-release.apk", "browser_download_url": "https://example.com/v0.1.27-release.apk"}
+                  {"name": "DroidLM-0.1.27-release.apk", "browser_download_url": "https://example.com/v0.1.27-release.apk", "size": 444}
                 ]
               }
             ]
@@ -72,6 +72,7 @@ class DebugBuildUpdaterTest {
         assertEquals("v0.1.27-11", release?.tagName)
         assertEquals("DroidLM-0.1.27-11-debug.apk", release?.assetName)
         assertEquals("https://example.com/v0.1.27-11.apk", release?.assetUrl)
+        assertEquals(333L, release?.assetSizeBytes)
     }
 
     @Test fun latestDebugReleaseFromJsonFallsBackToAnyApkOnDebugPrerelease() {

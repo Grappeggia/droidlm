@@ -26,7 +26,7 @@ val googleWorkspaceApps = listOf(
     WorkspaceApp("Google Play Store", "com.android.vending", installableFromPlay = false)
 )
 
-val droidLmPackageName = "com.studionext54.droidlm"
+val droidLmPackageName = "com.droidlm"
 val droidLmDebugPackageName = "$droidLmPackageName.debug"
 val droidLmDebugTestPackageName = "$droidLmDebugPackageName.test"
 

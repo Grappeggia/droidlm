@@ -4,6 +4,8 @@ import ai.droidlm.agent.AgentDecision
 import ai.droidlm.agent.AgentJsonParser
 import ai.droidlm.agent.AgentToolRegistry
 import ai.droidlm.agent.AgentTurnRequest
+import ai.droidlm.download.copyStreamWithProgress
+import ai.droidlm.download.formatDownloadProgress
 import ai.droidlm.intent.DroidLmActionContract
 import ai.droidlm.intent.displayName
 import ai.droidlm.logs.ActionLogRepository
@@ -53,6 +55,13 @@ class OnDevicePlanner(
         val totalBytes: Long? = null,
         val progressFraction: Float? = null
     ) {
+        val progressLabel: String?
+            get() = if (downloadedBytes != null || totalBytes != null) {
+                formatDownloadProgress(downloadedBytes = downloadedBytes ?: 0L, totalBytes = totalBytes)
+            } else {
+                null
+            }
+
         enum class Phase {
             UNSUPPORTED,
             NOT_DOWNLOADED,
@@ -123,26 +132,25 @@ class OnDevicePlanner(
                 if (!response.isSuccessful) throw IOException("Could not download the local Qwen3 model: HTTP ${response.code}")
                 val body = response.body ?: throw IOException("Could not download the local Qwen3 model: empty response body")
                 val totalBytes = body.contentLength().takeIf { it > 0 } ?: MODEL_BYTES
-                _status.value = Status(Status.Phase.DOWNLOADING, "Downloading the local Qwen3 model", 0L, totalBytes, 0f)
+                _status.value = Status(Status.Phase.DOWNLOADING, "Downloading the local Qwen3 model...", 0L, totalBytes, 0f)
                 val digest = MessageDigest.getInstance("SHA-256")
-                var downloaded = 0L
                 body.byteStream().use { input ->
                     tempFile.outputStream().use { output ->
-                        val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            digest.update(buffer, 0, read)
-                            downloaded += read.toLong()
-                            _status.value = Status(
-                                phase = Status.Phase.DOWNLOADING,
-                                message = formatProgressMessage(downloaded, totalBytes),
-                                downloadedBytes = downloaded,
-                                totalBytes = totalBytes,
-                                progressFraction = if (totalBytes > 0) downloaded.toFloat() / totalBytes.toFloat() else null
-                            )
-                        }
+                        copyStreamWithProgress(
+                            input = input,
+                            output = output,
+                            totalBytes = totalBytes,
+                            onChunk = { buffer, bytesRead -> digest.update(buffer, 0, bytesRead) },
+                            onProgress = { progress ->
+                                _status.value = Status(
+                                    phase = Status.Phase.DOWNLOADING,
+                                    message = "Downloading the local Qwen3 model...",
+                                    downloadedBytes = progress.downloadedBytes,
+                                    totalBytes = progress.totalBytes,
+                                    progressFraction = progress.progressFraction
+                                )
+                            }
+                        )
                     }
                 }
                 val actualSha = digest.digest().joinToString(separator = "") { byte -> "%02x".format(Locale.US, byte) }
@@ -440,12 +448,6 @@ class OnDevicePlanner(
         }
     }
 
-    private fun formatProgressMessage(downloadedBytes: Long, totalBytes: Long): String {
-        if (totalBytes <= 0L) return "Downloading the local Qwen3 model"
-        val percent = ((downloadedBytes.toDouble() / totalBytes.toDouble()) * 100.0).toInt().coerceIn(0, 100)
-        return "Downloading the local Qwen3 model ($percent%)"
-    }
-
     private fun errorCodeFor(error: Throwable): String = when (error.message.orEmpty()) {
         "The on-device Qwen3 planner is not downloaded yet" -> ERROR_MODEL_MISSING
         else -> when (status.value.phase) {
@@ -465,7 +467,6 @@ class OnDevicePlanner(
         private const val MODEL_URL = "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=1"
         private const val MODEL_SHA256 = "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a"
         private const val MODEL_BYTES = 1_834_426_016L
-        private const val DOWNLOAD_BUFFER_BYTES = 256 * 1024
         private const val MIN_TOTAL_RAM_BYTES = 10L * 1024L * 1024L * 1024L
         private const val MIN_FREE_STORAGE_BYTES = 4_500_000_000L
         private const val LOCAL_CONTEXT_SIZE = 4_096

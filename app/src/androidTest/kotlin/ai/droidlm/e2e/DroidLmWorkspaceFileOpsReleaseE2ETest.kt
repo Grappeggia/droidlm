@@ -142,10 +142,7 @@ class DroidLmWorkspaceFileOpsReleaseE2ETest {
     }
 
 
-    private fun grantWorkspaceFilePermissions() {
-        executeShell("appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
-        executeShell("cmd appops set ${targetContext.packageName} MANAGE_EXTERNAL_STORAGE allow")
-    }
+    private fun grantWorkspaceFilePermissions() = Unit
 
     private fun fileUri(file: File): String = "file://${file.absolutePath}"
 

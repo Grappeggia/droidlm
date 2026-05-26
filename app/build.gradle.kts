@@ -9,9 +9,15 @@ plugins {
     id("com.google.gms.google-services")
 }
 
-val hasGoogleServicesConfig = file("google-services.json").isFile
-
-
+val baseApplicationId = "com.droidlm"
+val debugApplicationId = "$baseApplicationId.debug"
+val googleServicesFile = file("google-services.json")
+val googleServicesText = googleServicesFile.takeIf { it.isFile }?.readText()
+val hasMatchingGoogleServicesConfig = googleServicesText != null && listOf(baseApplicationId, debugApplicationId)
+    .any { packageName -> googleServicesText.contains("\"package_name\": \"$packageName\"") }
+if (googleServicesText != null && !hasMatchingGoogleServicesConfig) {
+    logger.warn("Ignoring app/google-services.json because it does not match $baseApplicationId or $debugApplicationId.")
+}
 val baseVersionCode = 29
 val baseVersionName = "0.1.28"
 
@@ -142,11 +148,11 @@ android {
     ndkVersion = "27.1.12297006"
 
     defaultConfig {
-        applicationId = "com.studionext54.droidlm"
+        applicationId = baseApplicationId
         minSdk = 29
         targetSdk = 36
         versionCode = baseVersionCode
-        buildConfigField("boolean", "FIREBASE_AUTH_CONFIGURED", hasGoogleServicesConfig.toString())
+        buildConfigField("boolean", "FIREBASE_AUTH_CONFIGURED", hasMatchingGoogleServicesConfig.toString())
         versionName = baseVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

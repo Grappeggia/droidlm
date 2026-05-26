@@ -49,6 +49,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -978,6 +979,10 @@ private fun PrivacyModelDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Status: ${plannerStatusLabel(plannerStatus)}")
+                DownloadProgressDetails(
+                    progressFraction = plannerStatus.progressFraction,
+                    progressLabel = plannerStatus.progressLabel
+                )
                 plannerKeySetup?.message?.takeIf { it.isNotBlank() }?.let { Text(it, color = DroidLmColors.TextMuted) }
                 Text(
                     "Privacy mode uses a local Qwen3 1.7B model on supported flagship phones. Download size is about 1.8 GB.",
@@ -1008,6 +1013,10 @@ private fun PrivacyPlannerSettingsCard(
 ) = DroidCard(container = DroidLmColors.WarningSurface) {
     Text("On-device planner", fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, fontSize = 20.sp)
     Text("Status: ${plannerStatusLabel(plannerStatus)}")
+    DownloadProgressDetails(
+        progressFraction = plannerStatus.progressFraction,
+        progressLabel = plannerStatus.progressLabel
+    )
     plannerKeySetup?.let { Text(it.message, color = DroidLmColors.TextMuted) }
     Text(
         "Privacy mode uses a local Qwen3 1.7B planner on supported flagship phones.",
@@ -1023,6 +1032,25 @@ private fun PrivacyPlannerSettingsCard(
 }
 
 private fun plannerStatusLabel(status: OnDevicePlanner.Status): String = status.message
+
+@Composable
+private fun DownloadProgressDetails(
+    progressFraction: Float?,
+    progressLabel: String?,
+    textColor: Color = DroidLmColors.TextMuted
+) {
+    if (progressFraction == null && progressLabel == null) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        progressFraction?.let { fraction ->
+            LinearProgressIndicator(
+                progress = { fraction.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        progressLabel?.let { Text(it, color = textColor) }
+    }
+}
 
 private fun plannerStatusShowsDownload(status: OnDevicePlanner.Status): Boolean = when (status.phase) {
     OnDevicePlanner.Status.Phase.NOT_DOWNLOADED,
@@ -1099,6 +1127,11 @@ private fun AssistantSettingsSection(
             color = DroidLmColors.TextMuted
         )
         Text("Local planner: ${plannerStatusLabel(onDevicePlannerStatus)}", color = DroidLmColors.TextMuted)
+        DownloadProgressDetails(
+            progressFraction = onDevicePlannerStatus.progressFraction,
+            progressLabel = onDevicePlannerStatus.progressLabel,
+            textColor = DroidLmColors.TextMuted
+        )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (plannerStatusShowsDownload(onDevicePlannerStatus)) {
                 OutlinedButton(onClick = viewModel::downloadPrivacyModel) { Text("Download Qwen3") }
@@ -1181,12 +1214,20 @@ private fun DebugBuildUpgradeSection(
         state.isBusy -> "Working..."
         else -> "Upgrade to Latest Debug Build"
     }
-    Button(
-        enabled = !state.isBusy,
-        onClick = if (state.requiresInstallPermission) onAllowInstall else onUpgrade,
-        colors = ButtonDefaults.buttonColors(containerColor = DroidLmColors.Accent)
-    ) {
-        Text(buttonLabel)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            enabled = !state.isBusy,
+            onClick = if (state.requiresInstallPermission) onAllowInstall else onUpgrade,
+            colors = ButtonDefaults.buttonColors(containerColor = DroidLmColors.Accent)
+        ) {
+            Text(buttonLabel)
+        }
+        state.statusMessage?.let { Text(it, color = DroidLmColors.TextMuted) }
+        DownloadProgressDetails(
+            progressFraction = state.progressFraction,
+            progressLabel = state.progressLabel,
+            textColor = DroidLmColors.TextMuted
+        )
     }
 }
 
