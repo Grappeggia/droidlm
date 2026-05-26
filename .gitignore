@@ -1,6 +1,7 @@
 .gradle/
 build/
 **/build/
+app/.cxx/
 local.properties
 *.iml
 .idea/
@@ -26,3 +27,4 @@ app/src/androidTest/assets/private-*
 .private-e2e/
 
 app/google-services.json
+sherpaParakeetPack/src/main/assets/

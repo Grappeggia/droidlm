@@ -16,6 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "DroidLM"
 include(":app")
+include(":sherpaParakeetPack")
 include(":driveStub")
 include(":docsStub")
 include(":sheetsStub")

@@ -62,13 +62,6 @@ fun sha256(file: File): String {
     return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
 }
 
-val sherpaParakeetModelName = "sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming"
-val sherpaParakeetArchiveName = "$sherpaParakeetModelName.tar.bz2"
-val sherpaParakeetUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$sherpaParakeetArchiveName"
-val sherpaParakeetSha256 = "99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e1f839a76e150"
-val sherpaDownloadDir = layout.buildDirectory.dir("downloads/sherpa")
-val sherpaGeneratedAssetsDir = layout.buildDirectory.dir("generated/sherpaAssets")
-val sherpaParakeetArchive = sherpaDownloadDir.map { it.file(sherpaParakeetArchiveName) }
 val llamaSourceCommit = "549b9d84330c327e6791fa812a7d60c0cf63572e"
 val llamaSourceArchiveName = "llama.cpp-$llamaSourceCommit.tar.gz"
 val llamaSourceUrl = "https://github.com/ggml-org/llama.cpp/archive/$llamaSourceCommit.tar.gz"
@@ -77,32 +70,10 @@ val llamaDownloadDir = layout.buildDirectory.dir("downloads/llama")
 val llamaGeneratedSourceDir = layout.buildDirectory.dir("generated/llamaSource")
 val llamaSourceArchive = llamaDownloadDir.map { it.file(llamaSourceArchiveName) }
 val llamaSourceDir = llamaGeneratedSourceDir.map { it.dir("llama.cpp-$llamaSourceCommit") }
-val downloadSherpaParakeetModel by tasks.registering {
-    outputs.file(sherpaParakeetArchive)
-    doLast {
-        val archive = sherpaParakeetArchive.get().asFile
-        if (archive.isFile && sha256(archive).equals(sherpaParakeetSha256, ignoreCase = true)) return@doLast
-        archive.parentFile.mkdirs()
-        val temp = File(archive.parentFile, "${archive.name}.tmp")
-        temp.delete()
-        URI(sherpaParakeetUrl).toURL().openStream().use { input ->
-            temp.outputStream().use { output -> input.copyTo(output) }
-        }
-        val actualSha256 = sha256(temp)
-        require(actualSha256.equals(sherpaParakeetSha256, ignoreCase = true)) {
-            temp.delete()
-            "Downloaded Sherpa Parakeet model checksum mismatch"
-        }
-        archive.delete()
-        require(temp.renameTo(archive)) { "Could not move downloaded Sherpa Parakeet archive" }
-    }
-}
 
-val unpackSherpaParakeetModel by tasks.registering(Sync::class) {
-    dependsOn(downloadSherpaParakeetModel)
-    from(tarTree(resources.bzip2(sherpaParakeetArchive)))
-    into(sherpaGeneratedAssetsDir.map { it.dir("sherpa") })
-}
+fun buildConfigString(value: String): String = value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
 
 val downloadLlamaSource by tasks.registering {
     outputs.file(llamaSourceArchive)
@@ -131,9 +102,6 @@ val unpackLlamaSource by tasks.registering(Sync::class) {
     into(llamaGeneratedSourceDir)
 }
 
-fun buildConfigString(value: String): String = value
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"")
 
 val hasReleaseSigning = listOf(
     releaseStoreFile,
@@ -146,6 +114,7 @@ android {
     namespace = "ai.droidlm"
     compileSdk = 36
     ndkVersion = "27.1.12297006"
+    assetPacks += listOf(":sherpaParakeetPack")
 
     defaultConfig {
         applicationId = baseApplicationId
@@ -169,7 +138,6 @@ android {
         }
     }
 
-    sourceSets["main"].assets.srcDir(sherpaGeneratedAssetsDir)
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -234,7 +202,6 @@ androidComponents {
 }
 
 tasks.named("preBuild") {
-    dependsOn(unpackSherpaParakeetModel)
     dependsOn(unpackLlamaSource)
 }
 
