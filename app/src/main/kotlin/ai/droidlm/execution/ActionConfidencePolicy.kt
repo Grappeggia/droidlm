@@ -68,6 +68,7 @@ internal object ActionConfidencePolicy {
         is DroidLmAction.FocusEditable,
         is DroidLmAction.VerifyTextChange,
         DroidLmAction.Done -> ToolRisk.READ_ONLY
+        is DroidLmAction.ArtifactToolAction -> artifactToolRisk(action)
 
         is DroidLmAction.OpenApp,
         is DroidLmAction.OpenSettings,
@@ -142,6 +143,16 @@ internal object ActionConfidencePolicy {
         DroidLmAction.OcrScreen,
         is DroidLmAction.AnalyzeScreenshot,
         is DroidLmAction.VerifyTextChange,
+        is DroidLmAction.ArtifactToolAction.GetStructure,
+        is DroidLmAction.ArtifactToolAction.ResolveTarget,
+        is DroidLmAction.ArtifactToolAction.GetContentWindow,
+        is DroidLmAction.ArtifactToolAction.GetSelectionState,
+        is DroidLmAction.ArtifactToolAction.VerifyEndState,
+        is DroidLmAction.ArtifactToolAction.DocGetTargetMetadata,
+        is DroidLmAction.ArtifactToolAction.DocExtractActionItems,
+        is DroidLmAction.ArtifactToolAction.SheetResolveRange,
+        is DroidLmAction.ArtifactToolAction.SheetValidateTableState,
+        is DroidLmAction.ArtifactToolAction.NotionResolveBlockOrPage,
         DroidLmAction.Done -> false
         else -> true
     }
@@ -154,8 +165,40 @@ internal object ActionConfidencePolicy {
         DroidLmAction.OcrScreen,
         is DroidLmAction.AnalyzeScreenshot,
         is DroidLmAction.VerifyTextChange -> true
+        is DroidLmAction.ArtifactToolAction.GetStructure,
+        is DroidLmAction.ArtifactToolAction.ResolveTarget,
+        is DroidLmAction.ArtifactToolAction.GetContentWindow,
+        is DroidLmAction.ArtifactToolAction.GetSelectionState,
+        is DroidLmAction.ArtifactToolAction.VerifyEndState,
+        is DroidLmAction.ArtifactToolAction.DocGetTargetMetadata,
+        is DroidLmAction.ArtifactToolAction.DocExtractActionItems,
+        is DroidLmAction.ArtifactToolAction.SheetResolveRange,
+        is DroidLmAction.ArtifactToolAction.SheetValidateTableState,
+        is DroidLmAction.ArtifactToolAction.NotionResolveBlockOrPage -> true
         else -> false
     }
+
+    private fun artifactToolRisk(action: DroidLmAction.ArtifactToolAction): ToolRisk = when (action) {
+        is DroidLmAction.ArtifactToolAction.GetStructure,
+        is DroidLmAction.ArtifactToolAction.ResolveTarget,
+        is DroidLmAction.ArtifactToolAction.GetContentWindow,
+        is DroidLmAction.ArtifactToolAction.GetSelectionState,
+        is DroidLmAction.ArtifactToolAction.VerifyEndState,
+        is DroidLmAction.ArtifactToolAction.DocGetTargetMetadata,
+        is DroidLmAction.ArtifactToolAction.DocExtractActionItems,
+        is DroidLmAction.ArtifactToolAction.SheetResolveRange,
+        is DroidLmAction.ArtifactToolAction.SheetValidateTableState,
+        is DroidLmAction.ArtifactToolAction.NotionResolveBlockOrPage -> ToolRisk.READ_ONLY
+
+        is DroidLmAction.ArtifactToolAction.NavigateToTarget,
+        is DroidLmAction.ArtifactToolAction.ScrollToMatch -> ToolRisk.SAFE_NAVIGATION
+
+        is DroidLmAction.ArtifactToolAction.DocDeleteTargetText,
+        is DroidLmAction.ArtifactToolAction.SheetInsertDeleteRowsColumns -> ToolRisk.SENSITIVE
+
+        else -> ToolRisk.USER_VISIBLE_EDIT
+    }
+
 
     private fun isReversibleLowRisk(risk: ToolRisk, action: DroidLmAction): Boolean {
         if (risk !in setOf(ToolRisk.READ_ONLY, ToolRisk.SAFE_NAVIGATION, ToolRisk.USER_VISIBLE_EDIT)) return false

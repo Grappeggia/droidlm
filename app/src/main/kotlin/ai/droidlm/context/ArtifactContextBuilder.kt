@@ -227,11 +227,48 @@ internal object ArtifactContextBuilder {
     }
 
     private fun availableTools(actions: List<String>, targetCount: Int): JSONArray {
-        val tools = linkedSetOf("FIND_TEXT_ON_SCREEN", "SEARCH_ACCESSIBILITY_CONTENT", "SCROLL")
-        if (targetCount > 0) tools += "NAVIGATE_TO_ARTIFACT_TARGET"
-        if (actions.any { it.contains("FIND", ignoreCase = true) || it.contains("SEARCH", ignoreCase = true) }) {
+        val tools = linkedSetOf(
+            "FIND_TEXT_ON_SCREEN",
+            "SEARCH_ACCESSIBILITY_CONTENT",
+            "ARTIFACT_GET_STRUCTURE",
+            "ARTIFACT_RESOLVE_TARGET",
+            "ARTIFACT_GET_CONTENT_WINDOW",
+            "ARTIFACT_GET_SELECTION_STATE",
+            "ARTIFACT_VERIFY_END_STATE",
+            "ARTIFACT_SCROLL_TO_MATCH",
+            "SCROLL"
+        )
+        if (targetCount > 0) {
             tools += "NAVIGATE_TO_ARTIFACT_TARGET"
+            tools += "ARTIFACT_NAVIGATE_TO_TARGET"
+            tools += "ARTIFACT_SET_CURSOR_AT_TARGET"
+            tools += "ARTIFACT_SELECT_TARGET"
         }
+        if (actions.any { it.contains("FIND", ignoreCase = true) || it.contains("SEARCH", ignoreCase = true) }) {
+            tools += "ARTIFACT_NAVIGATE_TO_TARGET"
+        }
+        tools += listOf(
+            "DOC_INSERT_AT_TARGET",
+            "DOC_REPLACE_TARGET_TEXT",
+            "DOC_DELETE_TARGET_TEXT",
+            "DOC_APPLY_FORMAT",
+            "DOC_MOVE_BLOCK",
+            "DOC_CREATE_SECTION",
+            "DOC_GET_TARGET_METADATA",
+            "DOC_EXTRACT_ACTION_ITEMS",
+            "SHEET_RESOLVE_RANGE",
+            "SHEET_SET_RANGE_VALUES",
+            "SHEET_APPEND_TABLE_ROW",
+            "SHEET_UPDATE_ROW_BY_MATCH",
+            "SHEET_APPLY_FORMULA",
+            "SHEET_SORT_FILTER_RANGE",
+            "SHEET_INSERT_DELETE_ROWS_COLUMNS",
+            "SHEET_VALIDATE_TABLE_STATE",
+            "NOTION_RESOLVE_BLOCK_OR_PAGE",
+            "NOTION_CREATE_PAGE_OR_BLOCK",
+            "NOTION_UPDATE_DATABASE_ITEM",
+            "NOTION_MOVE_OR_REORDER_BLOCK"
+        )
         return JSONArray(tools.toList())
     }
 
@@ -298,7 +335,8 @@ internal object ArtifactContextBuilder {
     private val SUPPORTED_PACKAGES = setOf(
         GoogleWorkspaceContextUtils.DRIVE_PACKAGE,
         GoogleWorkspaceContextUtils.DOCS_PACKAGE,
-        GoogleWorkspaceContextUtils.SHEETS_PACKAGE
+        GoogleWorkspaceContextUtils.SHEETS_PACKAGE,
+        "notion.id"
     )
     private val GENERIC_LABELS = setOf(
         "back", "close", "done", "cancel", "ok", "save", "edit", "share", "search", "find", "more options",

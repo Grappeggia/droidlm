@@ -500,6 +500,180 @@ class RelayClient(
                 maxMatches = obj.optInt("maxMatches", 5),
                 reason = obj.optString("reason", "Search extracted accessibility content")
             )
+            "ARTIFACT_GET_STRUCTURE" -> DroidLmAction.ArtifactToolAction.GetStructure(
+                artifactType = obj.optStringAny("artifactType", "type"),
+                reason = obj.optString("reason", "Read artifact structure")
+            )
+            "ARTIFACT_RESOLVE_TARGET" -> DroidLmAction.ArtifactToolAction.ResolveTarget(
+                query = obj.requireStringAny("ARTIFACT_RESOLVE_TARGET", "query", "label", "targetLabel", "text", "targetText"),
+                artifactType = obj.optStringAny("artifactType", "type"),
+                targetKind = obj.optStringAny("targetKind", "kind"),
+                reason = obj.optString("reason", "Resolve artifact target")
+            )
+            "ARTIFACT_GET_CONTENT_WINDOW" -> DroidLmAction.ArtifactToolAction.GetContentWindow(
+                targetId = obj.optStringAny("targetId", "id"),
+                label = obj.optStringAny("label", "targetLabel", "query", "text", "targetText"),
+                beforeChars = obj.optInt("beforeChars", 1_200),
+                afterChars = obj.optInt("afterChars", 1_200),
+                reason = obj.optString("reason", "Read artifact content window")
+            )
+            "ARTIFACT_GET_SELECTION_STATE" -> DroidLmAction.ArtifactToolAction.GetSelectionState(
+                reason = obj.optString("reason", "Read artifact selection state")
+            )
+            "ARTIFACT_VERIFY_END_STATE" -> DroidLmAction.ArtifactToolAction.VerifyEndState(
+                targetId = obj.optStringAny("targetId", "id"),
+                label = obj.optStringAny("label", "targetLabel", "query", "text", "targetText"),
+                requiredEndState = obj.optString("requiredEndState", obj.optString("endState", "visible")),
+                expectedText = obj.optStringAny("expectedText", "mustContain", "value"),
+                reason = obj.optString("reason", "Verify artifact goal end state")
+            )
+            "ARTIFACT_NAVIGATE_TO_TARGET" -> DroidLmAction.ArtifactToolAction.NavigateToTarget(
+                targetId = obj.optStringAny("targetId", "id"),
+                label = obj.optStringAny("label", "targetLabel", "query", "text", "targetText"),
+                kind = obj.optStringAny("kind", "targetKind"),
+                reason = obj.optString("reason", "Navigate to artifact target")
+            )
+            "ARTIFACT_SET_CURSOR_AT_TARGET" -> DroidLmAction.ArtifactToolAction.SetCursorAtTarget(
+                targetId = obj.optStringAny("targetId", "id"),
+                label = obj.optStringAny("label", "targetLabel", "query", "text", "targetText"),
+                position = obj.optString("position", "start"),
+                reason = obj.optString("reason", "Set cursor at artifact target")
+            )
+            "ARTIFACT_SELECT_TARGET" -> DroidLmAction.ArtifactToolAction.SelectTarget(
+                targetId = obj.optStringAny("targetId", "id"),
+                label = obj.optStringAny("label", "targetLabel", "query", "text", "targetText"),
+                selectionKind = obj.optStringAny("selectionKind", "kind"),
+                reason = obj.optString("reason", "Select artifact target")
+            )
+            "ARTIFACT_SCROLL_TO_MATCH" -> DroidLmAction.ArtifactToolAction.ScrollToMatch(
+                query = obj.requireStringAny("ARTIFACT_SCROLL_TO_MATCH", "query", "label", "targetLabel", "text", "targetText"),
+                direction = parseScrollDirectionOrNull(obj.optString("direction")) ?: ScrollDirection.DOWN,
+                targetKind = obj.optStringAny("targetKind", "kind"),
+                reason = obj.optString("reason", "Scroll to matching artifact target")
+            )
+            "ARTIFACT_UNDO_LAST_ACTION" -> DroidLmAction.ArtifactToolAction.UndoLastAction(
+                reason = obj.optString("reason", "Undo last artifact action")
+            )
+            "DOC_INSERT_AT_TARGET" -> DroidLmAction.ArtifactToolAction.DocInsertAtTarget(
+                targetLabel = obj.requireStringAny("DOC_INSERT_AT_TARGET", "targetLabel", "label", "anchorText", "targetText"),
+                text = obj.requireStringAny("DOC_INSERT_AT_TARGET", "text", "insertText", "value"),
+                position = parseAnchorPosition(obj.optString("position", obj.optString("anchorPosition"))),
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                occurrenceIndex = obj.optIntAny("occurrenceIndex", "matchIndex", "index"),
+                reason = obj.optString("reason", "Insert document text at target")
+            )
+            "DOC_REPLACE_TARGET_TEXT" -> DroidLmAction.ArtifactToolAction.DocReplaceTargetText(
+                targetText = obj.requireStringAny("DOC_REPLACE_TARGET_TEXT", "targetText", "text", "label"),
+                replacementText = obj.optString("replacementText", obj.optString("newText", obj.optString("value"))),
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                occurrenceIndex = obj.optIntAny("occurrenceIndex", "matchIndex", "index"),
+                reason = obj.optString("reason", "Replace document target text")
+            )
+            "DOC_DELETE_TARGET_TEXT" -> DroidLmAction.ArtifactToolAction.DocDeleteTargetText(
+                targetText = obj.requireStringAny("DOC_DELETE_TARGET_TEXT", "targetText", "text", "label"),
+                sectionLabel = obj.optStringAny("sectionLabel", "section", "heading", "currentHeading"),
+                occurrenceIndex = obj.optIntAny("occurrenceIndex", "matchIndex", "index"),
+                reason = obj.optString("reason", "Delete document target text")
+            )
+            "DOC_APPLY_FORMAT" -> DroidLmAction.ArtifactToolAction.DocApplyFormat(
+                targetLabel = obj.optStringAny("targetLabel", "label", "text", "targetText"),
+                format = obj.requireStringAny("DOC_APPLY_FORMAT", "format", "style", "blockType"),
+                value = obj.optStringAny("value", "url", "headingLevel"),
+                reason = obj.optString("reason", "Apply document format")
+            )
+            "DOC_MOVE_BLOCK" -> DroidLmAction.ArtifactToolAction.DocMoveBlock(
+                blockLabel = obj.requireStringAny("DOC_MOVE_BLOCK", "blockLabel", "targetLabel", "label", "text", "targetText"),
+                destinationLabel = obj.optStringAny("destinationLabel", "afterLabel", "beforeLabel", "parentLabel"),
+                position = obj.optString("position", if (obj.has("beforeLabel")) "before" else "after"),
+                reason = obj.optString("reason", "Move document block")
+            )
+            "DOC_CREATE_SECTION" -> DroidLmAction.ArtifactToolAction.DocCreateSection(
+                title = obj.requireStringAny("DOC_CREATE_SECTION", "title", "label", "heading"),
+                afterLabel = obj.optStringAny("afterLabel", "targetLabel", "sectionLabel"),
+                bodyText = obj.optStringAny("bodyText", "text", "content"),
+                reason = obj.optString("reason", "Create document section")
+            )
+            "DOC_GET_TARGET_METADATA" -> DroidLmAction.ArtifactToolAction.DocGetTargetMetadata(
+                targetLabel = obj.requireStringAny("DOC_GET_TARGET_METADATA", "targetLabel", "label", "query", "text", "targetText"),
+                reason = obj.optString("reason", "Read document target metadata")
+            )
+            "DOC_EXTRACT_ACTION_ITEMS" -> DroidLmAction.ArtifactToolAction.DocExtractActionItems(
+                targetLabel = obj.optStringAny("targetLabel", "label", "sectionLabel", "query"),
+                reason = obj.optString("reason", "Extract document action items")
+            )
+            "SHEET_RESOLVE_RANGE" -> DroidLmAction.ArtifactToolAction.SheetResolveRange(
+                query = obj.requireStringAny("SHEET_RESOLVE_RANGE", "query", "range", "label", "targetText"),
+                sheetName = obj.optStringAny("sheetName", "sheet"),
+                reason = obj.optString("reason", "Resolve spreadsheet range")
+            )
+            "SHEET_SET_RANGE_VALUES" -> DroidLmAction.ArtifactToolAction.SheetSetRangeValues(
+                range = obj.optStringAny("range", "cell", "targetRange"),
+                values = obj.optStringMatrix("values").ifEmpty { obj.optString("value", obj.optString("text")).takeIf { it.isNotBlank() }?.let { listOf(listOf(it)) } ?: emptyList() },
+                reason = obj.optString("reason", "Set spreadsheet range values")
+            )
+            "SHEET_APPEND_TABLE_ROW" -> DroidLmAction.ArtifactToolAction.SheetAppendTableRow(
+                tableLabel = obj.optStringAny("tableLabel", "sheetName", "table"),
+                values = obj.optStringArray("values").ifEmpty { obj.optString("row").split(',').map { value -> value.trim() }.filter { value -> value.isNotBlank() } },
+                reason = obj.optString("reason", "Append spreadsheet table row")
+            )
+            "SHEET_UPDATE_ROW_BY_MATCH" -> DroidLmAction.ArtifactToolAction.SheetUpdateRowByMatch(
+                matchColumn = obj.optStringAny("matchColumn", "lookupColumn", "column"),
+                matchValue = obj.requireStringAny("SHEET_UPDATE_ROW_BY_MATCH", "matchValue", "query", "rowLabel", "targetText"),
+                values = obj.optStringMap("values", "updates", "properties"),
+                reason = obj.optString("reason", "Update spreadsheet row by match")
+            )
+            "SHEET_APPLY_FORMULA" -> DroidLmAction.ArtifactToolAction.SheetApplyFormula(
+                range = obj.optStringAny("range", "cell", "targetRange"),
+                formula = obj.requireStringAny("SHEET_APPLY_FORMULA", "formula", "value", "text"),
+                fillDirection = obj.optStringAny("fillDirection", "direction"),
+                reason = obj.optString("reason", "Apply spreadsheet formula")
+            )
+            "SHEET_SORT_FILTER_RANGE" -> DroidLmAction.ArtifactToolAction.SheetSortFilterRange(
+                range = obj.optStringAny("range", "targetRange"),
+                sortBy = obj.optStringAny("sortBy", "sortColumn", "column"),
+                ascending = obj.optBooleanOrNull("ascending") ?: !obj.optString("direction").equals("descending", ignoreCase = true),
+                filterColumn = obj.optStringAny("filterColumn"),
+                filterValue = obj.optStringAny("filterValue", "filter"),
+                reason = obj.optString("reason", "Sort or filter spreadsheet range")
+            )
+            "SHEET_INSERT_DELETE_ROWS_COLUMNS" -> DroidLmAction.ArtifactToolAction.SheetInsertDeleteRowsColumns(
+                operation = obj.requireStringAny("SHEET_INSERT_DELETE_ROWS_COLUMNS", "operation", "mode"),
+                axis = obj.requireStringAny("SHEET_INSERT_DELETE_ROWS_COLUMNS", "axis", "dimension"),
+                index = obj.optIntAny("index", "startIndex", "row", "column"),
+                count = obj.optInt("count", 1),
+                reason = obj.optString("reason", "Insert or delete spreadsheet rows or columns")
+            )
+            "SHEET_VALIDATE_TABLE_STATE" -> DroidLmAction.ArtifactToolAction.SheetValidateTableState(
+                range = obj.optStringAny("range", "targetRange"),
+                expectedText = obj.optStringAny("expectedText", "text", "value"),
+                expectedRowCount = obj.optIntAny("expectedRowCount", "rowCount"),
+                reason = obj.optString("reason", "Validate spreadsheet table state")
+            )
+            "NOTION_RESOLVE_BLOCK_OR_PAGE" -> DroidLmAction.ArtifactToolAction.NotionResolveBlockOrPage(
+                query = obj.requireStringAny("NOTION_RESOLVE_BLOCK_OR_PAGE", "query", "label", "title", "text", "targetText"),
+                kind = obj.optStringAny("kind", "targetKind", "blockType"),
+                reason = obj.optString("reason", "Resolve Notion block or page")
+            )
+            "NOTION_CREATE_PAGE_OR_BLOCK" -> DroidLmAction.ArtifactToolAction.NotionCreatePageOrBlock(
+                parentLabel = obj.optStringAny("parentLabel", "targetLabel", "databaseLabel"),
+                blockType = obj.optString("blockType", obj.optString("kind", "paragraph")),
+                title = obj.optStringAny("title", "pageTitle"),
+                text = obj.optStringAny("text", "content", "value"),
+                reason = obj.optString("reason", "Create Notion page or block")
+            )
+            "NOTION_UPDATE_DATABASE_ITEM" -> DroidLmAction.ArtifactToolAction.NotionUpdateDatabaseItem(
+                databaseLabel = obj.optStringAny("databaseLabel", "database", "tableLabel"),
+                matchProperty = obj.optStringAny("matchProperty", "matchColumn", "property"),
+                matchValue = obj.requireStringAny("NOTION_UPDATE_DATABASE_ITEM", "matchValue", "query", "title", "targetText"),
+                properties = obj.optStringMap("properties", "values", "updates"),
+                reason = obj.optString("reason", "Update Notion database item")
+            )
+            "NOTION_MOVE_OR_REORDER_BLOCK" -> DroidLmAction.ArtifactToolAction.NotionMoveOrReorderBlock(
+                blockLabel = obj.requireStringAny("NOTION_MOVE_OR_REORDER_BLOCK", "blockLabel", "targetLabel", "label", "text", "targetText"),
+                destinationLabel = obj.optStringAny("destinationLabel", "parentLabel", "afterLabel", "beforeLabel"),
+                position = obj.optString("position", if (obj.has("beforeLabel")) "before" else "after"),
+                reason = obj.optString("reason", "Move or reorder Notion block")
+            )
             "OPEN_NOTIFICATIONS" -> DroidLmAction.OpenNotifications
             "OPEN_QUICK_SETTINGS" -> DroidLmAction.OpenQuickSettings
             "OPEN_RECENTS" -> DroidLmAction.OpenRecents
@@ -833,6 +1007,23 @@ class RelayClient(
         val array = optJSONArray(name) ?: return emptyList()
         return (0 until array.length())
             .mapNotNull { index -> array.optString(index).takeIf { it.isNotBlank() } }
+    }
+
+    private fun JSONObject.optStringMatrix(name: String): List<List<String>> {
+        val array = optJSONArray(name) ?: return emptyList()
+        return (0 until array.length()).mapNotNull { rowIndex ->
+            val rowArray = array.optJSONArray(rowIndex)
+            if (rowArray != null) {
+                (0 until rowArray.length()).map { columnIndex -> rowArray.optString(columnIndex) }
+            } else {
+                array.optString(rowIndex).takeIf { it.isNotBlank() }?.let { listOf(it) }
+            }
+        }
+    }
+
+    private fun JSONObject.optStringMap(vararg names: String): Map<String, String> {
+        val source = names.firstNotNullOfOrNull { name -> optJSONObject(name) } ?: return emptyMap()
+        return source.keys().asSequence().associateWith { key -> source.optString(key) }.filterValues { it.isNotBlank() }
     }
 
     private fun JSONObject.optFirstNonBlank(vararg names: String): String? =

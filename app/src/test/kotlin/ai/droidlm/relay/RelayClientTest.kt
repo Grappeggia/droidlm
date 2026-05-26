@@ -2,6 +2,7 @@ package ai.droidlm.relay
 
 import ai.droidlm.intent.ActionConfidence
 import ai.droidlm.intent.DroidLmAction
+import ai.droidlm.intent.artifactToolName
 import ai.droidlm.portal.AppPackage
 import ai.droidlm.portal.PortalState
 
@@ -198,6 +199,48 @@ class RelayClientTest {
         assertEquals("Next", action.exclude)
         assertEquals(1, action.ordinal)
         assertEquals(3, action.maxMatches)
+    }
+
+    @Test fun planActionJsonParsesArtifactToolSet() {
+        val cases = mapOf(
+            "ARTIFACT_GET_STRUCTURE" to "{\"action\":\"ARTIFACT_GET_STRUCTURE\",\"artifactType\":\"document\"}",
+            "ARTIFACT_RESOLVE_TARGET" to "{\"action\":\"ARTIFACT_RESOLVE_TARGET\",\"query\":\"Meetings\"}",
+            "ARTIFACT_GET_CONTENT_WINDOW" to "{\"action\":\"ARTIFACT_GET_CONTENT_WINDOW\",\"label\":\"Meetings\"}",
+            "ARTIFACT_GET_SELECTION_STATE" to "{\"action\":\"ARTIFACT_GET_SELECTION_STATE\"}",
+            "ARTIFACT_VERIFY_END_STATE" to "{\"action\":\"ARTIFACT_VERIFY_END_STATE\",\"label\":\"Meetings\",\"requiredEndState\":\"cursor_at_target\"}",
+            "ARTIFACT_NAVIGATE_TO_TARGET" to "{\"action\":\"ARTIFACT_NAVIGATE_TO_TARGET\",\"label\":\"Meetings\"}",
+            "ARTIFACT_SET_CURSOR_AT_TARGET" to "{\"action\":\"ARTIFACT_SET_CURSOR_AT_TARGET\",\"label\":\"Meetings\"}",
+            "ARTIFACT_SELECT_TARGET" to "{\"action\":\"ARTIFACT_SELECT_TARGET\",\"label\":\"Meetings\"}",
+            "ARTIFACT_SCROLL_TO_MATCH" to "{\"action\":\"ARTIFACT_SCROLL_TO_MATCH\",\"query\":\"Meetings\"}",
+            "ARTIFACT_UNDO_LAST_ACTION" to "{\"action\":\"ARTIFACT_UNDO_LAST_ACTION\"}",
+            "DOC_INSERT_AT_TARGET" to "{\"action\":\"DOC_INSERT_AT_TARGET\",\"targetLabel\":\"Meetings\",\"text\":\"note\"}",
+            "DOC_REPLACE_TARGET_TEXT" to "{\"action\":\"DOC_REPLACE_TARGET_TEXT\",\"targetText\":\"draft\",\"replacementText\":\"final\"}",
+            "DOC_DELETE_TARGET_TEXT" to "{\"action\":\"DOC_DELETE_TARGET_TEXT\",\"targetText\":\"obsolete\"}",
+            "DOC_APPLY_FORMAT" to "{\"action\":\"DOC_APPLY_FORMAT\",\"targetLabel\":\"Follow up\",\"format\":\"bullet\"}",
+            "DOC_MOVE_BLOCK" to "{\"action\":\"DOC_MOVE_BLOCK\",\"blockLabel\":\"Follow up\",\"destinationLabel\":\"Meetings\"}",
+            "DOC_CREATE_SECTION" to "{\"action\":\"DOC_CREATE_SECTION\",\"title\":\"Risks\",\"afterLabel\":\"Meetings\"}",
+            "DOC_GET_TARGET_METADATA" to "{\"action\":\"DOC_GET_TARGET_METADATA\",\"targetLabel\":\"Meetings\"}",
+            "DOC_EXTRACT_ACTION_ITEMS" to "{\"action\":\"DOC_EXTRACT_ACTION_ITEMS\",\"targetLabel\":\"Meetings\"}",
+            "SHEET_RESOLVE_RANGE" to "{\"action\":\"SHEET_RESOLVE_RANGE\",\"query\":\"B2:C4\"}",
+            "SHEET_SET_RANGE_VALUES" to "{\"action\":\"SHEET_SET_RANGE_VALUES\",\"range\":\"B2\",\"values\":[[\"done\"]]}",
+            "SHEET_APPEND_TABLE_ROW" to "{\"action\":\"SHEET_APPEND_TABLE_ROW\",\"values\":[\"Mobile\",\"Done\"]}",
+            "SHEET_UPDATE_ROW_BY_MATCH" to "{\"action\":\"SHEET_UPDATE_ROW_BY_MATCH\",\"matchValue\":\"Mobile\",\"values\":{\"Status\":\"Done\"}}",
+            "SHEET_APPLY_FORMULA" to "{\"action\":\"SHEET_APPLY_FORMULA\",\"range\":\"C2\",\"formula\":\"SUM(A2:B2)\"}",
+            "SHEET_SORT_FILTER_RANGE" to "{\"action\":\"SHEET_SORT_FILTER_RANGE\",\"range\":\"A1:C9\",\"sortBy\":\"Status\"}",
+            "SHEET_INSERT_DELETE_ROWS_COLUMNS" to "{\"action\":\"SHEET_INSERT_DELETE_ROWS_COLUMNS\",\"operation\":\"insert\",\"axis\":\"row\",\"count\":1}",
+            "SHEET_VALIDATE_TABLE_STATE" to "{\"action\":\"SHEET_VALIDATE_TABLE_STATE\",\"expectedText\":\"Done\"}",
+            "NOTION_RESOLVE_BLOCK_OR_PAGE" to "{\"action\":\"NOTION_RESOLVE_BLOCK_OR_PAGE\",\"query\":\"Launch plan\"}",
+            "NOTION_CREATE_PAGE_OR_BLOCK" to "{\"action\":\"NOTION_CREATE_PAGE_OR_BLOCK\",\"blockType\":\"todo\",\"text\":\"Follow up\"}",
+            "NOTION_UPDATE_DATABASE_ITEM" to "{\"action\":\"NOTION_UPDATE_DATABASE_ITEM\",\"matchValue\":\"Mobile\",\"properties\":{\"Status\":\"Done\"}}",
+            "NOTION_MOVE_OR_REORDER_BLOCK" to "{\"action\":\"NOTION_MOVE_OR_REORDER_BLOCK\",\"blockLabel\":\"Follow up\",\"destinationLabel\":\"Meetings\"}"
+        )
+
+        cases.forEach { (expectedTool, json) ->
+            val action = RelayClient().parsePlanActionJson(json)
+            assertTrue("$expectedTool should parse as an artifact tool", action is DroidLmAction.ArtifactToolAction)
+            action as DroidLmAction.ArtifactToolAction
+            assertEquals(expectedTool, action.artifactToolName())
+        }
     }
 
     @Test fun malformedTapReportsMissingCoordinate() {

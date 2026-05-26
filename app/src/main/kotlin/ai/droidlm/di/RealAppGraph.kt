@@ -10,6 +10,7 @@ import ai.droidlm.context.DeviceContextAggregator
 import ai.droidlm.context.GoogleDocsContextProvider
 import ai.droidlm.context.GoogleDriveContextProvider
 import ai.droidlm.context.GoogleSheetsContextProvider
+import ai.droidlm.context.NotionContextProvider
 import ai.droidlm.diagnostics.DebugLogStore
 import ai.droidlm.diagnostics.NetworkDiagnostics
 import ai.droidlm.diagnostics.SpeechDiagnosticsLogger
@@ -113,7 +114,8 @@ class RealAppGraph(
             AccessibilityContentContextProvider(),
             GoogleDocsContextProvider(),
             GoogleSheetsContextProvider(),
-            GoogleDriveContextProvider()
+            GoogleDriveContextProvider(),
+            NotionContextProvider()
         ),
         diagnostics = speechDiagnosticsLogger,
         portalController = portalController,

@@ -352,6 +352,7 @@ internal class ExecutionDiagnostics(
         is DroidLmAction.AppendDocumentNote -> mapOf("fileUriConfigured" to !action.fileUri.isNullOrBlank(), "noteLength" to action.note.length)
         is DroidLmAction.SetCurrentSheetCell -> mapOf("fileUriConfigured" to !action.fileUri.isNullOrBlank(), "valueLength" to action.value.length)
         is DroidLmAction.AddSpreadsheetRow -> mapOf("fileUriConfigured" to !action.fileUri.isNullOrBlank(), "valueCount" to action.values.size, "totalValueLength" to action.values.sumOf { it.length })
+        is DroidLmAction.ArtifactToolAction -> mapOf("artifactTool" to action.displayName(), "targetPreview" to action.displayName().take(MAX_NODE_TEXT_PREVIEW_CHARS))
         is DroidLmAction.NoOp,
         is DroidLmAction.NeedLlmPlanning,
         is DroidLmAction.AskConfirmation,

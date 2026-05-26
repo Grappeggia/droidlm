@@ -65,6 +65,7 @@ object ActionUiFormatter {
         is DroidLmAction.AppendDocumentNote -> "Append a document note"
         is DroidLmAction.SetCurrentSheetCell -> "Set the current sheet cell"
         is DroidLmAction.AddSpreadsheetRow -> "Add a spreadsheet row"
+        is DroidLmAction.ArtifactToolAction -> semanticLabel(reason, fallbackLabel) ?: artifactToolLabel(action)
         DroidLmAction.Done -> "Finish the task"
     }
 
@@ -129,10 +130,40 @@ object ActionUiFormatter {
         is DroidLmAction.AppendDocumentNote -> "Append note"
         is DroidLmAction.SetCurrentSheetCell -> "Set cell"
         is DroidLmAction.AddSpreadsheetRow -> "Add row"
+        is DroidLmAction.ArtifactToolAction -> compactSemanticLabel(reason, fallbackLabel) ?: artifactToolCompactLabel(action)
         is DroidLmAction.AskConfirmation -> "Confirm"
         is DroidLmAction.NeedLlmPlanning -> "Plan"
         is DroidLmAction.NoOp -> compactSemanticLabel(reason, fallbackLabel) ?: "No action"
         DroidLmAction.Done -> "Done"
+    }
+
+
+    private fun artifactToolLabel(action: DroidLmAction.ArtifactToolAction): String = when (action) {
+        is DroidLmAction.ArtifactToolAction.ResolveTarget -> "Resolve ${shorten(action.query, 28)}"
+        is DroidLmAction.ArtifactToolAction.NavigateToTarget -> "Navigate to ${shorten(action.label ?: action.targetId ?: "target", 28)}"
+        is DroidLmAction.ArtifactToolAction.SetCursorAtTarget -> "Move cursor to ${shorten(action.label ?: action.targetId ?: "target", 28)}"
+        is DroidLmAction.ArtifactToolAction.SelectTarget -> "Select ${shorten(action.label ?: action.targetId ?: "target", 28)}"
+        is DroidLmAction.ArtifactToolAction.DocInsertAtTarget -> "Insert document text at ${shorten(action.targetLabel, 28)}"
+        is DroidLmAction.ArtifactToolAction.DocReplaceTargetText -> "Replace ${shorten(action.targetText, 28)}"
+        is DroidLmAction.ArtifactToolAction.DocDeleteTargetText -> "Delete ${shorten(action.targetText, 28)}"
+        is DroidLmAction.ArtifactToolAction.DocCreateSection -> "Create section ${shorten(action.title, 28)}"
+        is DroidLmAction.ArtifactToolAction.SheetSetRangeValues -> "Set spreadsheet ${shorten(action.range ?: "range", 28)}"
+        is DroidLmAction.ArtifactToolAction.SheetAppendTableRow -> "Append spreadsheet row"
+        is DroidLmAction.ArtifactToolAction.NotionCreatePageOrBlock -> "Create Notion ${shorten(action.title ?: action.text ?: action.blockType, 28)}"
+        else -> action.artifactToolName().replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
+    }
+
+    private fun artifactToolCompactLabel(action: DroidLmAction.ArtifactToolAction): String = when (action) {
+        is DroidLmAction.ArtifactToolAction.ResolveTarget -> "Resolve target"
+        is DroidLmAction.ArtifactToolAction.NavigateToTarget -> "Go to target"
+        is DroidLmAction.ArtifactToolAction.SetCursorAtTarget -> "Move cursor"
+        is DroidLmAction.ArtifactToolAction.SelectTarget -> "Select target"
+        is DroidLmAction.ArtifactToolAction.DocInsertAtTarget -> "Insert in doc"
+        is DroidLmAction.ArtifactToolAction.DocReplaceTargetText -> "Replace in doc"
+        is DroidLmAction.ArtifactToolAction.SheetSetRangeValues -> "Set range"
+        is DroidLmAction.ArtifactToolAction.SheetAppendTableRow -> "Append row"
+        is DroidLmAction.ArtifactToolAction.NotionCreatePageOrBlock -> "Create in Notion"
+        else -> action.artifactToolName().substringBefore('_').lowercase().replaceFirstChar { it.uppercase() }
     }
 
     fun reasonAddsDetail(reason: String, actionLabel: String): Boolean {

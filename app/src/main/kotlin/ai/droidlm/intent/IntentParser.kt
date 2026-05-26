@@ -14,6 +14,7 @@ class IntentParser {
         "google docs" to Alias("Google Docs", "com.google.android.apps.docs.editors.docs"),
         "sheets" to Alias("Google Sheets", "com.google.android.apps.docs.editors.sheets"),
         "google sheets" to Alias("Google Sheets", "com.google.android.apps.docs.editors.sheets"),
+        "notion" to Alias("Notion", "notion.id"),
         "chrome" to Alias("Chrome", "com.android.chrome"),
         "google chrome" to Alias("Chrome", "com.android.chrome")
     )

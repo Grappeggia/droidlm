@@ -41,6 +41,12 @@ internal class ExecutionActionRunner(
     private val requestConfirmation: suspend (String, DroidLmAction, String, String?, String?) -> Boolean,
     private val handlePlanning: suspend (String, String?) -> ActionResult
 ) {
+    private val artifactToolExecutor = ArtifactToolExecutor(
+        portalController = portalController,
+        textEditingController = textEditingController,
+        deviceContextAggregator = deviceContextAggregator
+    )
+
     suspend fun execute(
         action: DroidLmAction,
         transcript: String,
@@ -166,6 +172,7 @@ internal class ExecutionActionRunner(
         is DroidLmAction.AppendDocumentNote -> workspaceFileOperationController.appendDocumentNote(transcript, action)
         is DroidLmAction.SetCurrentSheetCell -> workspaceFileOperationController.setCurrentSheetCell(transcript, action)
         is DroidLmAction.AddSpreadsheetRow -> workspaceFileOperationController.addSpreadsheetRow(transcript, action)
+        is DroidLmAction.ArtifactToolAction -> artifactToolExecutor.execute(action, transcript, diagnosticSessionId)
         DroidLmAction.Done -> ActionResult.ok("Done")
     }
 

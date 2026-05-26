@@ -122,6 +122,65 @@ class DroidLmActionKnownIssuesE2ETest {
     }
 
     @Test
+    fun reportedDocsSectionSearchPlanMovesCursorBeforeDone() = runBlocking {
+        val document = """
+            Summary of Docs
+
+            Notes
+            Release prep is ready for review.
+
+            Meetings
+            Confirm launch readiness with mobile lead.
+
+            Snippets
+            Keep follow-up notes here.
+        """.trimIndent()
+        val portal = FakePortalController(firstText = document, secondText = "unused")
+        val expectedOffset = document.indexOf("\nMeetings\n").let { index ->
+            if (index >= 0) index + 1 else document.indexOf("Meetings")
+        }
+        portal.performSetSelection("first", 0, 0)
+        val executor = executorFor(portal)
+
+        val searchResult = executor.invokeActionForKnownIssue(
+            DroidLmAction.SearchAccessibilityContent(
+                query = "Meetings",
+                reason = "Locate the Meetings section before moving the cursor"
+            )
+        )
+        assertTrue("Expected the synthetic Meetings heading to be searchable: ${searchResult.message}", searchResult.success)
+
+        assertEquals(
+            "Read-only search should not be treated as cursor movement.",
+            0 to 0,
+            portal.getNodeSelection("first")
+        )
+
+        val cursorResult = executor.invokeActionForKnownIssue(
+            DroidLmAction.ArtifactToolAction.SetCursorAtTarget(
+                label = "Meetings",
+                reason = "Move the cursor to the Meetings heading"
+            )
+        )
+        assertTrue("ARTIFACT_SET_CURSOR_AT_TARGET should move to the synthetic heading: ${cursorResult.message}", cursorResult.success)
+
+        val verifyResult = executor.invokeActionForKnownIssue(
+            DroidLmAction.ArtifactToolAction.VerifyEndState(
+                label = "Meetings",
+                requiredEndState = "cursor_at_target",
+                reason = "Verify the cursor reached Meetings"
+            )
+        )
+        assertTrue("ARTIFACT_VERIFY_END_STATE should confirm cursor navigation: ${verifyResult.message}", verifyResult.success)
+
+        assertEquals(
+            "The cursor should move to the Meetings heading before DONE is acceptable.",
+            expectedOffset to expectedOffset,
+            portal.getNodeSelection("first")
+        )
+    }
+
+    @Test
     fun analyzeScreenshotUsesCloudAnalysisEndpointWhenConfigured() = runBlocking {
         val portal = FakePortalController(firstText = "visible text", secondText = "other text")
         server = MockWebServer().apply {
