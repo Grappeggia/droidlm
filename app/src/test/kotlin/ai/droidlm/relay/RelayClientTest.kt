@@ -33,10 +33,12 @@ class RelayClientTest {
         assertEquals(123L, parsed.durationMs)
     }
 
-    @Test fun debugLogUploadPostsMultipartToDirectEndpoint() = runTest {
+    @Test fun debugLogUploadCreatesSessionThenPutsToSignedUrl() = runTest {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/test.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/test.zip","sizeBytes":3,"contentType":"application/zip"}"""))
             server.start()
+            val signedUrl = server.url("/signed-upload").toString()
+            server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/test.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/test.zip","uploadUrl":"$signedUrl","uploadMethod":"PUT","contentType":"application/zip","uploadHeaders":{"Content-Type":"application/zip"}}"""))
+            server.enqueue(MockResponse().setResponseCode(200))
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
@@ -44,33 +46,49 @@ class RelayClientTest {
                     .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
                 assertEquals("debug-logs/synthetic/test.zip", result.value.objectName)
-                val request = server.takeRequest()
-                assertEquals("/", request.path)
-                assertEquals("Bearer test-token", request.getHeader("Authorization"))
-                val body = request.body.readUtf8()
-                assertTrue(body.contains("name=\"logs\""))
-                assertTrue(body.contains("name=\"appPackage\""))
-                assertTrue(body.contains("com.droidlm.debug"))
+                assertEquals(3L, result.value.sizeBytes)
+
+                val sessionRequest = server.takeRequest()
+                assertEquals("/debug-logs/upload-session", sessionRequest.path)
+                assertEquals("Bearer test-token", sessionRequest.getHeader("Authorization"))
+                assertEquals("test-token", sessionRequest.getHeader("X-DroidLM-Firebase-ID-Token"))
+                val sessionBody = JSONObject(sessionRequest.body.readUtf8())
+                assertEquals("com.droidlm.debug", sessionBody.getString("appPackage"))
+                assertEquals(3L, sessionBody.getLong("sizeBytes"))
+
+                val uploadRequest = server.takeRequest()
+                assertEquals("/signed-upload", uploadRequest.path)
+                assertEquals("PUT", uploadRequest.method)
+                assertEquals(null, uploadRequest.getHeader("Authorization"))
+                assertEquals("application/zip", uploadRequest.getHeader("Content-Type"))
+                assertEquals(byteArrayOf(1, 2, 3).toList(), uploadRequest.body.readByteArray().toList())
             } finally {
                 bundle.delete()
             }
         }
     }
 
-    @Test fun debugLogUploadCanPostToDirectFunctionUrl() = runTest {
+    @Test fun debugLogUploadFallsBackToProxyWhenSessionEndpointIsMissing() = runTest {
         MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"errorCode":"NOT_FOUND","message":"Unknown path"}"""))
             server.enqueue(MockResponse().setBody("""{"ok":true,"bucket":"example-debug-logs","objectName":"debug-logs/synthetic/direct.zip","gsUri":"gs://example-debug-logs/debug-logs/synthetic/direct.zip","sizeBytes":3,"contentType":"application/zip"}"""))
             server.start()
             val bundle = File.createTempFile("droidlm-debug", ".zip")
             try {
                 bundle.writeBytes(byteArrayOf(1, 2, 3))
-                val directUrl = server.url("/upload-debug-logs").toString()
                 val result = RelayClient(firebaseIdTokenProvider = { FirebaseBearerTokenResult.Success("test-token") })
-                    .uploadDebugLogsToUrl(directUrl, bundle, "com.droidlm.debug", "0.1-debug")
+                    .uploadDebugLogsToUrl(server.url("/").toString(), bundle, "com.droidlm.debug", "0.1-debug")
                 if (result !is RelayCallResult.Success) error("Expected upload success")
-                val request = server.takeRequest()
-                assertEquals("/upload-debug-logs", request.path)
-                assertEquals("Bearer test-token", request.getHeader("Authorization"))
+
+                val sessionRequest = server.takeRequest()
+                assertEquals("/debug-logs/upload-session", sessionRequest.path)
+                val proxyRequest = server.takeRequest()
+                assertEquals("/", proxyRequest.path)
+                assertEquals("Bearer test-token", proxyRequest.getHeader("Authorization"))
+                assertEquals("test-token", proxyRequest.getHeader("X-DroidLM-Firebase-ID-Token"))
+                val body = proxyRequest.body.readUtf8()
+                assertTrue(body.contains("name=\"logs\""))
+                assertTrue(body.contains("name=\"appPackage\""))
             } finally {
                 bundle.delete()
             }

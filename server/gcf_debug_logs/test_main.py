@@ -26,6 +26,9 @@ class FakeStore:
             }
         )
 
+    def signed_upload_url(self, object_name, content_type, expires_seconds):
+        return f"https://storage.example.test/upload/{object_name}?expires={expires_seconds}&contentType={content_type}"
+
 
 class FakeFile:
     def __init__(self, filename, content_type, data):
@@ -35,12 +38,16 @@ class FakeFile:
 
 
 class FakeRequest:
-    def __init__(self, method, path="/", files=None, form=None, headers=None):
+    def __init__(self, method, path="/", files=None, form=None, headers=None, json_data=None):
         self.method = method
         self.path = path
         self.files = files or {}
         self.form = form or {}
         self.headers = headers or {}
+        self._json_data = json_data
+
+    def get_json(self, silent=False):
+        return self._json_data
 
 
 class DebugLogFunctionTest(unittest.TestCase):
@@ -72,7 +79,7 @@ class DebugLogFunctionTest(unittest.TestCase):
         )
 
         self.assertEqual("debug-logs/synthetic/bundle.zip", payload["objectName"])
-        self.assertEqual("gs://example-debug-logs/debug-logs/synthetic/bundle.zip", payload["gsUri"])
+        self.assertEqual("gs://droidlm-debug-logs/debug-logs/synthetic/bundle.zip", payload["gsUri"])
         self.assertEqual(3, payload["sizeBytes"])
         self.assertEqual("application/zip", store.writes[0]["content_type"])
         self.assertEqual("com.studionext54.droidlm.debug", store.writes[0]["metadata"]["appPackage"])
@@ -96,6 +103,41 @@ class DebugLogFunctionTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual("debug-logs/synthetic/bundle.zip", payload["objectName"])
 
+
+    def test_entrypoint_creates_signed_upload_session(self):
+        store = FakeStore()
+        main._debug_log_store = store
+        request = FakeRequest(
+            method="POST",
+            path="/debug-logs/upload-session",
+            json_data={
+                "filename": "bundle.zip",
+                "contentType": "application/zip",
+                "sizeBytes": 3,
+                "appPackage": "com.droidlm.debug",
+                "appVersion": "0.1-debug",
+            },
+        )
+
+        body, status_code, headers = main.droidlm_debug_log_upload(request)
+
+        self.assertEqual(200, status_code)
+        self.assertEqual("application/json", headers["Content-Type"])
+        payload = json.loads(body)
+        self.assertEqual("debug-logs/synthetic/bundle.zip", payload["objectName"])
+        self.assertEqual("gs://droidlm-debug-logs/debug-logs/synthetic/bundle.zip", payload["gsUri"])
+        self.assertEqual("PUT", payload["uploadMethod"])
+        self.assertEqual("application/zip", payload["uploadHeaders"]["Content-Type"])
+        self.assertIn("https://storage.example.test/upload/", payload["uploadUrl"])
+        self.assertEqual([], store.writes)
+
+    def test_custom_firebase_header_is_accepted(self):
+        request = FakeRequest(
+            method="POST",
+            headers={"X-DroidLM-Firebase-ID-Token": "custom-token"},
+        )
+
+        self.assertEqual("custom-token", main.bearer_token(main.auth_header_value(request)))
     def test_health_endpoint_works(self):
         body, status_code, headers = main.droidlm_debug_log_upload(FakeRequest(method="GET", path="/health"))
 

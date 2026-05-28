@@ -107,6 +107,14 @@ data class DebugLogUploadResponse(
     val sizeBytes: Long
 )
 
+data class DebugLogUploadSession(
+    val objectName: String,
+    val gsUri: String,
+    val uploadUrl: String,
+    val contentType: String,
+    val uploadHeaders: Map<String, String> = emptyMap()
+)
+
 data class AllowlistCheckResponse(
     val allowed: Boolean,
     val email: String? = null,
@@ -297,6 +305,16 @@ class RelayClient(
                 return RelayCallResult.Failure(tokenResult.message, tokenResult.errorCode)
             }
         }
+
+        when (val signedUpload = uploadDebugLogsWithSignedUrl(normalized, zipFile, appPackage, appVersion, token)) {
+            is RelayCallResult.Success -> return signedUpload
+            is RelayCallResult.Failure -> {
+                if (signedUpload.errorCode !in setOf("HTTP_404", "NOT_FOUND", "HTTP_405", "METHOD_NOT_ALLOWED")) {
+                    return signedUpload
+                }
+            }
+        }
+
         val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("logs", zipFile.name, zipFile.asRequestBody("application/zip".toMediaType()))
             .addFormDataPart("appPackage", appPackage)
@@ -306,6 +324,49 @@ class RelayClient(
             .post(bodyBuilder.build())
             .addBearer(token)
         return execute(requestBuilder.build(), ::parseDebugLogUploadJson)
+    }
+
+    private suspend fun uploadDebugLogsWithSignedUrl(
+        uploadUrl: String,
+        zipFile: File,
+        appPackage: String,
+        appVersion: String?,
+        firebaseIdToken: String
+    ): RelayCallResult<DebugLogUploadResponse> {
+        val sessionRequest = JSONObject()
+            .put("filename", zipFile.name)
+            .put("contentType", "application/zip")
+            .put("sizeBytes", zipFile.length())
+            .put("appPackage", appPackage)
+        appVersion?.takeIf { it.isNotBlank() }?.let { sessionRequest.put("appVersion", it) }
+
+        val sessionUrl = debugLogUploadSessionUrl(uploadUrl)
+        val session = when (val result = execute(
+            Request.Builder()
+                .url(sessionUrl)
+                .post(sessionRequest.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .addBearer(firebaseIdToken)
+                .build(),
+            ::parseDebugLogUploadSessionJson
+        )) {
+            is RelayCallResult.Success -> result.value
+            is RelayCallResult.Failure -> return result
+        }
+
+        val signedRequest = Request.Builder()
+            .url(session.uploadUrl)
+            .put(zipFile.asRequestBody(session.contentType.toMediaType()))
+        session.uploadHeaders.forEach { (name, value) -> signedRequest.header(name, value) }
+        return when (val result = executeSignedUpload(signedRequest.build())) {
+            is RelayCallResult.Success -> RelayCallResult.Success(
+                DebugLogUploadResponse(
+                    objectName = session.objectName,
+                    gsUri = session.gsUri,
+                    sizeBytes = zipFile.length()
+                )
+            )
+            is RelayCallResult.Failure -> result
+        }
     }
 
     fun parseAllowlistCheckJson(json: String): AllowlistCheckResponse {
@@ -355,6 +416,24 @@ class RelayClient(
             objectName = objectName,
             gsUri = gsUri,
             sizeBytes = obj.optLong("sizeBytes", 0L)
+        )
+    }
+
+    fun parseDebugLogUploadSessionJson(json: String): DebugLogUploadSession {
+        val obj = JSONObject(json)
+        val headersObj = obj.optJSONObject("uploadHeaders")
+        val headers = headersObj?.keys()?.asSequence()?.mapNotNull { key ->
+            headersObj.optString(key).takeIf { it.isNotBlank() }?.let { value -> key to value }
+        }?.toMap().orEmpty()
+        return DebugLogUploadSession(
+            objectName = obj.optString("objectName").takeIf { it.isNotBlank() }
+                ?: throw JSONException("Debug log upload session missing objectName"),
+            gsUri = obj.optString("gsUri").takeIf { it.isNotBlank() }
+                ?: throw JSONException("Debug log upload session missing gsUri"),
+            uploadUrl = obj.optString("uploadUrl").takeIf { it.isNotBlank() }
+                ?: throw JSONException("Debug log upload session missing uploadUrl"),
+            contentType = obj.optString("contentType").takeIf { it.isNotBlank() } ?: "application/zip",
+            uploadHeaders = headers
         )
     }
 
@@ -687,6 +766,45 @@ class RelayClient(
         }
     }
 
+    private suspend fun executeSignedUpload(request: Request): RelayCallResult<Unit> = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
+        val endpoint = request.url.encodedPath
+        diagnostics?.record(
+            null,
+            "debug_log_signed_upload_started",
+            mapOf("method" to request.method, "host" to request.url.host, "endpoint" to endpoint)
+        )
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation {
+                diagnostics?.record(null, "debug_log_signed_upload_cancelled", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt)))
+                call.cancel()
+            }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (!continuation.isCancelled) {
+                        val code = if (e.message?.contains("timeout", ignoreCase = true) == true) "TIMEOUT" else "NETWORK_ERROR"
+                        diagnostics?.record(null, "debug_log_signed_upload_failed", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "errorCode" to code, "errorClass" to e::class.java.name, "message" to e.message))
+                        continuation.resume(RelayCallResult.Failure(e.message ?: "Network error", code, e))
+                    }
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        val body = it.body?.string().orEmpty()
+                        if (!it.isSuccessful) {
+                            diagnostics?.record(null, "debug_log_signed_upload_http_failed", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "httpCode" to it.code, "responseBytes" to body.toByteArray(Charsets.UTF_8).size))
+                            continuation.resume(RelayCallResult.Failure("Signed GCS upload returned HTTP ${it.code}", "GCS_UPLOAD_HTTP_${it.code}"))
+                            return
+                        }
+                        diagnostics?.record(null, "debug_log_signed_upload_succeeded", mapOf("endpoint" to endpoint, "durationMs" to (System.currentTimeMillis() - startedAt), "httpCode" to it.code, "responseBytes" to body.toByteArray(Charsets.UTF_8).size))
+                        continuation.resume(RelayCallResult.Success(Unit))
+                    }
+                }
+            })
+        }
+    }
+
     private suspend fun Request.Builder.addFirebaseBearer(): Request.Builder {
         return when (val token = firebaseIdTokenProvider(false)) {
             is FirebaseBearerTokenResult.Success -> addBearer(token.token)
@@ -696,6 +814,12 @@ class RelayClient(
 
     private fun Request.Builder.addBearer(token: String): Request.Builder =
         addHeader("Authorization", "Bearer $token")
+            .addHeader("X-DroidLM-Firebase-ID-Token", token)
+
+    private fun debugLogUploadSessionUrl(uploadUrl: String): String = when {
+        uploadUrl.endsWith("/debug-logs") -> "$uploadUrl/upload-session"
+        else -> "$uploadUrl/debug-logs/upload-session"
+    }
 
     private fun parseRelayError(body: String): Pair<String?, String?> {
         return runCatching {

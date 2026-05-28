@@ -5,7 +5,7 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol
 
@@ -24,6 +24,7 @@ ALLOWED_ZIP_CONTENT_TYPES = {
     "application/x-zip-compressed",
 }
 DEFAULT_MAX_DEBUG_LOG_BYTES = 30 * 1024 * 1024
+SIGNED_UPLOAD_EXPIRES_SECONDS = 15 * 60
 
 
 class DebugLogHttpError(Exception):
@@ -49,6 +50,8 @@ class DebugLogStore(Protocol):
 
     def write_object(self, object_name: str, data: bytes, content_type: str, metadata: Dict[str, str]) -> None: ...
 
+    def signed_upload_url(self, object_name: str, content_type: str, expires_seconds: int) -> str: ...
+
 
 class GcsDebugLogStore:
     def __init__(self, config: DebugLogConfig) -> None:
@@ -56,8 +59,8 @@ class GcsDebugLogStore:
 
         self.bucket_name = config.bucket_name
         self.prefix = config.prefix
-        client = storage.Client(project=config.project) if config.project else storage.Client()
-        self._bucket = client.bucket(config.bucket_name)
+        self._client = storage.Client(project=config.project) if config.project else storage.Client()
+        self._bucket = self._client.bucket(config.bucket_name)
 
     def object_name_for(self, filename: Optional[str]) -> str:
         now = datetime.now(timezone.utc)
@@ -72,6 +75,27 @@ class GcsDebugLogStore:
         blob = self._bucket.blob(require_debug_log_object_name(object_name, self.prefix))
         blob.metadata = metadata
         blob.upload_from_string(data, content_type=content_type)
+
+    def signed_upload_url(self, object_name: str, content_type: str, expires_seconds: int) -> str:
+        blob = self._bucket.blob(require_debug_log_object_name(object_name, self.prefix))
+        kwargs: Dict[str, Any] = {
+            "version": "v4",
+            "expiration": timedelta(seconds=expires_seconds),
+            "method": "PUT",
+            "content_type": content_type,
+        }
+        service_account_email = os.getenv("DROIDLM_DEBUG_LOG_SIGNING_SERVICE_ACCOUNT")
+        credentials = getattr(self._client, "_credentials", None)
+        if credentials is not None and service_account_email:
+            try:
+                from google.auth.transport.requests import Request
+
+                credentials.refresh(Request())
+                kwargs["service_account_email"] = service_account_email
+                kwargs["access_token"] = credentials.token
+            except Exception:
+                pass
+        return blob.generate_signed_url(**kwargs)
 
 
 _debug_log_store: Optional[GcsDebugLogStore] = None
@@ -93,6 +117,19 @@ def droidlm_debug_log_upload(request: Any):
         if path == "/allowlist/check":
             user = require_allowlisted_request(request)
             return json_response({"allowed": True, "email": user.get("email", ""), "uid": user.get("uid", user.get("sub", ""))})
+        if path == "/debug-logs/upload-session":
+            require_allowlisted_request(request)
+            payload = upload_session_request_payload(request)
+            session = create_debug_log_upload_session(
+                filename=string_payload_value(payload, "filename") or "droidlm-debug-logs.zip",
+                content_type=string_payload_value(payload, "contentType") or "application/zip",
+                size_bytes=int_payload_value(payload, "sizeBytes"),
+                app_package=string_payload_value(payload, "appPackage"),
+                app_version=string_payload_value(payload, "appVersion"),
+                store=require_debug_log_store(),
+                config=debug_log_config(),
+            )
+            return json_response(session)
         if path not in {"/", "/debug-logs"}:
             raise DebugLogHttpError(404, "Unknown path", "NOT_FOUND")
 
@@ -154,6 +191,45 @@ def handle_debug_log_upload(
         "sizeBytes": len(data),
         "contentType": normalized_content_type,
     }
+
+
+def create_debug_log_upload_session(
+    filename: str,
+    content_type: str,
+    size_bytes: Optional[int],
+    app_package: Optional[str],
+    app_version: Optional[str],
+    store: DebugLogStore,
+    config: DebugLogConfig,
+) -> Dict[str, Any]:
+    normalized_content_type = (content_type or "application/zip").lower()
+    if normalized_content_type not in ALLOWED_ZIP_CONTENT_TYPES:
+        raise DebugLogHttpError(415, "Only zip debug log uploads are accepted", "DEBUG_LOG_CONTENT_TYPE_UNSUPPORTED")
+    if size_bytes is not None:
+        if size_bytes <= 0:
+            raise DebugLogHttpError(400, "Debug log upload is empty", "DEBUG_LOG_EMPTY")
+        if size_bytes > config.max_debug_log_bytes:
+            raise DebugLogHttpError(413, "Debug log upload is too large", "DEBUG_LOG_TOO_LARGE")
+
+    object_name = store.object_name_for(filename)
+    upload_url = store.signed_upload_url(object_name, normalized_content_type, SIGNED_UPLOAD_EXPIRES_SECONDS)
+    response: Dict[str, Any] = {
+        "ok": True,
+        "bucket": store.bucket_name,
+        "objectName": object_name,
+        "gsUri": f"gs://{store.bucket_name}/{object_name}",
+        "uploadUrl": upload_url,
+        "uploadMethod": "PUT",
+        "contentType": normalized_content_type,
+        "expiresInSeconds": SIGNED_UPLOAD_EXPIRES_SECONDS,
+        "uploadHeaders": {"Content-Type": normalized_content_type},
+    }
+    if app_package:
+        response["appPackage"] = app_package[:128]
+    if app_version:
+        response["appVersion"] = app_version[:64]
+    return response
+
 
 
 def debug_log_config() -> DebugLogConfig:
@@ -229,9 +305,43 @@ def form_value(request: Any, key: str) -> Optional[str]:
     return trimmed or None
 
 
+def upload_session_request_payload(request: Any) -> Dict[str, Any]:
+    get_json = getattr(request, "get_json", None)
+    if callable(get_json):
+        payload = get_json(silent=True) or {}
+        if isinstance(payload, dict):
+            return payload
+    raw = getattr(request, "data", None)
+    if raw:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def string_payload_value(payload: Dict[str, Any], key: str) -> Optional[str]:
+    value = payload.get(key)
+    if value is None:
+        return None
+    trimmed = str(value).strip()
+    return trimmed or None
+
+
+def int_payload_value(payload: Dict[str, Any], key: str) -> Optional[int]:
+    value = payload.get(key)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise DebugLogHttpError(400, f"{key} must be an integer", "DEBUG_LOG_SIZE_INVALID") from error
+
+
 
 def require_allowlisted_request(request: Any) -> Dict[str, Any]:
-    decoded = verify_firebase_token(bearer_token(request.headers.get("Authorization") if hasattr(request, "headers") else None))
+    decoded = verify_firebase_token(bearer_token(auth_header_value(request)))
     email = normalize_email(str(decoded.get("email") or ""))
     if not email:
         raise DebugLogHttpError(401, "Firebase token does not include an email", "AUTH_EMAIL_MISSING")
@@ -247,11 +357,19 @@ def require_allowlisted_request(request: Any) -> Dict[str, Any]:
     return decoded
 
 
+def auth_header_value(request: Any) -> Optional[str]:
+    if not hasattr(request, "headers"):
+        return None
+    return request.headers.get("Authorization") or request.headers.get("X-DroidLM-Firebase-ID-Token")
+
+
 def bearer_token(authorization: Optional[str]) -> str:
     value = (authorization or "").strip()
     if not value:
-        raise DebugLogHttpError(401, "Missing Firebase ID token", "AUTH_TOKEN_MISSING")
+        raise DebugLogHttpError(401, "Sign in again before uploading debug logs", "AUTH_TOKEN_MISSING")
     scheme, _, token = value.partition(" ")
+    if not token and scheme:
+        return scheme.strip()
     if scheme.lower() != "bearer" or not token.strip():
         raise DebugLogHttpError(401, "Authorization must be a Bearer Firebase ID token", "AUTH_TOKEN_INVALID")
     return token.strip()
